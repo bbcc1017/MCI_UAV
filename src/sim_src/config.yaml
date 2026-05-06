@@ -1,0 +1,54 @@
+#incident_info:
+#  incident_size: 30 # 사고 규모 (총 환자 수)
+#  latitude: 37.5665 # 위도
+#  longitude: 126.9780 # 경도
+#  incident_type: null # 사고 타입 (추후 확장)
+
+entity_info:
+  departure_time: "202604071400" # API 조회 시각 (YYYYMMDDHHMM) — Kakao 모드에서만 의미 있음
+  patient:
+    incident_size: 30 # 사고 규모 (총 환자 수)
+    latitude: 37.5665 # 위도
+    longitude: 126.9780 # 경도
+    incident_type: null # 사고 타입 (추후 확장)
+    info_path: "./scenarios/{EXP_ID}/{COORD}/patient_info.csv"
+  hospital:
+    load_data: True
+    info_path: "./scenarios/{EXP_ID}/{COORD}/hospital_info_road.csv"
+    dist_Hos2Hos_euc_info: "./scenarios/{EXP_ID}/{COORD}/distance_Hos2Hos_euc.csv"
+    dist_Hos2Hos_road_info: "./scenarios/{EXP_ID}/{COORD}/distance_Hos2Hos_road.csv"
+    dist_Hos2Site_euc_info: "./scenarios/{EXP_ID}/{COORD}/distance_Hos2Site_euc.csv"
+    dist_Hos2Site_road_info: "./scenarios/{EXP_ID}/{COORD}/distance_Hos2Site_road.csv"
+    max_send_coeff: [1, 1] # max_send = a*max_capa + b*max_queue
+  ambulance:
+    load_data: True
+    dispatch_distance_info: "./scenarios/{EXP_ID}/{COORD}/amb_info_road.csv"
+    velocity: 40 # unit: km/h
+    handover_time: 10.0 # unit: minutes
+    is_use_time: True # True: API duration 사용 / False: 거리/속도 기반 계산
+    duration_coeff: 1.0 # API duration 시간가중치 (기본 1.0, 환경 요인 반영 시 조정)
+    road_provider: kakao # 도로 데이터 공급자 (kakao | osrm) — 시나리오 생성 시 기록
+  uav:
+    load_data: True
+    dispatch_distance_info: "./scenarios/{EXP_ID}/{COORD}/uav_info.csv"
+    velocity: 80 # unit: km/h
+    handover_time: 15.0 # unit: minutes
+    is_use_time: False # UAV는 항상 유클리드 거리 기반
+
+event_info_path: "./src/sim_src/event_info.json"
+
+rule_info:
+  isFullFactorial: True
+  priority_rule: ["START", "ReSTART"]
+  hos_select_rule: ["RedOnly", "YellowNearest"] # ["RedOnly", "YellowHalf", "YellowNearest"]
+  red_mode_rule: ["OnlyUAV", "Both_UAVFirst", "Both_AMBFirst", "OnlyAMB"]
+  yellow_mode_rule: ["OnlyUAV", "Both_UAVFirst", "Both_AMBFirst", "OnlyAMB"]
+
+run_setting:
+  totalSamples: 30 # number of samples
+  random_seed: 0 # null, if do not want to fix
+  rule_test: True
+  eval_mode: True
+  output_path: "./results/{EXP_ID}"
+  exp_indicator: "{COORD}" # 결과 파일 접미사 (좌표 표기)
+  save_info: True # NotImplemented

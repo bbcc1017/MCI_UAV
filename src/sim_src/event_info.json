@@ -1,0 +1,34 @@
+{
+  "onset": {
+    "entity": ["patient"],
+    "decision_epoch": false
+  },
+  "p_rescue": {
+    "entity": ["patient"],
+    "decision_epoch": true
+  },
+  "amb_arrival_site": {
+    "entity": ["ambulance"],
+    "decision_epoch": true
+  },
+  "uav_arrival_site": {
+    "entity": ["uav"],
+    "decision_epoch": true
+  },
+  "amb_arrival_hospital": {
+    "entity": ["patient", "ambulance", "hospital"],
+    "decision_epoch": false
+  },
+  "uav_arrival_hospital": {
+    "entity": ["patient", "uav", "hospital"],
+    "decision_epoch": false
+  },
+  "p_care_ready": {
+    "entity": ["patient", "hospital"],
+    "decision_epoch": false
+  },
+  "p_def_care": {
+    "entity": ["patient", "hospital"],
+    "decision_epoch": false
+  }
+}

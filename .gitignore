@@ -216,3 +216,36 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Claude Code local settings
+.claude/
+
+# Unity
+Library/
+Temp/
+Obj/
+Build/
+Builds/
+Logs/
+UserSettings/
+MemoryCaptures/
+*.csproj
+*.sln
+*.user
+*.unityproj
+*.tmp
+*.suo
+*.pidb
+*.booproj
+*.svd
+*.pdb.meta
+*.opendb
+*.VC.db
+sysinfo.txt
+*.apk
+*.aab
+*.unitypackage
+
+# ML-Agents training outputs
+results/
+*.onnx.meta
