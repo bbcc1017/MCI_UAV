@@ -123,16 +123,37 @@ class ScenarioManager():
                 reg_prop['hos_tier'] = hos_info['종별코드'].to_numpy(dtype='int32')
                 reg_prop['hos_max_send'] = cfg_hospital['max_send_coeff'][0]*reg_prop['hos_max_capa'] \
                                            + cfg_hospital['max_send_coeff'][1]*reg_prop['hos_max_queue']
-                # 거리 정보
+                # 거리 정보 — UAV 전용 모드에서는 euc 만으로 충분.
+                # road CSV 가 비어있거나 부재하면 euc 로 폴백 (UAV는 직선거리 기반).
                 d_HtoH_euc = pd.read_csv(cfg_hospital['dist_Hos2Hos_euc_info'])
                 reg_prop['d_HtoH_euc'] = self._extract_matrix(d_HtoH_euc)
-                d_HtoH_road = pd.read_csv(cfg_hospital['dist_Hos2Hos_road_info'])
-                reg_prop['d_HtoH_road'] = self._extract_matrix(d_HtoH_road)
 
                 d_HtoS_euc = pd.read_csv(cfg_hospital['dist_Hos2Site_euc_info']).iloc[:, 1:]
-                reg_prop['d_HtoS_euc'] = d_HtoS_euc.to_numpy(dtype='float32')[:,0]
-                d_HtoS_road = pd.read_csv(cfg_hospital['dist_Hos2Site_road_info'])
-                reg_prop['d_HtoS_road'], reg_prop['t_HtoS_road_api'] = self._extract_vector_distance_duration(d_HtoS_road)
+                reg_prop['d_HtoS_euc'] = d_HtoS_euc.to_numpy(dtype='float32')[:, 0]
+
+                # Hos2Hos road
+                try:
+                    d_HtoH_road_df = pd.read_csv(cfg_hospital['dist_Hos2Hos_road_info'])
+                    if d_HtoH_road_df.shape[0] == reg_prop['hos_num']:
+                        reg_prop['d_HtoH_road'] = self._extract_matrix(d_HtoH_road_df)
+                    else:
+                        raise pd.errors.EmptyDataError("row count mismatch")
+                except (FileNotFoundError, pd.errors.EmptyDataError):
+                    print("  road Hos2Hos CSV 비어있음/부재 - euc 사용 (UAV-only)")
+                    reg_prop['d_HtoH_road'] = reg_prop['d_HtoH_euc'].copy()
+
+                # Hos2Site road
+                try:
+                    d_HtoS_road_df = pd.read_csv(cfg_hospital['dist_Hos2Site_road_info'])
+                    if d_HtoS_road_df.shape[0] == reg_prop['hos_num']:
+                        reg_prop['d_HtoS_road'], reg_prop['t_HtoS_road_api'] = \
+                            self._extract_vector_distance_duration(d_HtoS_road_df)
+                    else:
+                        raise pd.errors.EmptyDataError("row count mismatch")
+                except (FileNotFoundError, pd.errors.EmptyDataError):
+                    print("  road Hos2Site CSV 비어있음/부재 - euc 사용 (UAV-only)")
+                    reg_prop['d_HtoS_road'] = reg_prop['d_HtoS_euc'].copy()
+                    reg_prop['t_HtoS_road_api'] = None
             except FileNotFoundError:
                 print("병원 데이터 생성에 필요한 파일이 부족합니다.")
         else:
@@ -166,8 +187,26 @@ class ScenarioManager():
         # From data
         if cfg_amb['load_data']:
             try:
-                amb_info = pd.read_csv(cfg_amb['dispatch_distance_info'])
+                try:
+                    amb_info = pd.read_csv(cfg_amb['dispatch_distance_info'])
+                except pd.errors.EmptyDataError:
+                    # 0바이트 파일 → AMB 0대로 처리
+                    amb_info = pd.DataFrame()
                 reg_prop['amb_num'] = len(amb_info)
+
+                # AMB 0대일 경우 빈 파라미터로 초기화 후 조기 반환 (UAV-only 실험 호환)
+                if reg_prop['amb_num'] == 0:
+                    print("  AMB 비활성 (대수 0) - amb_states/dispatch_t/HtoS_t/HtoH_t 모두 빈 배열로 초기화")
+                    reg_prop['amb_dispatch_d'] = np.array([], dtype='float32')
+                    reg_prop['amb_dispatch_t'] = None
+                    reg_prop['amb_v'] = cfg_amb['velocity']
+                    reg_prop['amb_handover_time'] = cfg_amb['handover_time']
+                    reg_prop['amb_response_t'] = (np.array([]), np.array([]), np.array([]))
+                    reg_prop['amb_HtoS_t']     = (np.array([]), np.array([]), np.array([]))
+                    reg_prop['amb_HtoH_t']     = (np.array([]), np.array([]), np.array([]))
+                    reg_prop['amb_maxD_HtoH']  = 0
+                    return reg_prop
+
                 reg_prop['amb_dispatch_d'] = amb_info['init_distance'].to_numpy(dtype='float32')
 
                 # duration 컬럼 확인 및 로드

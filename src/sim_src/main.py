@@ -1,21 +1,57 @@
 import argparse
 import yaml
 import os
+import sys
 import json
 import random
 import numpy as np
 import time
+from datetime import datetime
 from scipy.stats import t
 
 from ScenarioManager import ScenarioManager
 from RuleManager import RuleManager
 from MCIEnvironment_gymnasium import MCIEnvironment_gym
 
+
+class _Tee:
+    """stdout 을 콘솔과 파일에 동시 기록."""
+    def __init__(self, *streams):
+        self.streams = streams
+    def write(self, s):
+        for st in self.streams:
+            try:
+                st.write(s)
+            except UnicodeEncodeError:
+                # cp949 콘솔 호환을 위해 ASCII fallback
+                st.write(s.encode('ascii', errors='replace').decode('ascii'))
+    def flush(self):
+        for st in self.streams:
+            st.flush()
+
+
+def _setup_logfile(config_path: str, log_root: str = "experiment_logs",
+                   log_kind: str = "sim") -> 'tuple[str, object]':
+    """experiment_logs/<kind>_<exp_indicator>_<timestamp>.log 파일 핸들 생성."""
+    with open(config_path, 'r', encoding='utf-8') as f:
+        cfg = yaml.safe_load(f)
+    exp_indicator = cfg['run_setting'].get('exp_indicator', 'unknown')
+    os.makedirs(log_root, exist_ok=True)
+    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+    # 파일명에 좌표 그대로 포함 (괄호/콤마 OK on Windows)
+    log_path = os.path.join(log_root, f"{log_kind}_{exp_indicator}_{ts}.log")
+    return log_path, open(log_path, 'w', encoding='utf-8')
+
+
 # parser 객체 생성 및 등록
 parser = argparse.ArgumentParser(description='Run MCI_simulation')
 parser.add_argument('--config_path', default="./config.yaml", help='configuration file(.yaml) 경로')
 parser.add_argument('--trace', action='store_true', default=False,
                     help='Enable per-patient trace logging (saves trace JSON)')
+parser.add_argument('--log_dir', default='experiment_logs',
+                    help='시뮬레이션 로그 저장 디렉터리 (기본: experiment_logs/)')
+parser.add_argument('--no_log', action='store_true', default=False,
+                    help='로그 파일 저장 비활성 (콘솔만)')
 args = parser.parse_args()
 
 
@@ -199,6 +235,21 @@ class RunManager():
         return output, output_stat
 
 if __name__ == '__main__':
-    start_t = time.time()
-    run_model = RunManager(args)
-    print(f"Computation time(s): {time.time() - start_t}")
+    log_handle = None
+    if not args.no_log:
+        try:
+            log_path, log_handle = _setup_logfile(args.config_path, log_root=args.log_dir, log_kind="sim")
+            sys.stdout = _Tee(sys.__stdout__, log_handle)
+            print(f"[LOG] simulation log -> {log_path}")
+        except Exception as e:
+            print(f"[LOG] 로그 파일 설정 실패 (콘솔만 출력): {e}")
+            log_handle = None
+
+    try:
+        start_t = time.time()
+        run_model = RunManager(args)
+        print(f"Computation time(s): {time.time() - start_t}")
+    finally:
+        if log_handle is not None:
+            sys.stdout = sys.__stdout__
+            log_handle.close()
