@@ -1,0 +1,19 @@
+# Core simulation
+numpy>=1.23,<2.0
+pandas>=2.0,<3
+pyyaml>=6
+scipy>=1.11
+openpyxl>=3.1
+haversine>=2.8
+
+# RL
+gymnasium>=0.29,<1
+stable-baselines3>=2.3,<3
+sb3-contrib>=2.3,<3
+
+# Torch — RTX 50 (Blackwell) 호환 빌드
+# pip install torch==2.8.0+cu128 --index-url https://download.pytorch.org/whl/cu128
+torch>=2.8
+
+# 로깅/모니터링
+tensorboard>=2.15

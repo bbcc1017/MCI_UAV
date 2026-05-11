@@ -249,3 +249,14 @@ sysinfo.txt
 # ML-Agents training outputs
 results/
 *.onnx.meta
+
+# MCI_UAV generated artifacts
+# - 자동 생성 시나리오 (사고지점별 폴더)
+scenarios/exp_*/
+# - 임시 좌표 파일 (시나리오 생성 중간 산출)
+scenarios/**/_hospital_coords.csv
+# - 시뮬레이션 / 시나리오 로그
+experiment_logs/
+# - tmp 파이프 로그
+/tmp/
+*.tfevents.*
