@@ -19,6 +19,10 @@ import os
 import subprocess
 import sys
 
+# Windows + Anaconda 에서 numpy(MKL)/torch(MKL)/matplotlib 가 libiomp5md.dll 을
+# 중복 로드해 OMP Error #15 가 발생. 무해한 workaround.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, THIS_DIR)
 SCE_DIR = os.path.abspath(os.path.join(THIS_DIR, os.pardir, "sce_src"))
@@ -73,12 +77,24 @@ def parse_args():
     p.add_argument("--plot_out", default="results/cross_location_eval.png")
     p.add_argument("--python", default=sys.executable,
                    help="main.py 호출용 python 인터프리터")
+    p.add_argument("--plot_only", action="store_true",
+                   help="평가 건너뛰고 기존 --out_csv 만 읽어 PNG 재생성")
+    p.add_argument("--exp_prefix", default="crosseval",
+                   help="시나리오 experiment_id prefix. 결과 폴더: exp_<prefix>_<region>_uav "
+                        "(예: crosseval_1M -> exp_crosseval_1M_서울_uav)")
+    p.add_argument("--skip_heuristic", action="store_true",
+                   help="휴리스틱 main.py 실행을 건너뛰고 기존 stat.txt 를 그대로 사용. "
+                        "--heuristic_exp_prefix 와 함께 사용")
+    p.add_argument("--heuristic_exp_prefix", default=None,
+                   help="--skip_heuristic 시 기존 휴리스틱 결과를 찾을 prefix. "
+                        "예: crosseval -> results/exp_crosseval_<region>_uav/.../*_stat.txt")
     return p.parse_args()
 
 
 def gen_scenario_for_region(short_name, lat, lon, incident_size, uav_count,
-                             total_samples, base_path, hospital_data) -> str:
-    gen = UAVScenarioGenerator(base_path, f"crosseval_{short_name}", hospital_data)
+                             total_samples, base_path, hospital_data,
+                             exp_prefix: str = "crosseval") -> str:
+    gen = UAVScenarioGenerator(base_path, f"{exp_prefix}_{short_name}", hospital_data)
     return gen.generate(
         latitude=lat, longitude=lon,
         incident_size=incident_size, uav_count=uav_count,
@@ -123,12 +139,16 @@ def parse_stat_file(stat_path: str, n_rules: int):
     return rules
 
 
-def heuristic_best_from_yaml_dir(config_path: str):
-    """config yaml 의 output_path/exp_indicator 로부터 stat.txt 위치 추정 후 파싱."""
+def heuristic_best_from_yaml_dir(config_path: str, output_path_override: str = None):
+    """config yaml 의 output_path/exp_indicator 로부터 stat.txt 위치 추정 후 파싱.
+
+    output_path_override 가 주어지면 yaml 의 output_path 대신 사용 (--skip_heuristic 시
+    기존 다른 prefix 의 stat.txt 를 가져올 때 활용).
+    """
     import yaml
     with open(config_path, "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
-    output_path = cfg["run_setting"]["output_path"]
+    output_path = output_path_override or cfg["run_setting"]["output_path"]
     exp_indicator = cfg["run_setting"]["exp_indicator"]
     # main.py 의 output_path 는 cwd 기준 상대경로
     stat_path = os.path.join(output_path, exp_indicator,
@@ -146,6 +166,16 @@ def main():
     args = parse_args()
     base = os.path.abspath(args.base_path)
     hospital_data = args.hospital_data or os.path.join(base, "scenarios", "엑셀 결합 데이터.xlsx")
+
+    if args.plot_only:
+        df = pd.read_csv(args.out_csv, encoding="utf-8-sig")
+        print(f"Loaded CSV: {args.out_csv}  rows={len(df)}")
+        plot_results(df, args.plot_out)
+        return
+
+    if args.skip_heuristic and not args.heuristic_exp_prefix:
+        raise SystemExit("--skip_heuristic 사용 시 --heuristic_exp_prefix 를 함께 지정해야 합니다 "
+                         "(예: --heuristic_exp_prefix crosseval)")
 
     print("Loading trained models...")
     from sb3_contrib import MaskablePPO
@@ -168,23 +198,37 @@ def main():
             config_path = gen_scenario_for_region(
                 short_name, lat, lon,
                 args.incident_size, args.uav_count, args.n_episodes,
-                base, hospital_data,
+                base, hospital_data, exp_prefix=args.exp_prefix,
             )
         except Exception as e:
             print(f"  ! 시나리오 생성 실패: {e}")
             continue
 
-        # 1) Heuristic 시뮬 (main.py) — results_*.txt / _stat.txt 저장
-        print("  Heuristic simulation (main.py) ...")
-        try:
-            run_main_sim(config_path, args.python, base)
-            heur_best, _, stat_path = heuristic_best_from_yaml_dir(config_path)
-            print(f"    saved -> {stat_path}")
-            print(f"    best  : {heur_best['rule_name']}  R={heur_best['R_mean']:.3f}  "
-                  f"PDR={heur_best['PDR_mean']:.3f}  time={heur_best['time_mean']:.0f}")
-        except Exception as e:
-            print(f"  ! main.py 실패: {e}")
-            continue
+        # 1) Heuristic stat 확보
+        if args.skip_heuristic:
+            print(f"  Heuristic skipped — reusing existing stat (prefix={args.heuristic_exp_prefix})")
+            old_exp_id = f"exp_{args.heuristic_exp_prefix}_{short_name}_uav"
+            old_output_path = f"./results/{old_exp_id}"
+            try:
+                heur_best, _, stat_path = heuristic_best_from_yaml_dir(
+                    config_path, output_path_override=old_output_path)
+                print(f"    loaded -> {stat_path}")
+                print(f"    best  : {heur_best['rule_name']}  R={heur_best['R_mean']:.3f}  "
+                      f"PDR={heur_best['PDR_mean']:.3f}  time={heur_best['time_mean']:.0f}")
+            except Exception as e:
+                print(f"  ! 기존 휴리스틱 stat 로드 실패: {e}")
+                continue
+        else:
+            print("  Heuristic simulation (main.py) ...")
+            try:
+                run_main_sim(config_path, args.python, base)
+                heur_best, _, stat_path = heuristic_best_from_yaml_dir(config_path)
+                print(f"    saved -> {stat_path}")
+                print(f"    best  : {heur_best['rule_name']}  R={heur_best['R_mean']:.3f}  "
+                      f"PDR={heur_best['PDR_mean']:.3f}  time={heur_best['time_mean']:.0f}")
+            except Exception as e:
+                print(f"  ! main.py 실패: {e}")
+                continue
 
         # 2) RL 평가 (in-memory)
         rl_env_factory = make_eval_env(config_path)
@@ -267,9 +311,9 @@ def plot_results(df, out_path: str):
 
     ax = axes[1]
     ax.axhline(0, color="#888", linewidth=1)
-    ax.plot(x, df["PPO_vs_heur"],       "o-", label="PPO − Heur",       color="#1f77b4")
-    ax.plot(x, df["DQN_vs_heur"],       "s-", label="DQN − Heur",       color="#ff7f0e")
-    ax.plot(x, df["REINFORCE_vs_heur"], "^-", label="REINFORCE − Heur", color="#2ca02c")
+    ax.plot(x, df["PPO_vs_heur"],       "o-", label="PPO - Heur",       color="#1f77b4")
+    ax.plot(x, df["DQN_vs_heur"],       "s-", label="DQN - Heur",       color="#ff7f0e")
+    ax.plot(x, df["REINFORCE_vs_heur"], "^-", label="REINFORCE - Heur", color="#2ca02c")
     ax.set_xticks(x)
     ax.set_xticklabels(regions, rotation=0)
     ax.set_ylabel("Δ vs heuristic best")
