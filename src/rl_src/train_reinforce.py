@@ -17,7 +17,7 @@ import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 
 from env_factory import make_base_env
-from env_wrapper import FlattenAndDiscreteWrapper
+from env_wrapper import FlattenAndDiscreteWrapper, HybridAMBHeurWrapper
 from reinforce_agent import ReinforceAgent
 
 
@@ -31,11 +31,17 @@ def parse_args():
     p.add_argument("--gamma", type=float, default=0.99)
     p.add_argument("--checkpoint_freq", type=int, default=20_000)
     p.add_argument("--print_every_episodes", type=int, default=20)
+    p.add_argument("--hybrid_amb_rule", nargs=4, default=None,
+                   metavar=("PRIORITY", "HOS_SELECT", "RED_MODE", "YELLOW_MODE"),
+                   help="2안 학습: AMB 결정을 룰에 위임 (UAV 만 RL)")
     return p.parse_args()
 
 
-def make_env(config_path: str, seed: int = 0):
+def make_env(config_path: str, seed: int = 0, hybrid_amb_rule=None):
     base = make_base_env(config_path, seed=seed, rule_test=False, eval_mode=False)
+    if hybrid_amb_rule:
+        from RuleManager import Universal_Rule
+        return HybridAMBHeurWrapper(base, Universal_Rule(*hybrid_amb_rule))
     return FlattenAndDiscreteWrapper(base)
 
 
@@ -50,7 +56,9 @@ def main():
     print(f"[REINFORCE] log_dir = {args.log_dir}")
     print(f"            tb     = {tb_dir}")
 
-    env = make_env(args.config_path, seed=args.seed)
+    if args.hybrid_amb_rule:
+        print(f"[hybrid] AMB 결정 룰: {' / '.join(args.hybrid_amb_rule)}")
+    env = make_env(args.config_path, seed=args.seed, hybrid_amb_rule=args.hybrid_amb_rule)
     obs_dim = int(env.observation_space.shape[0])
     n_actions = int(env.action_space.n)
     print(f"            obs_dim={obs_dim}  n_actions={n_actions}")
@@ -120,7 +128,7 @@ def main():
     print(f"\nSaved: {final_path}")
     writer.close()
 
-    eval_env = make_env(args.config_path, seed=args.seed + 99999)
+    eval_env = make_env(args.config_path, seed=args.seed + 99999, hybrid_amb_rule=args.hybrid_amb_rule)
     rewards = []
     for ep in range(10):
         obs, _ = eval_env.reset(seed=args.seed + 99999 + ep)

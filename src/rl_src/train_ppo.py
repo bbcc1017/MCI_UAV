@@ -18,17 +18,26 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 
 from env_factory import make_base_env
-from env_wrapper import FlattenAndDiscreteWrapper
+from env_wrapper import FlattenAndDiscreteWrapper, HybridAMBHeurWrapper
 
 
 def mask_fn(env):
     return env.action_masks()
 
 
-def make_env_fn(config_path: str, seed: int = 0):
+def _build_rule(rule_args):
+    """Universal_Rule 인스턴스 생성. RuleManager 에서 import (sim_src on sys.path)."""
+    from RuleManager import Universal_Rule
+    return Universal_Rule(*rule_args)
+
+
+def make_env_fn(config_path: str, seed: int = 0, hybrid_amb_rule=None):
     def _f():
         base = make_base_env(config_path, seed=seed, rule_test=False, eval_mode=False)
-        env = FlattenAndDiscreteWrapper(base)
+        if hybrid_amb_rule:
+            env = HybridAMBHeurWrapper(base, _build_rule(hybrid_amb_rule))
+        else:
+            env = FlattenAndDiscreteWrapper(base)
         env = ActionMasker(env, mask_fn)
         env = Monitor(env)
         return env
@@ -47,6 +56,10 @@ def parse_args():
     p.add_argument("--learning_rate", type=float, default=3e-4)
     p.add_argument("--checkpoint_freq", type=int, default=20_000)
     p.add_argument("--vec", choices=["dummy", "subproc"], default="dummy")
+    p.add_argument("--hybrid_amb_rule", nargs=4, default=None,
+                   metavar=("PRIORITY", "HOS_SELECT", "RED_MODE", "YELLOW_MODE"),
+                   help="2안 학습: AMB 결정을 룰에 위임 (UAV 만 RL). "
+                        "예: --hybrid_amb_rule START RedOnly Both_AMBFirst Both_AMBFirst")
     return p.parse_args()
 
 
@@ -54,7 +67,11 @@ def main():
     args = parse_args()
     os.makedirs(args.log_dir, exist_ok=True)
 
-    env_fns = [make_env_fn(args.config_path, seed=args.seed + i) for i in range(args.n_envs)]
+    if args.hybrid_amb_rule:
+        print(f"[hybrid] AMB 결정 룰: {' / '.join(args.hybrid_amb_rule)}")
+    env_fns = [make_env_fn(args.config_path, seed=args.seed + i,
+                           hybrid_amb_rule=args.hybrid_amb_rule)
+               for i in range(args.n_envs)]
     vec_cls = SubprocVecEnv if args.vec == "subproc" else DummyVecEnv
     venv = vec_cls(env_fns)
 
@@ -81,7 +98,8 @@ def main():
     print(f"Saved: {final_path}")
 
     # 짧은 평가
-    eval_env = make_env_fn(args.config_path, seed=args.seed + 999)()
+    eval_env = make_env_fn(args.config_path, seed=args.seed + 999,
+                           hybrid_amb_rule=args.hybrid_amb_rule)()
     mean_r, std_r = masked_evaluate(model, eval_env, n_eval_episodes=10, use_masking=True)
     print(f"Eval mean reward: {mean_r:.3f} +/- {std_r:.3f}")
 

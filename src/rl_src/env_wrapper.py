@@ -92,6 +92,18 @@ class FlattenAndDiscreteWrapper(gym.Wrapper):
         m = rem % n_mode
         return [c, d, m]
 
+    def _encode(self, decoded):
+        """[class, dest, mode] → 평탄 정수 (decode 의 역연산). mode 가 고정된 wrapper 면 mode 항 무시."""
+        c, d, m = int(decoded[0]), int(decoded[1]), int(decoded[2])
+        if self._fixed_mode is not None:
+            return c * self._effective_nvec[1] + d
+        n_dest, n_mode = self._orig_nvec[1], self._orig_nvec[2]
+        return c * (n_dest * n_mode) + d * n_mode + m
+
+    # public aliases (외부 정책에서 사용)
+    decode_action = _decode
+    encode_action = _encode
+
     # ---------- gym API ----------
     def step(self, action):
         decoded = self._decode(action)
@@ -104,13 +116,44 @@ class FlattenAndDiscreteWrapper(gym.Wrapper):
 
     # ---------- action mask ----------
     def action_masks(self) -> np.ndarray:
-        """
-        결합 mask: shape (n_actions,) bool.
-        mode 차원이 고정되었으면 해당 mode 슬라이스만 추출해 평탄화.
-        """
+        """결합 mask: shape (n_actions,) bool. mode 차원 고정 시 해당 슬라이스만 평탄화."""
         full = self.env.unwrapped.action_masks_joint()  # (3 * (H+1) * 2,)
         full = full.reshape(self._orig_nvec[0], self._orig_nvec[1], self._orig_nvec[2])
         if self._fixed_mode is not None:
             sliced = full[:, :, self._fixed_mode]  # (3, H+1)
             return sliced.reshape(-1)
         return full.reshape(-1)
+
+
+class HybridAMBHeurWrapper(FlattenAndDiscreteWrapper):
+    """2안 학습용: AMB(mode=0) dispatch 는 휴리스틱 룰이 결정, UAV(mode=1) 는 RL 결정 그대로.
+
+    RL 의 [c, d, m] 출력에서 m==0 이면 룰의 결정 [c2, d2, 0] 으로 swap (strict).
+    m==1 이면 RL 결정 그대로 시뮬에 전달.
+    """
+
+    def __init__(self, env, rule):
+        super().__init__(env)
+        self.rule = rule
+        self.rule.init_with_scenario({'EntityManager': env.unwrapped.en_manager})
+
+    def _dict_obs(self):
+        u = self.env.unwrapped
+        obs = u.en_manager.get_full_obs()
+        obs['time'] = u.ev_manager.time
+        return obs
+
+    def reset(self, **kwargs):
+        seed = kwargs.get('seed', 0)
+        self.rule.set_seed(np.random.default_rng(seed))
+        return super().reset(**kwargs)
+
+    def step(self, action):
+        decoded = self._decode(action)  # [c, d, m]
+        if decoded[2] == 0:
+            rule_action = self.rule.select(self._dict_obs())
+            final = [int(x) for x in rule_action]
+        else:
+            final = decoded
+        obs, reward, terminated, truncated, info = self.env.step(final)
+        return _flatten_dict_obs(obs, self._obs_keys), reward, terminated, truncated, info

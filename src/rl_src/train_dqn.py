@@ -22,12 +22,16 @@ from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.monitor import Monitor
 
 from env_factory import make_base_env
-from env_wrapper import FlattenAndDiscreteWrapper
+from env_wrapper import FlattenAndDiscreteWrapper, HybridAMBHeurWrapper
 
 
-def make_env(config_path: str, seed: int = 0):
+def make_env(config_path: str, seed: int = 0, hybrid_amb_rule=None):
     base = make_base_env(config_path, seed=seed, rule_test=False, eval_mode=False)
-    env = FlattenAndDiscreteWrapper(base)
+    if hybrid_amb_rule:
+        from RuleManager import Universal_Rule
+        env = HybridAMBHeurWrapper(base, Universal_Rule(*hybrid_amb_rule))
+    else:
+        env = FlattenAndDiscreteWrapper(base)
     env = Monitor(env)
     return env
 
@@ -45,6 +49,9 @@ def parse_args():
     p.add_argument("--exploration_fraction", type=float, default=0.3)
     p.add_argument("--exploration_final_eps", type=float, default=0.05)
     p.add_argument("--checkpoint_freq", type=int, default=20_000)
+    p.add_argument("--hybrid_amb_rule", nargs=4, default=None,
+                   metavar=("PRIORITY", "HOS_SELECT", "RED_MODE", "YELLOW_MODE"),
+                   help="2안 학습: AMB 결정을 룰에 위임 (UAV 만 RL)")
     return p.parse_args()
 
 
@@ -65,7 +72,9 @@ def main():
     args = parse_args()
     os.makedirs(args.log_dir, exist_ok=True)
 
-    env = make_env(args.config_path, seed=args.seed)
+    if args.hybrid_amb_rule:
+        print(f"[hybrid] AMB 결정 룰: {' / '.join(args.hybrid_amb_rule)}")
+    env = make_env(args.config_path, seed=args.seed, hybrid_amb_rule=args.hybrid_amb_rule)
 
     model = DQN(
         "MlpPolicy", env,
@@ -93,7 +102,7 @@ def main():
     print(f"Saved: {final_path}")
 
     # 짧은 평가 (mask 적용)
-    eval_env = make_env(args.config_path, seed=args.seed + 999)
+    eval_env = make_env(args.config_path, seed=args.seed + 999, hybrid_amb_rule=args.hybrid_amb_rule)
     rewards = []
     for ep in range(10):
         obs, _ = eval_env.reset(seed=args.seed + 999 + ep)

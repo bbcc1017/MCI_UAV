@@ -37,6 +37,9 @@ def parse_args():
     p.add_argument("--n_envs_ppo", type=int, default=4)
     p.add_argument("--python", default=sys.executable,
                    help="파이썬 인터프리터 (기본: 현재)")
+    p.add_argument("--hybrid_amb_rule", nargs=4, default=None,
+                   metavar=("PRIORITY", "HOS_SELECT", "RED_MODE", "YELLOW_MODE"),
+                   help="2안 학습: AMB 결정을 룰에 위임 (모든 알고리즘에 일괄 전달)")
     return p.parse_args()
 
 
@@ -52,6 +55,8 @@ def build_cmd(args, algo: str):
     ]
     if algo == "ppo":
         base += ["--n_envs", str(args.n_envs_ppo)]
+    if args.hybrid_amb_rule:
+        base += ["--hybrid_amb_rule"] + list(args.hybrid_amb_rule)
     return base, log_dir
 
 
