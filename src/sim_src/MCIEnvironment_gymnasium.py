@@ -66,8 +66,10 @@ class MCIEnvironment_gym(gym.Env):
         # 한 번 더 ev_onset 이 트리거되어 헛 시뮬 로그가 남는다.
         # 이하 attribute 만 초기화 (실제 상태는 reset() 호출 시 채워짐).
         self.pending_terminal_reward = 0.0
+        self.pending_terminal_reward_woG = 0.0
         self.n_step = 0
         self.preventable = 0.0
+        self.preventable_woG = 0.0
 
     # ---------- helpers ----------
     def set_seed(self, rng):
@@ -114,34 +116,44 @@ class MCIEnvironment_gym(gym.Env):
         info = {}
         if self.ev_manager.check_termination():
             reward = self.pending_terminal_reward
+            reward_woG = self.pending_terminal_reward_woG
             self.pending_terminal_reward = 0.0
+            self.pending_terminal_reward_woG = 0.0
             obs = self._make_obs()
             info['time'] = self.ev_manager.time
+            info['r_woG'] = reward_woG
             return obs, reward, True, False, info
 
         self.n_step += 1
         if self.n_step > self.max_steps:
             print("OVERTIME")
+            info['time'] = self.ev_manager.time
+            info['r_woG'] = -self.pen_size
             return self._make_obs(), -self.pen_size, True, True, info
 
         action_list = self._to_action_list(action)
         log, terminated = self.ev_manager.run_next(action_list)
         reward = self.logToReward(log)
+        reward_woG = self.logToReward_woG(log)
         obs = self._make_obs()
         info['time'] = self.ev_manager.time
+        info['r_woG'] = reward_woG
         return obs, reward, terminated, False, info
 
     def reset(self, seed=None, options=None):
         if seed is not None:
             self.rng = np.random.default_rng(seed)
         self.pending_terminal_reward = 0.0
+        self.pending_terminal_reward_woG = 0.0
         self.n_step = 0
 
         self.en_manager.init_en_status()
         init_log = self.ev_manager.start()
         self.preventable = self.computePreventable(init_log)
+        self.preventable_woG = self.computePreventable_woG(init_log)
         if self.ev_manager.check_termination():
             self.pending_terminal_reward = self.logToReward(init_log)
+            self.pending_terminal_reward_woG = self.logToReward_woG(init_log)
 
         obs = self._make_obs()
         return obs, {}
@@ -154,9 +166,26 @@ class MCIEnvironment_gym(gym.Env):
                 val += self.getSurvProb(t, p_class)
         return val
 
+    def computePreventable_woG(self, log):
+        val = 0.0
+        for p_class, times in enumerate(log['rescue_times']):
+            if p_class == 2:
+                continue
+            for t in times:
+                val += self.getSurvProb(t, p_class)
+        return val
+
     def logToReward(self, log):
         reward = 0.0
         for x in log['p_admit']:
+            reward += self.getReward(x[0], x[1])
+        return reward
+
+    def logToReward_woG(self, log):
+        reward = 0.0
+        for x in log['p_admit']:
+            if x[1] == 2:
+                continue
             reward += self.getReward(x[0], x[1])
         return reward
 

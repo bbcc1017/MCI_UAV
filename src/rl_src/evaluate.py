@@ -28,29 +28,37 @@ from RuleManager import RuleManager  # noqa: E402
 
 
 def eval_policy(env_factory: Callable, policy_fn: Callable, n_episodes: int,
-                seed_base: int = 1000) -> Tuple[float, float, float, float]:
+                seed_base: int = 1000):
     """
     policy_fn(obs, mask, env_unwrapped) -> action(int).
-    return: (mean_reward, mean_pdr, mean_time, ci_half_reward)
+    return dict: mean_R, mean_R_woG, mean_PDR, mean_PDR_woG, mean_time,
+                 ci_R, ci_R_woG
     """
-    rewards, pdrs, times = [], [], []
+    rewards, rewards_woG, pdrs, pdrs_woG, times = [], [], [], [], []
     for ep in range(n_episodes):
         env = env_factory(seed=seed_base + ep)
         obs, _ = env.reset(seed=seed_base + ep)
         done = False
         ep_r = 0.0
+        ep_r_woG = 0.0
         while not done:
             mask = env.action_masks()
             a = policy_fn(obs, mask, env.unwrapped)
             obs, r, term, trunc, info = env.step(a)
             ep_r += r
+            ep_r_woG += info.get('r_woG', 0.0)
             done = term or trunc
         preventable = env.unwrapped.preventable
+        preventable_woG = env.unwrapped.preventable_woG
         pdr = 1 - ep_r / preventable if preventable > 0 else 0.0
+        pdr_woG = 1 - ep_r_woG / preventable_woG if preventable_woG > 0 else 0.0
         rewards.append(ep_r)
+        rewards_woG.append(ep_r_woG)
         pdrs.append(pdr)
+        pdrs_woG.append(pdr_woG)
         times.append(info['time'])
-    rewards = np.array(rewards); pdrs = np.array(pdrs); times = np.array(times)
+    rewards = np.array(rewards); rewards_woG = np.array(rewards_woG)
+    pdrs = np.array(pdrs); pdrs_woG = np.array(pdrs_woG); times = np.array(times)
 
     def _ci_half(x):
         if len(x) < 2: return 0.0
@@ -58,7 +66,15 @@ def eval_policy(env_factory: Callable, policy_fn: Callable, n_episodes: int,
         ci = student_t.interval(0.95, df=len(x) - 1, loc=np.mean(x), scale=std_err)
         return (ci[1] - ci[0]) / 2
 
-    return float(rewards.mean()), float(pdrs.mean()), float(times.mean()), _ci_half(rewards)
+    return {
+        "mean_R":      float(rewards.mean()),
+        "mean_R_woG":  float(rewards_woG.mean()),
+        "mean_PDR":    float(pdrs.mean()),
+        "mean_PDR_woG": float(pdrs_woG.mean()),
+        "mean_time":   float(times.mean()),
+        "ci_R":        _ci_half(rewards),
+        "ci_R_woG":    _ci_half(rewards_woG),
+    }
 
 
 def make_eval_env(config_path: str):
@@ -159,39 +175,42 @@ def parse_args():
 
 def main():
     args = parse_args()
-    rows: List[Tuple[str, float, float, float, float]] = []
+    rows = []
 
     rl_env_factory = make_eval_env(args.config_path)
+
+    def _run(name, policy):
+        m = eval_policy(rl_env_factory, policy, args.n_episodes, args.seed)
+        rows.append((name, m["mean_R"], m["mean_R_woG"], m["mean_PDR"],
+                     m["mean_PDR_woG"], m["mean_time"], m["ci_R"]))
 
     if args.ppo_path:
         from sb3_contrib import MaskablePPO
         model = MaskablePPO.load(args.ppo_path)
-        r, pdr, t, ci = eval_policy(rl_env_factory, ppo_policy(model), args.n_episodes, args.seed)
-        rows.append((f"PPO ({os.path.basename(args.ppo_path)})", r, pdr, t, ci))
+        _run(f"PPO ({os.path.basename(args.ppo_path)})", ppo_policy(model))
 
     if args.dqn_path:
         from stable_baselines3 import DQN
         model = DQN.load(args.dqn_path)
-        r, pdr, t, ci = eval_policy(rl_env_factory, dqn_policy(model), args.n_episodes, args.seed)
-        rows.append((f"DQN ({os.path.basename(args.dqn_path)})", r, pdr, t, ci))
+        _run(f"DQN ({os.path.basename(args.dqn_path)})", dqn_policy(model))
 
     if args.reinforce_path:
         from reinforce_agent import ReinforceAgent
         agent = ReinforceAgent.load(args.reinforce_path)
-        r, pdr, t, ci = eval_policy(rl_env_factory, reinforce_policy(agent), args.n_episodes, args.seed)
-        rows.append((f"REINFORCE ({os.path.basename(args.reinforce_path)})", r, pdr, t, ci))
+        _run(f"REINFORCE ({os.path.basename(args.reinforce_path)})", reinforce_policy(agent))
 
     if args.include_random:
-        r, pdr, t, ci = eval_policy(rl_env_factory, random_policy(), args.n_episodes, args.seed)
-        rows.append(("Random (mask 적용)", r, pdr, t, ci))
+        _run("Random (mask 적용)", random_policy())
 
     if args.include_heuristic:
-        rows.extend(heuristic_eval(args.config_path, args.n_episodes, args.seed))
+        # heuristic_eval 은 woG 미포함 → 0 으로 채워서 호환
+        for name, r, pdr, t, ci in heuristic_eval(args.config_path, args.n_episodes, args.seed):
+            rows.append((name, r, 0.0, pdr, 0.0, t, ci))
 
-    print(f"\n{'Policy':<60} {'mean_R':>8} {'PDR':>7} {'time':>8} {'95%CI':>8}")
-    print("-" * 95)
-    for name, r, pdr, t, ci in rows:
-        print(f"{name:<60} {r:>8.3f} {pdr:>7.3f} {t:>8.1f} {ci:>8.3f}")
+    print(f"\n{'Policy':<60} {'mean_R':>8} {'R_woG':>8} {'PDR':>7} {'PDR_woG':>8} {'time':>8} {'95%CI':>8}")
+    print("-" * 115)
+    for name, r, r_woG, pdr, pdr_woG, t, ci in rows:
+        print(f"{name:<60} {r:>8.3f} {r_woG:>8.3f} {pdr:>7.3f} {pdr_woG:>8.3f} {t:>8.1f} {ci:>8.3f}")
 
 
 if __name__ == "__main__":
