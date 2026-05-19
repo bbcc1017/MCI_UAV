@@ -251,8 +251,11 @@ results/
 *.onnx.meta
 
 # MCI_UAV generated artifacts
-# - 자동 생성 시나리오 (사고지점별 폴더)
+# - 자동 생성 시나리오 (사고지점별 폴더, 옛 평면 구조)
 scenarios/exp_*/
+# - 재정리 후 실험별 상위 폴더 (helipad_center / korea_center 하위에 자동 생성된 시나리오)
+scenarios/helipad_center/
+scenarios/korea_center/
 # - 임시 좌표 파일 (시나리오 생성 중간 산출)
 scenarios/**/_hospital_coords.csv
 # - 시뮬레이션 / 시나리오 로그
