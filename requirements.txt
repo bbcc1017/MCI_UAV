@@ -15,5 +15,10 @@ sb3-contrib>=2.3,<3
 # pip install torch==2.8.0+cu128 --index-url https://download.pytorch.org/whl/cu128
 torch>=2.8
 
+# Torch — RTX A6000 / CUDA 12.2 (드라이버 535) 호환 빌드
+# pip install torch==2.5.1+cu121 --index-url https://download.pytorch.org/whl/cu121
+# RTX 50 (Blackwell) / CUDA 12.8: torch==2.8.0+cu128 --index-url https://download.pytorch.org/whl/cu128
+torch>=2.5
+
 # 로깅/모니터링
 tensorboard>=2.15
