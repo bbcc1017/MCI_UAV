@@ -324,8 +324,12 @@ class ScenarioGenerator:
                     print(f"  ⚠️ API 호출 한도 초과 (429): 3초 대기 중...")
                     time.sleep(3)
                 else:
+                    # 본문을 함께 노출 — Kakao 는 일일 할당량 소진도 400(code -10,
+                    # "API limit has been exceeded.")으로 응답하므로 호출부가
+                    # 좌표 불량과 할당량 소진을 구분할 수 있어야 한다.
                     raise RuntimeError(
-                        f"카카오 API 호출 실패 (status {response.status_code}): {start} → {end}"
+                        f"카카오 API 호출 실패 (status {response.status_code}): "
+                        f"{start} → {end} — body={response.text[:200]}"
                     )
 
             except RuntimeError:
