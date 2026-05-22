@@ -18,6 +18,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from env_factory import make_base_env
 from env_wrapper import FlattenAndDiscreteWrapper, HybridAMBHeurWrapper
+from reinforce_agent import ReinforceAgent
 
 
 def parse_args():
@@ -30,10 +31,6 @@ def parse_args():
     p.add_argument("--gamma", type=float, default=0.99)
     p.add_argument("--checkpoint_freq", type=int, default=20_000)
     p.add_argument("--print_every_episodes", type=int, default=20)
-    p.add_argument("--agent_version", choices=["v1", "v2"], default="v2",
-                   help="v2=현행(actor-critic baseline+엔트로피, reinforce_agent.py), "
-                        "v1=피드백3 이전 순수 REINFORCE(reinforce_agent_v1.py). "
-                        "분리 실험: 알고리즘 변경 효과 격리용")
     p.add_argument("--hybrid_amb_rule", nargs=4, default=None,
                    metavar=("PRIORITY", "HOS_SELECT", "RED_MODE", "YELLOW_MODE"),
                    help="2안 학습: AMB 결정을 룰에 위임 (UAV 만 RL)")
@@ -70,14 +67,9 @@ def main():
     n_actions = int(env.action_space.n)
     print(f"            obs_dim={obs_dim}  n_actions={n_actions}")
 
-    if args.agent_version == "v1":
-        from reinforce_agent_v1 import ReinforceAgent
-    else:
-        from reinforce_agent import ReinforceAgent
     agent = ReinforceAgent(obs_dim=obs_dim, n_actions=n_actions,
                            lr=args.learning_rate, gamma=args.gamma)
-    print(f"            device={agent.device}  lr={args.learning_rate}  "
-          f"gamma={args.gamma}  agent_version={args.agent_version}")
+    print(f"            device={agent.device}  lr={args.learning_rate}  gamma={args.gamma}")
 
     rng_seed = args.seed
     total_steps = 0
