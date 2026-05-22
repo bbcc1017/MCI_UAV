@@ -102,7 +102,21 @@ def parse_args():
     return p.parse_args()
 
 
-def gen_one(region, lat, lon, args):
+def collect_keys():
+    """환경변수에서 Kakao 키를 모은다 — KAKAO_API_KEY, KAKAO_API_KEY_2, _3, ...
+
+    여러 키를 순환 사용하면 키 1개당 일일 할당량(~24 시나리오)을 합산할 수 있다.
+    """
+    keys, seen = [], set()
+    for name in ["KAKAO_API_KEY"] + [f"KAKAO_API_KEY_{i}" for i in range(2, 11)]:
+        v = os.environ.get(name)
+        if v and v not in seen:
+            keys.append(v)
+            seen.add(v)
+    return keys
+
+
+def gen_one(region, lat, lon, args, key):
     """단일 점 시나리오 생성 → config_path. 예외는 호출부에서 처리."""
     buf = io.StringIO()
     with redirect_stdout(buf):
@@ -115,15 +129,17 @@ def gen_one(region, lat, lon, args):
             uav_handover_time=args.uav_handover_time,
             total_samples=args.total_samples, base_path=REPO,
             exp_prefix=args.exp_prefix, is_use_time=True, osrm_url=None,
-            kakao_api_key=None, departure_time=args.departure_time,
+            kakao_api_key=key, departure_time=args.departure_time,
             fixed_hos_num=args.fixed_hos_num)
     return cfg
 
 
 def main():
     args = parse_args()
-    if not os.environ.get("KAKAO_API_KEY"):
-        raise SystemExit("환경변수 KAKAO_API_KEY 필요.")
+    keys = collect_keys()
+    if not keys:
+        raise SystemExit("환경변수 KAKAO_API_KEY(_2,_3,...) 필요.")
+    print(f"[gen_eval_points] Kakao 키 {len(keys)}개 — 소진 시 순환")
 
     with open(args.points, encoding="utf-8") as f:
         points = json.load(f)
@@ -144,6 +160,7 @@ def main():
     t0 = time.time()
     total_ok = total_fail = 0
     quota_hit = False
+    key_idx = 0          # 현재 사용 중인 키 (소진 시 다음으로 순환)
     for region, pts in points.items():
         if quota_hit:
             break
@@ -156,28 +173,38 @@ def main():
                 continue
             lat, lon = pt
             ok = False
-            for attempt in range(args.max_retry):
+            resamples = 0
+            while True:
                 ts = time.time()
                 try:
-                    cfg = gen_one(region, lat, lon, args)
+                    cfg = gen_one(region, lat, lon, args, keys[key_idx])
                     n_hos = count_hospitals(cfg)
                     if n_hos != args.fixed_hos_num:
                         raise RuntimeError(
                             f"hospital 수 {n_hos}≠{args.fixed_hos_num}")
                     manifest[region][sk] = cfg
                     print(f"[{region} #{slot}] ✅ ({lat},{lon}) "
-                          f"hos={n_hos} ({time.time()-ts:.0f}s)")
+                          f"hos={n_hos} 키{key_idx+1} ({time.time()-ts:.0f}s)")
                     ok = True
                     break
                 except Exception as e:
-                    # Kakao 일일 할당량 소진은 재추출로 해결 불가 → 전체 중단
+                    # 키 할당량 소진 → 다음 키로 순환 (같은 점 재시도, 재추출 아님)
                     if "API limit has been exceeded" in str(e):
-                        print(f"[{region} #{slot}] ⛔ Kakao 일일 할당량 소진 — "
-                              f"생성 중단 (할당량 리셋 후 재실행 시 이어받음)")
+                        if key_idx + 1 < len(keys):
+                            key_idx += 1
+                            print(f"[{region} #{slot}] 🔑 키{key_idx} 소진 "
+                                  f"→ 키{key_idx+1} 전환")
+                            continue
+                        print(f"[{region} #{slot}] ⛔ 전체 키({len(keys)}개) "
+                              f"소진 — 중단 (리셋 후 재실행 시 이어받음)")
                         quota_hit = True
                         break
+                    # 좌표 불량(경로탐색 실패 등) → 같은 지역에서 재추출
+                    resamples += 1
+                    if resamples > args.max_retry:
+                        break  # 한도 초과 — 아래 공통 실패 처리로
                     print(f"[{region} #{slot}] ⚠️ ({lat},{lon}) 실패: {e} "
-                          f"— 재추출 (attempt {attempt+1}/{args.max_retry})")
+                          f"— 재추출 ({resamples}/{args.max_retry})")
                     lat, lon = resample_point(shapes[region], rng, transformer)
             total_ok += ok
             total_fail += (not ok and not quota_hit)
