@@ -33,11 +33,16 @@ def _build_rule(rule_args):
 
 def make_env_fn(config_path: str, seed: int = 0, hybrid_amb_rule=None):
     def _f():
-        base = make_base_env(config_path, seed=seed, rule_test=False, eval_mode=False)
-        if hybrid_amb_rule:
-            env = HybridAMBHeurWrapper(base, _build_rule(hybrid_amb_rule))
+        # config_path 가 .json 매니페스트면 전국 단일 정책용 멀티-지역 env
+        if config_path.endswith(".json"):
+            from multi_region_env import MultiRegionEnv
+            env = MultiRegionEnv(config_path, seed=seed)
         else:
-            env = FlattenAndDiscreteWrapper(base)
+            base = make_base_env(config_path, seed=seed, rule_test=False, eval_mode=False)
+            if hybrid_amb_rule:
+                env = HybridAMBHeurWrapper(base, _build_rule(hybrid_amb_rule))
+            else:
+                env = FlattenAndDiscreteWrapper(base)
         env = ActionMasker(env, mask_fn)
         env = Monitor(env)
         return env
@@ -54,6 +59,8 @@ def parse_args():
     p.add_argument("--n_steps", type=int, default=512)
     p.add_argument("--batch_size", type=int, default=128)
     p.add_argument("--learning_rate", type=float, default=3e-4)
+    p.add_argument("--ent_coef", type=float, default=0.01,
+                   help="엔트로피 계수 — 탐색 유지/조기수렴 방지 (개선 알고리즘)")
     p.add_argument("--checkpoint_freq", type=int, default=20_000)
     p.add_argument("--vec", choices=["dummy", "subproc"], default="dummy")
     p.add_argument("--hybrid_amb_rule", nargs=4, default=None,
@@ -80,6 +87,8 @@ def main():
         learning_rate=args.learning_rate,
         n_steps=args.n_steps,
         batch_size=args.batch_size,
+        ent_coef=args.ent_coef,
+        policy_kwargs=dict(net_arch=[256, 256]),
         verbose=1,
         seed=args.seed,
         tensorboard_log=os.path.join(args.log_dir, "tb"),
