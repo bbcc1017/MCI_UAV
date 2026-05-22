@@ -5,6 +5,8 @@ pyyaml>=6
 scipy>=1.11
 openpyxl>=3.1
 haversine>=2.8
+requests>=2.31
+matplotlib>=3.7
 
 # RL
 gymnasium>=0.29,<1
