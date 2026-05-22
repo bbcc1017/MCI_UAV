@@ -15,6 +15,8 @@ MCIEnvironment_gym 의 외부 액션 공간은 MultiDiscrete([3, H+1, 2]) 인데
 향후 AMB 재도입 시 wrapper 코드 수정 없이 amb_num>0 인 시나리오만 만들면
 mode 차원이 자동으로 다시 활성화됨.
 """
+import os
+
 import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
@@ -36,6 +38,11 @@ class FlattenAndDiscreteWrapper(gym.Wrapper):
     """
 
     def __init__(self, env):
+        # 피드백 3: MCI_REDUCED_OBS=1 이면 환자/차량 행렬을 집계 통계로 압축.
+        # AggregateObsWrapper 는 ObservationWrapper 라 action_space/unwrapped 는 통과.
+        if os.environ.get("MCI_REDUCED_OBS") == "1":
+            from aggregate_obs import AggregateObsWrapper
+            env = AggregateObsWrapper(env)
         super().__init__(env)
         # 원본 env nvec
         nvec = env.action_space.nvec.tolist()  # [3, H+1, 2]
