@@ -439,9 +439,14 @@ def plot_results(df, out_path: str):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    import platform
-    if platform.system() == "Windows":
-        plt.rcParams["font.family"] = "Malgun Gothic"
+    from matplotlib import font_manager
+    # 한글 폰트 — 플랫폼별 후보 중 설치된 것을 선택 (Linux 서버: Noto Sans CJK KR)
+    _installed = {f.name for f in font_manager.fontManager.ttflist}
+    for _kf in ("Malgun Gothic", "Noto Sans CJK KR", "NanumGothic",
+                "Noto Sans CJK JP", "AppleGothic"):
+        if _kf in _installed:
+            plt.rcParams["font.family"] = _kf
+            break
     plt.rcParams["axes.unicode_minus"] = False
 
     regions = df["region"].tolist()
