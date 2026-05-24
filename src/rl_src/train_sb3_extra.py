@@ -31,6 +31,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 
 from env_factory import make_base_env
 from env_wrapper import FlattenAndDiscreteWrapper
+from learning_curve_plot import try_plot_learning_curve
 
 # algo -> (모델 클래스, 정책 문자열, on-policy 여부)
 _ALGOS = {
@@ -119,6 +120,7 @@ def main():
     final_path = os.path.join(args.log_dir, "final_model.zip")
     model.save(final_path)
     print(f"Saved: {final_path}")
+    try_plot_learning_curve(args.log_dir)
 
 
 if __name__ == "__main__":

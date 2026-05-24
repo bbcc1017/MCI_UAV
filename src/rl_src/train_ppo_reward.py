@@ -37,6 +37,7 @@ from env_factory import make_base_env
 from env_wrapper import FlattenAndDiscreteWrapper, HybridAMBHeurWrapper
 from reward_redesign_wrapper import RewardRedesignWrapper
 from advantage_wrapper import HeuristicAdvantageWrapper
+from learning_curve_plot import try_plot_learning_curve
 
 
 def mask_fn(env):
@@ -191,6 +192,7 @@ def main():
     final_path = os.path.join(args.log_dir, "final_model.zip")
     model.save(final_path)
     print(f"Saved: {final_path}")
+    try_plot_learning_curve(args.log_dir)
 
     eval_env = make_env_fn(args.config_path, seed=args.seed + 999,
                            hybrid_amb_rule=args.hybrid_amb_rule,

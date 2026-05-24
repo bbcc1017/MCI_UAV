@@ -18,6 +18,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from env_factory import make_base_env
 from env_wrapper import FlattenAndDiscreteWrapper, HybridAMBHeurWrapper
+from learning_curve_plot import try_plot_learning_curve
 from reinforce_agent import ReinforceAgent
 
 
@@ -131,6 +132,7 @@ def main():
     agent.save(final_path)
     print(f"\nSaved: {final_path}")
     writer.close()
+    try_plot_learning_curve(args.log_dir)
 
     eval_env = make_env(args.config_path, seed=args.seed + 99999, hybrid_amb_rule=args.hybrid_amb_rule)
     rewards = []

@@ -25,6 +25,7 @@ from stable_baselines3.common.monitor import Monitor
 
 from env_factory import make_base_env
 from env_wrapper import FlattenAndDiscreteWrapper, HybridAMBHeurWrapper
+from learning_curve_plot import try_plot_learning_curve
 
 
 class DoubleDQN(DQN):
@@ -148,6 +149,7 @@ def main():
     final_path = os.path.join(args.log_dir, "final_model.zip")
     model.save(final_path)
     print(f"Saved: {final_path}")
+    try_plot_learning_curve(args.log_dir)
 
     # 짧은 평가 (mask 적용)
     eval_env = make_env(args.config_path, seed=args.seed + 999, hybrid_amb_rule=args.hybrid_amb_rule)
