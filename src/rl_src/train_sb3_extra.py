@@ -70,6 +70,10 @@ def parse_args():
     p.add_argument("--log_dir", default="results/rl/sb3_extra")
     p.add_argument("--learning_rate", type=float, default=None,
                    help="미지정 시 알고리즘 기본값")
+    p.add_argument("--n_quantiles", type=int, default=200,
+                   help="qrdqn 전용 — 분위수 개수. SB3 기본 200 은 행동공간이 크면"
+                        "(출력층 = n_actions×n_quantiles) CPU 에서 매우 느리다. "
+                        "큰 행동공간엔 50 권장.")
     p.add_argument("--checkpoint_freq", type=int, default=50_000)
     p.add_argument("--vec", choices=["dummy", "subproc"], default="dummy")
     return p.parse_args()
@@ -95,6 +99,9 @@ def main():
                   tensorboard_log=os.path.join(args.log_dir, "tb"))
     if args.algo != "recurrentppo":
         kwargs["policy_kwargs"] = dict(net_arch=[256, 256])
+    if args.algo == "qrdqn":
+        # 출력층 = n_actions×n_quantiles → 행동공간이 크면 200 은 과중. 축소.
+        kwargs["policy_kwargs"]["n_quantiles"] = args.n_quantiles
     if args.learning_rate is not None:
         kwargs["learning_rate"] = args.learning_rate
 
