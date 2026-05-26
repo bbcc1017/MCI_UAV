@@ -208,8 +208,13 @@ class MCIEnvironment_gym(gym.Env):
         Per-sub-action 평탄 mask: length = 3 + (H+1) + 2.
         SB3-contrib MaskablePPO MultiDiscrete 호환 형식.
 
-        주의: 이 mask는 차원별 독립이라 결합 제약(예: Red인데 UAV=0)은 보장 못 함.
-              joint mask는 env_wrapper에서 별도 구성.
+        주의: 이 mask는 차원별 독립이라 결합 제약은 보장 못 함.
+              - 예: "Red인데 UAV=0" 같은 (class, mode) 결합 제약
+              - 예: "UAV(mode=1) 은 helipad 보유 병원만" 같은 (dest, mode) 결합 제약
+              → 모두 joint mask (action_masks_joint) 에서만 정확히 표현된다.
+              실제 RL 학습/평가 경로(env_wrapper.FlattenAndDiscreteWrapper)는 joint mask 만
+              사용하므로 per-dim 은 보수적으로 모든 병원을 열어둔다. mask 우회 알고리즘
+              방어는 EventManager.proceed_action() 의 NO HELIPAD 가드가 담당한다.
         """
         full = self.en_manager.get_full_obs()
         H = self.H
@@ -252,13 +257,19 @@ class MCIEnvironment_gym(gym.Env):
         Discrete(3*(H+1)*2) 형식의 결합 mask. env_wrapper.SB3DiscreteWrapper 가 사용.
         - stay (dest=0)는 항상 허용
         - dest!=0 은 (해당 class 환자 존재) AND (해당 mode 자원 존재) AND (해당 병원 capa 여유)
+        - mode=1 (UAV) 은 helipad 보유 병원에만 허용 (도메인 기본 제약)
         """
         full = self.en_manager.get_full_obs()
         H = self.H
         any_amb = len(full['amb_wait'][0]) > 0
         any_uav = len(full['uav_wait'][0]) > 0
-        max_send = self.en_manager.en_properties['hospital']['hos_max_send']
+        hos_props = self.en_manager.en_properties['hospital']
+        max_send = hos_props['hos_max_send']
         p_sent = full['p_sent']
+
+        # UAV → helipad 보유 병원만. helipad_idx 가 비어있으면 UAV는 어떤 병원도 못 감.
+        helipad_idx = np.asarray(hos_props.get('hos_helipad_idx', np.array([]))).reshape(-1)
+        helipad_set = {int(i) for i in helipad_idx.tolist()}
 
         mask = np.zeros((3, H + 1, 2), dtype=bool)
         for c in range(3):
@@ -268,6 +279,9 @@ class MCIEnvironment_gym(gym.Env):
                 mask[c, 0, m] = True
                 if class_avail and mode_avail:
                     for h in range(H):
-                        if p_sent[h] < max_send[h]:
-                            mask[c, h + 1, m] = True
+                        if p_sent[h] >= max_send[h]:
+                            continue
+                        if m == 1 and h not in helipad_set:
+                            continue  # UAV: 헬기장 없는 병원 금지
+                        mask[c, h + 1, m] = True
         return mask.reshape(-1)

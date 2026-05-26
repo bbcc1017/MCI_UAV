@@ -95,6 +95,14 @@ class EventManager():
                 print("NO AMB")
                 return False, False
 
+            # 0b. UAV는 헬기장 보유 병원에만 이송 가능 (도메인 기본 제약).
+            # mask 우회/제거 알고리즘이 non-helipad 행동을 선택해도 여기서 차단한다.
+            if mode == 1:
+                helipad_idx = self.properties['hospital'].get('hos_helipad_idx', np.array([]))
+                if (destination - 1) not in helipad_idx:
+                    print("NO HELIPAD")
+                    return False, False
+
             # 1. 현장 환자 수 변경
             try:
                 p_idx = self.status['patient']['p_wait'][p_class][0].pop()
