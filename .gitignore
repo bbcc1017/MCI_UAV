@@ -244,6 +244,7 @@ sysinfo.txt
 
 # ML-Agents training outputs
 results/
+results_archived/
 *.onnx.meta
 
 # MCI_UAV generated artifacts
