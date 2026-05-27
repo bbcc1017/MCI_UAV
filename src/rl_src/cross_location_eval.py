@@ -457,18 +457,24 @@ def plot_results(df, out_path: str):
 
     def _bar(ax, col_h, col_p, col_d, col_r, ylabel, title):
         ax.bar(x - 1.5*width, df[col_h], width, label="Heuristic best", color="#888")
-        ax.bar(x - 0.5*width, df[col_p], width, label="PPO",            color="#1f77b4")
+        ax.bar(x - 0.5*width, df[col_p], width, label="MaskablePPO",    color="#1f77b4")
         ax.bar(x + 0.5*width, df[col_d], width, label="DQN",            color="#ff7f0e")
         ax.bar(x + 1.5*width, df[col_r], width, label="REINFORCE",      color="#2ca02c")
+        # heuristic 평균 reference line — 한 눈에 휴리스틱 수준 파악
+        h_mean = float(df[col_h].mean())
+        ax.axhline(h_mean, color="#888", linestyle="--", linewidth=1.2,
+                   alpha=0.8, label=f"Heuristic avg = {h_mean:.2f}")
         ax.set_xticks(x); ax.set_xticklabels(regions, rotation=0)
         ax.set_ylabel(ylabel); ax.set_title(title)
-        ax.legend(loc="lower right", ncol=4); ax.grid(axis="y", alpha=0.3)
+        ax.legend(loc="lower right", ncol=5); ax.grid(axis="y", alpha=0.3)
 
     def _delta(ax, col_p, col_d, col_r, ylabel, title):
-        ax.axhline(0, color="#888", linewidth=1)
-        ax.plot(x, df[col_p], "o-", label="PPO - Heur",       color="#1f77b4")
-        ax.plot(x, df[col_d], "s-", label="DQN - Heur",       color="#ff7f0e")
-        ax.plot(x, df[col_r], "^-", label="REINFORCE - Heur", color="#2ca02c")
+        # heuristic = 0 reference line (실선, 굵게)
+        ax.axhline(0, color="#888", linestyle="-", linewidth=1.5,
+                   alpha=0.9, label="Heuristic (Δ=0)")
+        ax.plot(x, df[col_p], "o-", label="MaskablePPO - Heur", color="#1f77b4")
+        ax.plot(x, df[col_d], "s-", label="DQN - Heur",         color="#ff7f0e")
+        ax.plot(x, df[col_r], "^-", label="REINFORCE - Heur",   color="#2ca02c")
         ax.set_xticks(x); ax.set_xticklabels(regions, rotation=0)
         ax.set_ylabel(ylabel); ax.set_title(title)
         ax.legend(loc="best"); ax.grid(axis="y", alpha=0.3)

@@ -78,17 +78,21 @@ def plot_variant_eval(variant_csv: str, f3_csv: str, tag: str, out_path: str):
     fig, axes = plt.subplots(2, 2, figsize=(20, 10))
 
     def _bar(ax, col_h, col_p, col_v, ylabel, title):
-        ax.bar(x - width, df[col_h], width, label="Heuristic best",   color=PALETTE["heur"])
-        ax.bar(x,         df[col_p], width, label="기준 PPO (f3)",     color=PALETTE["PPO"])
-        ax.bar(x + width, df[col_v], width, label=tag,                 color=variant_color)
+        ax.bar(x - width, df[col_h], width, label="Heuristic best",       color=PALETTE["heur"])
+        ax.bar(x,         df[col_p], width, label="기준 MaskablePPO (f3)", color=PALETTE["PPO"])
+        ax.bar(x + width, df[col_v], width, label=tag,                     color=variant_color)
+        h_mean = float(df[col_h].mean())
+        ax.axhline(h_mean, color="#888", linestyle="--", linewidth=1.2,
+                   alpha=0.8, label=f"Heuristic avg = {h_mean:.2f}")
         ax.set_xticks(x); ax.set_xticklabels(regions, rotation=0)
         ax.set_ylabel(ylabel); ax.set_title(title)
-        ax.legend(loc="lower right", ncol=3); ax.grid(axis="y", alpha=0.3)
+        ax.legend(loc="lower right", ncol=4); ax.grid(axis="y", alpha=0.3)
 
     def _delta(ax, dh, dp, ylabel, title):
-        ax.axhline(0, color="#888", linewidth=1)
-        ax.plot(x, dh, "o-", label=f"{tag} - Heur",   color=variant_color)
-        ax.plot(x, dp, "s-", label=f"{tag} - 기준PPO", color="#444")
+        ax.axhline(0, color="#888", linestyle="-", linewidth=1.5,
+                   alpha=0.9, label="Heuristic (Δ=0)")
+        ax.plot(x, dh, "o-", label=f"{tag} - Heur",             color=variant_color)
+        ax.plot(x, dp, "s-", label=f"{tag} - 기준MaskablePPO",   color="#444")
         ax.set_xticks(x); ax.set_xticklabels(regions, rotation=0)
         ax.set_ylabel(ylabel); ax.set_title(title)
         ax.legend(loc="best"); ax.grid(axis="y", alpha=0.3)
@@ -144,22 +148,26 @@ def plot_extra_eval(extra_csv: str, f3_csv: str, out_path: str,
         ax.bar(x + offsets[0], df[f"heuristic_R{suffix}"], width,
                label="Heuristic best", color=PALETTE["heur"])
         ax.bar(x + offsets[1], df[f"PPO_R{suffix}"], width,
-               label="PPO (f3 기준)", color=PALETTE["PPO"])
+               label="MaskablePPO (f3 기준)", color=PALETTE["PPO"])
         for i, algo in enumerate(extras):
             col = f"{algo}_R{suffix}"
             if col in df.columns:
                 ax.bar(x + offsets[2 + i], df[col], width,
                        label=algo, color=PALETTE.get(algo))
+        h_mean = float(df[f"heuristic_R{suffix}"].mean())
+        ax.axhline(h_mean, color="#888", linestyle="--", linewidth=1.2,
+                   alpha=0.8, label=f"Heuristic avg = {h_mean:.2f}")
         ax.set_xticks(x); ax.set_xticklabels(regions, rotation=0)
         ax.set_ylabel(ylabel); ax.set_title(title)
-        ax.legend(loc="lower right", ncol=3, fontsize=9)
+        ax.legend(loc="lower right", ncol=4, fontsize=9)
         ax.grid(axis="y", alpha=0.3)
 
     def _delta(ax, suffix, ylabel, title):
-        ax.axhline(0, color="#888", linewidth=1)
-        # 기준 PPO 차이도 참조선으로 그려둠
+        ax.axhline(0, color="#888", linestyle="-", linewidth=1.5,
+                   alpha=0.9, label="Heuristic (Δ=0)")
         ax.plot(x, df[f"PPO_R{suffix}"] - df[f"heuristic_R{suffix}"], "-",
-                label="PPO (f3) - Heur", color=PALETTE["PPO"], linewidth=2, alpha=0.6)
+                label="MaskablePPO (f3) - Heur",
+                color=PALETTE["PPO"], linewidth=2, alpha=0.6)
         markers = ["o", "s", "^", "v"]
         for i, algo in enumerate(extras):
             col = f"{algo}_R{suffix}"
