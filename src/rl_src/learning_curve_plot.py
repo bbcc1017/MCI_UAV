@@ -41,19 +41,43 @@ _ALGO_ORDER = [
     "trpo",
 ]
 
+# 학습곡선 PNG 의 알고리즘 색상. archived (helipad fix 이전) 학습곡선과 색을
+# 그대로 맞춰서 pre/post 비교를 시각적으로 가능하게 한다.
+# (평가 PNG 의 codex 컨벤션 팔레트 #1f77b4/#ff7f0e/#2ca02c 와는 별개 — 평가
+#  PNG 도 자기네 archived 와 동일 색을 유지하므로 두 카테고리 팔레트는 다름.)
 _COLORS = {
-    "ppo": "#2563eb",
-    "ppo_reward": "#4f46e5",
-    "ppo_enriched": "#0f766e",
-    "ppo_bc": "#7c3aed",
-    "recurrentppo": "#0891b2",
-    "dqn": "#dc2626",
-    "qrdqn": "#ea580c",
-    "reinforce": "#16a34a",
-    "a2c": "#9333ea",
-    "trpo": "#ca8a04",
+    "ppo":           "#2563eb",
+    "ppo_reward":    "#4f46e5",
+    "ppo_enriched":  "#0f766e",
+    "ppo_bc":        "#7c3aed",
+    "recurrentppo":  "#0891b2",
+    "dqn":           "#dc2626",
+    "qrdqn":         "#ea580c",
+    "reinforce":     "#16a34a",
+    "a2c":           "#9333ea",
+    "trpo":          "#ca8a04",
     "heuristic_best": "#111827",
 }
+
+# 디렉토리명 → 범례 표시명. "ppo" 는 sb3_contrib.MaskablePPO 라서 풀네임으로
+# 명시 (sb3.PPO 와 혼동 방지). 변형도 MaskablePPO 기반이라는 점 명시.
+_DISPLAY_NAMES = {
+    "ppo":           "MaskablePPO",
+    "ppo_reward":    "Reward-redesign MaskablePPO",
+    "ppo_enriched":  "Enriched MaskablePPO",
+    "ppo_bc":        "BC + MaskablePPO",
+    "recurrentppo":  "RecurrentPPO",
+    "dqn":           "DQN",
+    "qrdqn":         "QR-DQN",
+    "reinforce":     "REINFORCE",
+    "a2c":           "A2C",
+    "trpo":          "TRPO",
+    "heuristic_best": "Heuristic best",
+}
+
+
+def _display_name(key: str) -> str:
+    return _DISPLAY_NAMES.get(key, key)
 
 _REGION_EN = {
     "서울": "Seoul",
@@ -194,17 +218,18 @@ def _plot_series_on_axis(ax, series, heuristic, *, max_step: int | None = None,
         color = _COLORS.get(name)
         if show_raw and len(values) > 25:
             ax.plot(xs, ys, color=color, alpha=0.14, linewidth=0.8, label="_nolegend_")
-        ax.plot(xs, _smooth(ys), label=name, color=color, linewidth=2.2)
+        ax.plot(xs, _smooth(ys), label=_display_name(name), color=color, linewidth=2.2)
 
     if heuristic is not None:
         if max_step is None:
             max_step = max((values[-1][0] for _, values in series), default=1)
         max_step = max(max_step, 1)
+        # heuristic 평탄선 — 평가 PNG 와 라벨 일치 ("Heuristic best") + 수치 표기
         ax.hlines(
             heuristic,
             xmin=0,
             xmax=max_step,
-            label="heuristic_best",
+            label=f"{_display_name('heuristic_best')} = {heuristic:.2f}",
             color=_COLORS["heuristic_best"],
             linestyle=(0, (5, 3)),
             linewidth=2.0,
