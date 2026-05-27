@@ -191,6 +191,86 @@ def plot_extra_eval(extra_csv: str, f3_csv: str, out_path: str,
     print(f"Saved: {os.path.abspath(out_path)}")
 
 
+def plot_randeval_points(points_csv: str, out_path: str):
+    """Hold-out random points (17지역 × 5점 = 85점) 의 점 단위 평가 PNG.
+
+    eval_random_points.py 가 만든 `_points.csv` (85행, 표준 3-algo 스키마) 를
+    cross_location_eval.plot_results 와 같은 컨벤션 (20x10, dpi=150, 2x2:
+    R / R_woG / ΔR / ΔR_woG, 컬러 #888/#1f77b4/#ff7f0e/#2ca02c) 으로 시각화.
+
+    Top 패널: 지역별로 5점 sub-bar 클러스터 (4 algo × 5 point = 20 bar/region).
+    Bottom 패널: 지역별 5점 평균 Δ 라인.
+    """
+    _set_korean_font()
+    df = pd.read_csv(points_csv, encoding="utf-8-sig")
+    # region 순서 유지 (CSV 등장 순) + point_idx 정렬
+    regions = list(dict.fromkeys(df["region"].tolist()))
+    n_pts = int(df.groupby("region").size().max())  # 보통 5
+    n_algo = 4  # heur + PPO + DQN + REINFORCE
+    # 한 region 안: n_algo × n_pts 막대. 좌→우 algo 그룹화.
+    cluster_width = 0.80
+    bar_w = cluster_width / (n_algo * n_pts)
+
+    def _x_offsets(algo_i, pt_i):
+        # algo 그룹 안에서 점 인덱스 순으로 인접
+        return (algo_i * n_pts + pt_i - (n_algo * n_pts - 1) / 2) * bar_w
+
+    x = np.arange(len(regions))
+    fig, axes = plt.subplots(2, 2, figsize=(20, 10))
+
+    def _bar(ax, suffix, ylabel, title):
+        algo_specs = [
+            ("Heuristic best", PALETTE["heur"],      f"heuristic_R{suffix}"),
+            ("MaskablePPO",    PALETTE["PPO"],       f"PPO_R{suffix}"),
+            ("DQN",            PALETTE["DQN"],       f"DQN_R{suffix}"),
+            ("REINFORCE",      PALETTE["REINFORCE"], f"REINFORCE_R{suffix}"),
+        ]
+        for algo_i, (label, color, col) in enumerate(algo_specs):
+            for pt_i in range(n_pts):
+                vals = []
+                for r in regions:
+                    sub = df[df["region"] == r].sort_values("point_idx") if "point_idx" in df.columns \
+                          else df[df["region"] == r]
+                    sub_vals = sub[col].tolist()
+                    vals.append(sub_vals[pt_i] if pt_i < len(sub_vals) else 0)
+                ax.bar(x + _x_offsets(algo_i, pt_i), vals, bar_w,
+                       color=color, label=label if pt_i == 0 else "_nolegend_")
+        h_mean = float(df[f"heuristic_R{suffix}"].mean())
+        ax.axhline(h_mean, color="#888", linestyle="--", linewidth=1.2,
+                   alpha=0.8, label=f"Heuristic avg = {h_mean:.2f}")
+        ax.set_xticks(x); ax.set_xticklabels(regions, rotation=0)
+        ax.set_ylabel(ylabel); ax.set_title(title)
+        ax.legend(loc="lower right", ncol=5); ax.grid(axis="y", alpha=0.3)
+
+    def _delta(ax, suffix, ylabel, title):
+        # 지역별 5점 평균 Δ
+        ax.axhline(0, color="#888", linestyle="-", linewidth=1.5,
+                   alpha=0.9, label="Heuristic (Δ=0)")
+        for marker, label, color, col in [
+            ("o", "MaskablePPO - Heur", PALETTE["PPO"],       f"PPO_R{suffix}"),
+            ("s", "DQN - Heur",         PALETTE["DQN"],       f"DQN_R{suffix}"),
+            ("^", "REINFORCE - Heur",   PALETTE["REINFORCE"], f"REINFORCE_R{suffix}"),
+        ]:
+            means = [df[df["region"] == r][col].mean()
+                     - df[df["region"] == r][f"heuristic_R{suffix}"].mean()
+                     for r in regions]
+            ax.plot(x, means, marker + "-", label=label, color=color)
+        ax.set_xticks(x); ax.set_xticklabels(regions, rotation=0)
+        ax.set_ylabel(ylabel); ax.set_title(title)
+        ax.legend(loc="best"); ax.grid(axis="y", alpha=0.3)
+
+    _bar(axes[0, 0], "",     "mean reward",     "Mean reward (R, Green 포함) — 85점 raw")
+    _bar(axes[0, 1], "_woG", "mean reward woG", "Mean reward (R_woG, Green 제외) — 85점 raw")
+    _delta(axes[1, 0], "",     "Δ vs heuristic (R)",     "RL 우위 폭 (R) — 지역별 5점 평균")
+    _delta(axes[1, 1], "_woG", "Δ vs heuristic (R_woG)", "RL 우위 폭 (R_woG) — 지역별 5점 평균")
+
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
+    plt.savefig(out_path, dpi=150)
+    plt.close(fig)
+    print(f"Saved: {os.path.abspath(out_path)}")
+
+
 def _cli():
     import argparse
     p = argparse.ArgumentParser()
@@ -207,11 +287,17 @@ def _cli():
     pe.add_argument("--f3_csv", default="results/plan1nat_f3_eval.csv")
     pe.add_argument("--out", required=True)
 
+    pp = sub.add_parser("points", help="hold-out 85점 점 단위 PNG")
+    pp.add_argument("--csv", required=True, help="randeval_points CSV (85 rows)")
+    pp.add_argument("--out", required=True)
+
     a = p.parse_args()
     if a.mode == "variant":
         plot_variant_eval(a.csv, a.f3_csv, a.tag, a.out)
     elif a.mode == "extra":
         plot_extra_eval(a.csv, a.f3_csv, a.out)
+    elif a.mode == "points":
+        plot_randeval_points(a.csv, a.out)
 
 
 if __name__ == "__main__":
