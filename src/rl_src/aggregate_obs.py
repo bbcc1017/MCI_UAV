@@ -66,6 +66,10 @@ class AggregateObsWrapper(gym.ObservationWrapper):
         self._drop_occ = ("idle" in toks)
         self._add_eta = ("eta" in toks) or ("etanorm" in toks)
         self._eta_norm = ("etanorm" in toks)
+        # 공격적 가지치기 토큰
+        self._drop_black = ("noblack" in toks)   # patient_agg Black 등급 제거 (20→15)
+        self._psent_mode = ("none" if "nopsent" in toks else
+                            ("stat" if "psentstat" in toks else "full"))  # p_sent 제거/집계/원본
         self._variant_toks = toks
         # h_states 유지 컬럼 (정렬 [0=idle, 1=queue, 2=occ])
         keep = [0]
@@ -76,8 +80,9 @@ class AggregateObsWrapper(gym.ObservationWrapper):
         self._h_keep = sorted(keep)
         self._eta_cache = None  # (amb_eta(H,), uav_eta(H,)) lazy
 
+        pa_classes = (self.N_CLASS - 1) if self._drop_black else self.N_CLASS
         d = {
-            "patient_agg":   spaces.Box(0.0, big, shape=(self.N_CLASS * self.N_STAGE,),
+            "patient_agg":   spaces.Box(0.0, big, shape=(pa_classes * self.N_STAGE,),
                                         dtype=np.float32),
             "vehicle_agg":   spaces.Box(0.0, np.inf, shape=(10,), dtype=np.float32),
         }
@@ -85,7 +90,11 @@ class AggregateObsWrapper(gym.ObservationWrapper):
             d["h_states"] = sp["h_states"]
         else:
             d["h_states"] = spaces.Box(0.0, big, shape=(H, len(self._h_keep)), dtype=np.float32)
-        d["p_sent"]        = sp["p_sent"]
+        if self._psent_mode == "full":
+            d["p_sent"] = sp["p_sent"]
+        elif self._psent_mode == "stat":
+            d["p_sent"] = spaces.Box(0.0, big, shape=(3,), dtype=np.float32)  # [sum, nnz, max]
+        # "none": p_sent 키 제거 (병원 capa 는 action mask 가 처리)
         d["p_at_site"]     = sp["p_at_site"]
         d["n_amb_at_site"] = sp["n_amb_at_site"]
         d["n_uav_at_site"] = sp["n_uav_at_site"]
@@ -152,16 +161,26 @@ class AggregateObsWrapper(gym.ObservationWrapper):
         ])
         h = np.asarray(obs["h_states"], dtype=np.float32)
         h_out = h if len(self._h_keep) == 3 else h[:, self._h_keep]
+        pa = self._patient_agg(np.asarray(obs["p_states"]))
+        if self._drop_black:  # Black 등급(class 3) 제거 → (3,5)
+            pa = pa.reshape(self.N_CLASS, self.N_STAGE)[:self.N_CLASS - 1].reshape(-1)
         out = {
-            "patient_agg":   self._patient_agg(np.asarray(obs["p_states"])),
+            "patient_agg":   pa,
             "vehicle_agg":   veh,
             "h_states":      h_out,
-            "p_sent":        obs["p_sent"],
             "p_at_site":     obs["p_at_site"],
             "n_amb_at_site": obs["n_amb_at_site"],
             "n_uav_at_site": obs["n_uav_at_site"],
             "time":          obs["time"],
         }
+        if self._psent_mode == "full":
+            out["p_sent"] = obs["p_sent"]
+        elif self._psent_mode == "stat":
+            ps = np.asarray(obs["p_sent"], dtype=np.float32).reshape(-1)
+            out["p_sent"] = np.array(
+                [ps.sum(), float((ps > 0).sum()), ps.max() if ps.size else 0.0],
+                dtype=np.float32)
+        # "none": p_sent 미포함
         if self._add_eta:
             amb_eta, uav_eta = self._get_eta()
             out["amb_eta"] = amb_eta
