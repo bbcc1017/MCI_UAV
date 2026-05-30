@@ -103,8 +103,8 @@ def build_feature_labels(wrapped_env) -> list:
 
 def rollout_region(region, config_path, rule_name, model, n_episodes, seed_base,
                    hos_props_out):
-    """한 지역 N 에피소드 롤아웃. (obs_rows, meta_rows) 반환."""
-    obs_rows, meta_rows = [], []
+    """한 지역 N 에피소드 롤아웃. (obs_rows, meta_rows, mask_rows) 반환."""
+    obs_rows, meta_rows, mask_rows = [], [], []
     for ep in range(n_episodes):
         seed = seed_base + ep
         with _suppress_stdout():
@@ -151,6 +151,7 @@ def rollout_region(region, config_path, rule_name, model, n_episodes, seed_base,
 
                 cur_time = float(np.asarray(obs)[-1]) if False else float(u.ev_manager.time)
                 obs_rows.append(np.asarray(obs, dtype=np.float32))
+                mask_rows.append(np.asarray(mask, dtype=bool))  # joint action mask (predict 에 쓴 그대로)
                 meta_rows.append({
                     "region": region, "episode": ep, "step": step, "time": cur_time,
                     # RL 결정
@@ -177,7 +178,7 @@ def rollout_region(region, config_path, rule_name, model, n_episodes, seed_base,
                 meta_rows[-1]["r_woG"] = float(info.get("r_woG", 0.0))
                 done = term or trunc
                 step += 1
-    return obs_rows, meta_rows
+    return obs_rows, meta_rows, mask_rows
 
 
 def main():
@@ -206,7 +207,7 @@ def main():
         regions = [r for r in regions if r in want]
 
     os.makedirs(args.out_dir, exist_ok=True)
-    all_obs, all_meta, hos_props = [], [], {}
+    all_obs, all_meta, all_mask, hos_props = [], [], [], {}
     labels = None
     for ri, region in enumerate(regions):
         if region not in best_rule:
@@ -214,7 +215,7 @@ def main():
             continue
         sys.stderr.write(f"[{ri+1}/{len(regions)}] {region} (rule={best_rule[region]}) ...\n")
         sys.stderr.flush()
-        obs_rows, meta_rows = rollout_region(
+        obs_rows, meta_rows, mask_rows = rollout_region(
             region, manifest[region], best_rule[region], model,
             args.n_episodes, args.seed_base, hos_props)
         if labels is None and obs_rows:
@@ -226,12 +227,14 @@ def main():
             assert len(labels) == len(obs_rows[0]), f"라벨 {len(labels)} != obs {len(obs_rows[0])}"
         all_obs.extend(obs_rows)
         all_meta.extend(meta_rows)
+        all_mask.extend(mask_rows)
         sys.stderr.write(f"    → {len(meta_rows)} decisions\n")
 
     obs_mat = np.asarray(all_obs, dtype=np.float32)
+    mask_mat = np.asarray(all_mask, dtype=bool)  # N×(3*(H+1)*2) joint mask
     meta_df = pd.DataFrame(all_meta)
     base_out = os.path.join(args.out_dir, f"decisions_{args.tag}")
-    np.savez_compressed(base_out + ".npz", obs=obs_mat)
+    np.savez_compressed(base_out + ".npz", obs=obs_mat, mask=mask_mat)
     meta_df.to_csv(base_out + "_meta.csv", index=False)
     with open(base_out + "_labels.json", "w", encoding="utf-8") as f:
         json.dump({"labels": labels, "hospital_props": hos_props,

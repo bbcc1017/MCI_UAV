@@ -19,6 +19,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 
 from env_factory import make_base_env
 from env_wrapper import FlattenAndDiscreteWrapper, HybridAMBHeurWrapper
+from reward_redesign_wrapper import RewardRedesignWrapper
 from learning_curve_plot import try_plot_learning_curve
 
 
@@ -32,7 +33,7 @@ def _build_rule(rule_args):
     return Universal_Rule(*rule_args)
 
 
-def make_env_fn(config_path: str, seed: int = 0, hybrid_amb_rule=None):
+def make_env_fn(config_path: str, seed: int = 0, hybrid_amb_rule=None, reward_mode="raw"):
     def _f():
         # config_path 가 .json 매니페스트면 전국 단일 정책용 멀티-지역 env
         if config_path.endswith(".json"):
@@ -44,6 +45,9 @@ def make_env_fn(config_path: str, seed: int = 0, hybrid_amb_rule=None):
                 env = HybridAMBHeurWrapper(base, _build_rule(hybrid_amb_rule))
             else:
                 env = FlattenAndDiscreteWrapper(base)
+        # 보상 모드 (raw=무변화 / woG=Green 제외 / rywt=Red·Yellow 가중). info['r_woG'] 사용.
+        if reward_mode != "raw":
+            env = RewardRedesignWrapper(env, mode=reward_mode)
         env = ActionMasker(env, mask_fn)
         env = Monitor(env)
         return env
@@ -68,6 +72,9 @@ def parse_args():
                    metavar=("PRIORITY", "HOS_SELECT", "RED_MODE", "YELLOW_MODE"),
                    help="2안 학습: AMB 결정을 룰에 위임 (UAV 만 RL). "
                         "예: --hybrid_amb_rule START RedOnly Both_AMBFirst Both_AMBFirst")
+    p.add_argument("--reward_mode", choices=["raw", "woG", "rywt"], default="raw",
+                   help="보상 모드: raw(원본·Green포함) / woG(Green제외) / rywt(R·Y 가중). "
+                        "MultiRegionEnv 결합 가능 (RewardRedesignWrapper).")
     return p.parse_args()
 
 
@@ -77,8 +84,11 @@ def main():
 
     if args.hybrid_amb_rule:
         print(f"[hybrid] AMB 결정 룰: {' / '.join(args.hybrid_amb_rule)}")
+    if args.reward_mode != "raw":
+        print(f"[reward] mode={args.reward_mode} (info['r_woG'] 등으로 보상 치환)")
     env_fns = [make_env_fn(args.config_path, seed=args.seed + i,
-                           hybrid_amb_rule=args.hybrid_amb_rule)
+                           hybrid_amb_rule=args.hybrid_amb_rule,
+                           reward_mode=args.reward_mode)
                for i in range(args.n_envs)]
     vec_cls = SubprocVecEnv if args.vec == "subproc" else DummyVecEnv
     venv = vec_cls(env_fns)
@@ -110,7 +120,8 @@ def main():
 
     # 짧은 평가
     eval_env = make_env_fn(args.config_path, seed=args.seed + 999,
-                           hybrid_amb_rule=args.hybrid_amb_rule)()
+                           hybrid_amb_rule=args.hybrid_amb_rule,
+                           reward_mode=args.reward_mode)()
     mean_r, std_r = masked_evaluate(model, eval_env, n_eval_episodes=10, use_masking=True)
     print(f"Eval mean reward: {mean_r:.3f} +/- {std_r:.3f}")
 
