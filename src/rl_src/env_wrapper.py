@@ -81,6 +81,7 @@ class FlattenAndDiscreteWrapper(gym.Wrapper):
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(flat_dim,), dtype=np.float32
         )
+        self._ct_cache = None  # 등급-tier 치료가능 마스크 캐시 (3, H)
 
     # ---------- action 변환 ----------
     def _decode(self, action: int):
@@ -122,10 +123,38 @@ class FlattenAndDiscreteWrapper(gym.Wrapper):
         return _flatten_dict_obs(obs, self._obs_keys), info
 
     # ---------- action mask ----------
+    def _can_treat_mask(self) -> np.ndarray:
+        """(3, H) bool — class c 환자가 병원 h(tier별)에서 치료 가능한가. patient_info 기반, 캐시.
+
+        예) treat_tier2=[0,1,1,1] → Red(c=0)는 Tier2 병원 불가. sim 무수정, 읽기만.
+        """
+        if self._ct_cache is None:
+            ep = self.env.unwrapped.en_manager.en_properties
+            hos_tier = np.asarray(ep['hospital']['hos_tier']).reshape(-1)
+            pinfo = ep['patient']['patient_info']
+            t3 = np.asarray(pinfo['treat_tier3']).astype(bool)
+            t2 = np.asarray(pinfo['treat_tier2']).astype(bool)
+            ct = np.zeros((3, self.H), dtype=bool)
+            for h in range(self.H):
+                ht = int(hos_tier[h])
+                col = t3 if ht == 3 else (t2 if ht == 2 else np.zeros(4, dtype=bool))
+                ct[:, h] = col[:3]
+            self._ct_cache = ct
+        return self._ct_cache
+
     def action_masks(self) -> np.ndarray:
-        """결합 mask: shape (n_actions,) bool. mode 차원 고정 시 해당 슬라이스만 평탄화."""
+        """결합 mask: shape (n_actions,) bool. mode 차원 고정 시 해당 슬라이스만 평탄화.
+
+        등급-tier 도메인 제약(예: Red→Tier3 전용)을 action_masks_joint 위에 보강한다.
+        시뮬은 이를 도착 후 diversion(미완성 로직)으로만 강제하므로, 마스크에서 사전 차단해
+        잘못된 이송→우회 페널티를 제거한다. MCI_TIER_MASK=0 이면 비활성(구버전 재현용).
+        """
         full = self.env.unwrapped.action_masks_joint()  # (3 * (H+1) * 2,)
         full = full.reshape(self._orig_nvec[0], self._orig_nvec[1], self._orig_nvec[2])
+        if os.environ.get("MCI_TIER_MASK", "1") != "0":
+            ct = self._can_treat_mask()            # (3, H) bool
+            full = full.copy()
+            full[:, 1:, :] &= ct[:, :, None]       # dest 1..H(병원)만 차단, stay(0) 유지
         if self._fixed_mode is not None:
             sliced = full[:, :, self._fixed_mode]  # (3, H+1)
             return sliced.reshape(-1)
