@@ -79,6 +79,8 @@ class AggregateObsWrapper(gym.ObservationWrapper):
             keep.append(2)
         self._h_keep = sorted(keep)
         self._eta_cache = None  # (amb_eta(H,), uav_eta(H,)) lazy
+        self._add_route = ("routescore" in toks)  # 병원별 (가용용량/거리) 동적 라우팅 점수
+        self._route_cache = None  # (max_send, d_road, d_euc) lazy
 
         pa_classes = (self.N_CLASS - 1) if self._drop_black else self.N_CLASS
         d = {
@@ -102,6 +104,9 @@ class AggregateObsWrapper(gym.ObservationWrapper):
         if self._add_eta:
             d["amb_eta"] = spaces.Box(0.0, np.inf, shape=(H,), dtype=np.float32)
             d["uav_eta"] = spaces.Box(0.0, np.inf, shape=(H,), dtype=np.float32)
+        if self._add_route:
+            d["route_amb"] = spaces.Box(0.0, np.inf, shape=(H,), dtype=np.float32)
+            d["route_uav"] = spaces.Box(0.0, np.inf, shape=(H,), dtype=np.float32)
         self.observation_space = spaces.Dict(d)
 
     @classmethod
@@ -154,6 +159,16 @@ class AggregateObsWrapper(gym.ObservationWrapper):
             self._eta_cache = (amb, uav)
         return self._eta_cache
 
+    def _get_route_static(self):
+        """병원별 (max_send, 도로거리, 직선거리) — 시나리오 상수, 캐시. 거리는 +1 로 0division 방지."""
+        if self._route_cache is None:
+            ep = self.env.unwrapped.en_manager.en_properties["hospital"]
+            ms = np.resize(np.asarray(ep["hos_max_send"], np.float32).reshape(-1), self.H)
+            dr = np.resize(np.asarray(ep["d_HtoS_road"], np.float32).reshape(-1), self.H) + 1.0
+            de = np.resize(np.asarray(ep["d_HtoS_euc"], np.float32).reshape(-1), self.H) + 1.0
+            self._route_cache = (ms, dr, de)
+        return self._route_cache
+
     def observation(self, obs: dict) -> dict:
         veh = np.concatenate([
             self._fleet_agg(np.asarray(obs["amb_states"])),
@@ -185,4 +200,10 @@ class AggregateObsWrapper(gym.ObservationWrapper):
             amb_eta, uav_eta = self._get_eta()
             out["amb_eta"] = amb_eta
             out["uav_eta"] = uav_eta
+        if self._add_route:
+            ms, dr, de = self._get_route_static()
+            ps = np.asarray(obs["p_sent"], dtype=np.float32).reshape(-1)
+            avail = np.maximum(ms - ps, 0.0)  # 동적 가용용량 (p_sent 시변)
+            out["route_amb"] = (avail / dr).astype(np.float32)  # 가깝고 여유 큰 병원일수록 높음
+            out["route_uav"] = (avail / de).astype(np.float32)
         return out
