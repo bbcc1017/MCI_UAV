@@ -27,6 +27,7 @@ _ap.add_argument("--tag", required=True)
 _ap.add_argument("--n_episodes", type=int, default=100)
 _ap.add_argument("--seed_base", type=int, default=2000)
 _ap.add_argument("--out_csv", default=None)
+_ap.add_argument("--vecnorm_path", default=None, help="VecNormalize pkl (obs 표준화 통계). 있으면 평가 obs 에 적용.")
 args = _ap.parse_args()
 
 os.environ["MCI_REDUCED_OBS"] = "1"
@@ -62,6 +63,23 @@ def main():
 
     from sb3_contrib import MaskablePPO
     model = MaskablePPO.load(args.model)
+
+    # vecnorm 통계 적용 정책 (학습 시 obs 표준화했으면 평가 obs 도 동일 변환)
+    if args.vecnorm_path:
+        import pickle
+        with open(args.vecnorm_path, "rb") as f:
+            vn = pickle.load(f)
+        mean = vn.obs_rms.mean.astype(np.float32)
+        std = np.sqrt(vn.obs_rms.var + vn.epsilon).astype(np.float32)
+        clip = float(vn.clip_obs)
+        def policy_fn(obs, mask, env_unwrapped):
+            o = np.clip((np.asarray(obs, np.float32) - mean) / std, -clip, clip)
+            a, _ = model.predict(o, action_masks=mask, deterministic=True)
+            return int(a)
+        sys.stderr.write(f"[vecnorm] {args.vecnorm_path} 통계로 평가 obs 표준화\n")
+    else:
+        policy_fn = ppo_policy(model)
+
     with open(args.manifest, encoding="utf-8") as f:
         manifest = json.load(f)
     best_rule = dict(zip(*[pd.read_csv(args.heur_csv)[c] for c in ("region", "heuristic_rule")]))
@@ -74,7 +92,7 @@ def main():
         ef = make_eval_env(cfg)
         with _silence():
             mh = eval_policy(ef, make_heuristic_policy(best_rule[region]), args.n_episodes, args.seed_base)
-            mm = eval_policy(ef, ppo_policy(model), args.n_episodes, args.seed_base)
+            mm = eval_policy(ef, policy_fn, args.n_episodes, args.seed_base)
         rows.append({
             "region": region,
             "heur_R": mh["mean_R"], "model_R": mm["mean_R"],

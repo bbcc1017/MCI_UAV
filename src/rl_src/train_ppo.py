@@ -75,6 +75,9 @@ def parse_args():
     p.add_argument("--reward_mode", choices=["raw", "woG", "rywt"], default="raw",
                    help="보상 모드: raw(원본·Green포함) / woG(Green제외) / rywt(R·Y 가중). "
                         "MultiRegionEnv 결합 가능 (RewardRedesignWrapper).")
+    p.add_argument("--vecnorm", action="store_true",
+                   help="VecNormalize 로 obs 표준화(running mean/std, clip 10). 학습 후 vecnorm.pkl 저장. "
+                        "obs 피처 스케일 차이(100x) 해소 → 묻힌 피처 활성화.")
     return p.parse_args()
 
 
@@ -92,6 +95,10 @@ def main():
                for i in range(args.n_envs)]
     vec_cls = SubprocVecEnv if args.vec == "subproc" else DummyVecEnv
     venv = vec_cls(env_fns)
+    if args.vecnorm:
+        from stable_baselines3.common.vec_env import VecNormalize
+        venv = VecNormalize(venv, norm_obs=True, norm_reward=False, clip_obs=10.0)
+        print("[vecnorm] obs 표준화 활성 (running mean/std, clip_obs=10)")
 
     model = MaskablePPO(
         "MlpPolicy", venv,
@@ -116,6 +123,9 @@ def main():
     final_path = os.path.join(args.log_dir, "final_model.zip")
     model.save(final_path)
     print(f"Saved: {final_path}")
+    if args.vecnorm:
+        venv.save(os.path.join(args.log_dir, "vecnorm.pkl"))
+        print(f"Saved vecnorm: {os.path.join(args.log_dir, 'vecnorm.pkl')}")
     try_plot_learning_curve(args.log_dir)
 
     # 짧은 평가
