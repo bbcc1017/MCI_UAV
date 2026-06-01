@@ -85,7 +85,11 @@ def build_feature_labels(wrapped_env) -> list:
             labels += [f"ve_{fl}_{st}" for fl in ["amb", "uav"] for st in fleet_stats]
         elif k == "h_states":
             H = shape[0]
-            labels += [f"h{i}_{c}" for i in range(H) for c in h_cols]
+            # h_states 컬럼은 aggregate_obs 의 _h_keep 순서([idle,queue,occ] 부분집합).
+            # MCI_OBS_VARIANT(idle/noqueue 등)로 컬럼 수가 줄면 shape[1] 만큼만 라벨링.
+            n_cols = shape[1] if len(shape) > 1 else 1
+            cols = h_cols[:n_cols] if n_cols <= len(h_cols) else [f"c{j}" for j in range(n_cols)]
+            labels += [f"h{i}_{c}" for i in range(H) for c in cols]
         elif k == "p_sent":
             labels += [f"psent_{i}" for i in range(n)]
         elif k == "p_at_site":
@@ -102,7 +106,7 @@ def build_feature_labels(wrapped_env) -> list:
 
 
 def rollout_region(region, config_path, rule_name, model, n_episodes, seed_base,
-                   hos_props_out):
+                   hos_props_out, vn=None):
     """한 지역 N 에피소드 롤아웃. (obs_rows, meta_rows, mask_rows) 반환."""
     obs_rows, meta_rows, mask_rows = [], [], []
     for ep in range(n_episodes):
@@ -133,7 +137,9 @@ def rollout_region(region, config_path, rule_name, model, n_episodes, seed_base,
             step = 0
             while not done:
                 mask = env.action_masks()
-                rl_a, _ = model.predict(obs, action_masks=mask, deterministic=True)
+                obs_in = obs if vn is None else np.clip(
+                    (np.asarray(obs, np.float32) - vn[0]) / vn[1], -vn[2], vn[2])
+                rl_a, _ = model.predict(obs_in, action_masks=mask, deterministic=True)
                 rl_a = int(rl_a)
                 rl_c, rl_d, rl_m = env.decode_action(rl_a)
 
@@ -191,10 +197,18 @@ def main():
     ap.add_argument("--regions", default=None, help="쉼표구분 지역 부분집합 (smoke 용)")
     ap.add_argument("--tag", default="plan1nat_f3")
     ap.add_argument("--out_dir", default="results/analysis")
+    ap.add_argument("--vecnorm_path", default=None, help="VecNormalize pkl — predict 시 obs 표준화")
     args = ap.parse_args()
 
     from sb3_contrib import MaskablePPO
     model = MaskablePPO.load(args.model)
+    vn = None
+    if args.vecnorm_path:
+        import pickle
+        with open(args.vecnorm_path, "rb") as f:
+            _v = pickle.load(f)
+        vn = (_v.obs_rms.mean.astype(np.float32),
+              np.sqrt(_v.obs_rms.var + _v.epsilon).astype(np.float32), float(_v.clip_obs))
 
     with open(args.manifest, encoding="utf-8") as f:
         manifest = json.load(f)
@@ -217,7 +231,7 @@ def main():
         sys.stderr.flush()
         obs_rows, meta_rows, mask_rows = rollout_region(
             region, manifest[region], best_rule[region], model,
-            args.n_episodes, args.seed_base, hos_props)
+            args.n_episodes, args.seed_base, hos_props, vn)
         if labels is None and obs_rows:
             # 라벨은 첫 지역 env 로 1회 생성
             with _suppress_stdout():
