@@ -252,6 +252,9 @@ results_archived*/
 scenarios/exp_*/
 # - 평가점 시나리오 생성 진행상태 매니페스트 (생성 중 매 시나리오마다 갱신)
 scenarios/plan1nat_eval_manifest.json
+# - hold-out 평가용 flatten 매니페스트 (절대경로 config 참조 — 환경 의존, 스크립트로 재생성 가능)
+scenarios/plan1nat_holdout_flat.json
+scenarios/*_holdout_*.json
 # - 재정리 후 실험별 상위 폴더 (helipad_center / korea_center 하위에 자동 생성된 시나리오)
 scenarios/helipad_center/
 scenarios/korea_center/
