@@ -62,13 +62,21 @@ def engineer_features(obs_df, labels):
     idle = [c for c in labels if c.startswith("h") and c.endswith("_idle")]
     queue = [c for c in labels if c.startswith("h") and c.endswith("_queue")]
     psent = [c for c in labels if c.startswith("psent_")]
-    F["hosp_occ_sum"] = obs_df[occ].sum(1)
-    F["hosp_occ_mean"] = obs_df[occ].mean(1)
-    F["hosp_occ_max"] = obs_df[occ].max(1)
-    F["hosp_idle_sum"] = obs_df[idle].sum(1)
-    F["hosp_queue_sum"] = obs_df[queue].sum(1)
-    F["psent_sum"] = obs_df[psent].sum(1)
-    F["psent_max"] = obs_df[psent].max(1)
+
+    def _agg(cols, how):
+        # MCI_OBS_VARIANT(idle/noqueue 등)로 컬럼군이 통째로 빠지면
+        # mean/max 가 NaN 이 되어 서로게이트가 깨진다 → 0 으로 대체.
+        if not cols:
+            return pd.Series(0.0, index=obs_df.index)
+        return getattr(obs_df[cols], how)(1)
+
+    F["hosp_occ_sum"] = _agg(occ, "sum")
+    F["hosp_occ_mean"] = _agg(occ, "mean")
+    F["hosp_occ_max"] = _agg(occ, "max")
+    F["hosp_idle_sum"] = _agg(idle, "sum")
+    F["hosp_queue_sum"] = _agg(queue, "sum")
+    F["psent_sum"] = _agg(psent, "sum")
+    F["psent_max"] = _agg(psent, "max")
     return F
 
 
