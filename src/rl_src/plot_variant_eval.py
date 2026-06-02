@@ -15,7 +15,11 @@ cross_location_eval.plot_results 의 Figure Convention 을 그대로 준수:
   2) plot_extra_eval   — A2C/TRPO/QRDQN/RecurrentPPO 4종 + heuristic + PPO(f3)
 
 woG 컬럼이 variant CSV 에 없는 경우 f3_csv 에서 끌어와 합친다.
+
+  3) plot_vn_grid    — VecNormalize 그리드(obs base/idle × reward raw/woG)
+     셀별 학습좌표 마진 + 학습 vs hold-out 일반화 비교 2종 (grid 서브커맨드)
 """
+import glob
 import os
 import matplotlib
 matplotlib.use("Agg")
@@ -271,6 +275,130 @@ def plot_randeval_points(points_csv: str, out_path: str):
     print(f"Saved: {os.path.abspath(out_path)}")
 
 
+# ---------------------------------------------------------------------------
+# VecNormalize 그리드 (obs base/idle × reward raw/woG) — grid 서브커맨드
+# eval_obs_variant.py 가 만든 4시드 평가 CSV(vs_heur_R)를 읽어 mean±std 막대.
+# (key, label, obs차원, train_tag, holdout_tag) — holdout_tag None 이면 hold-out 없음
+# ---------------------------------------------------------------------------
+VN_VARIANTS = [
+    ("base_vn",     "base+vecnorm\n(221d, raw)", 221, "base_vn",     "base_vn"),
+    ("base_woG_vn", "base+woG+vecnorm\n(221d)",  221, "base_woG_vn", "base_woG_vn"),
+    ("idle_vn",     "idle+vecnorm\n(129d, raw)", 129, "idle_vn",     None),
+    ("idle_woG_vn", "idle+woG+vecnorm\n(129d)",  129, "idle_woG_vn", "idle_woG_vn"),
+]
+VN_COLOR = {221: "#1f77b4", 129: "#2ca02c"}  # obs 차원별 색
+
+
+def _vn_seed_means(files):
+    ms, xs = [], []
+    for f in files:
+        if not os.path.exists(f):
+            continue
+        d = pd.read_csv(f, encoding="utf-8-sig")
+        ms.append(float(d["vs_heur_R"].mean()))
+        xs.append(int((d["vs_heur_R"] > 0).sum()))
+    return ms, xs
+
+
+def _vn_collect(eval_dir):
+    rows = []
+    for key, label, dim, ttag, htag in VN_VARIANTS:
+        tr_m, tr_x = _vn_seed_means(
+            [f"{eval_dir}/obsv2_eval_{ttag}.csv"]
+            + [f"{eval_dir}/obsv2_eval_{ttag}_seed{s}.csv" for s in (1, 2, 3)])
+        if not tr_m:
+            print(f"[skip] {key}: 학습좌표 CSV 없음")
+            continue
+        ho_m, ho_x = ([], [])
+        if htag:
+            ho_m, ho_x = _vn_seed_means(
+                [f"{eval_dir}/obsv2_eval_holdout_{htag}_s{s}.csv" for s in range(4)])
+        rows.append(dict(
+            key=key, label=label, dim=dim,
+            tr_mean=np.mean(tr_m), tr_std=np.std(tr_m), tr_x=tr_x,
+            ho_mean=(np.mean(ho_m) if ho_m else None),
+            ho_std=(np.std(ho_m) if ho_m else None), ho_x=ho_x))
+        msg = f"[ok] {key}: train {np.mean(tr_m):+.3f}±{np.std(tr_m):.3f}"
+        if ho_m:
+            msg += f" | holdout {np.mean(ho_m):+.3f}±{np.std(ho_m):.3f}"
+        print(msg)
+    return rows
+
+
+def _vn_plot_grid(rows, out_path):
+    """2x2 그리드 셀별 학습좌표 마진 (base/idle × raw/woG)."""
+    _set_korean_font()
+    order = ["base_vn", "base_woG_vn", "idle_vn", "idle_woG_vn"]
+    rows = sorted([r for r in rows if r["key"] in order],
+                  key=lambda r: order.index(r["key"]))
+    x = np.arange(len(rows))
+    fig, ax = plt.subplots(figsize=(11, 7))
+    bars = ax.bar(x, [r["tr_mean"] for r in rows],
+                  yerr=[r["tr_std"] for r in rows], capsize=6,
+                  color=[VN_COLOR[r["dim"]] for r in rows], alpha=0.9,
+                  error_kw=dict(ecolor="#333", lw=1.5))
+    for r, b in zip(rows, bars):
+        xr = f"{min(r['tr_x'])}~{max(r['tr_x'])}" if r["tr_x"] else "?"
+        ax.text(b.get_x() + b.get_width() / 2, r["tr_mean"] + r["tr_std"] + 0.04,
+                f"{r['tr_mean']:+.2f}±{r['tr_std']:.2f}\n추월 {xr}/17",
+                ha="center", va="bottom", fontsize=10)
+    ax.set_xticks(x); ax.set_xticklabels([r["label"] for r in rows])
+    ax.set_ylabel("휴리스틱 대비 마진 R (학습 좌표, 4시드)")
+    ax.set_title("VecNormalize 그리드: obs(base 221d / idle 129d) × 보상(raw / woG)\n"
+                 "— base+woG 셀 보충", fontsize=13)
+    ax.axhline(0, color="#888", lw=1); ax.grid(axis="y", alpha=0.3)
+    ax.set_ylim(0, max(r["tr_mean"] + r["tr_std"] for r in rows) + 0.6)
+    from matplotlib.patches import Patch
+    ax.legend(handles=[Patch(color=VN_COLOR[221], label="base obs 221d"),
+                       Patch(color=VN_COLOR[129], label="idle obs 129d")],
+              loc="lower right")
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
+    plt.savefig(out_path, dpi=150); plt.close(fig)
+    print(f"Saved: {os.path.abspath(out_path)}")
+
+
+def _vn_plot_holdout(rows, out_path):
+    """학습 좌표 vs hold-out (둘 다 있는 변형만)."""
+    _set_korean_font()
+    rows = [r for r in rows if r["ho_mean"] is not None]
+    order = ["base_vn", "base_woG_vn", "idle_woG_vn"]
+    rows = sorted(rows, key=lambda r: order.index(r["key"]) if r["key"] in order else 99)
+    x = np.arange(len(rows)); w = 0.38
+    fig, ax = plt.subplots(figsize=(11, 7))
+    ax.bar(x - w / 2, [r["tr_mean"] for r in rows], w,
+           yerr=[r["tr_std"] for r in rows], capsize=5, color="#1f77b4",
+           label="학습 좌표 (4시드)", error_kw=dict(ecolor="#333", lw=1.3))
+    ax.bar(x + w / 2, [r["ho_mean"] for r in rows], w,
+           yerr=[r["ho_std"] for r in rows], capsize=5, color="#d62728",
+           label="hold-out 85점 (4시드)", error_kw=dict(ecolor="#333", lw=1.3))
+    for r in rows:
+        i = rows.index(r)
+        ax.text(i - w / 2, r["tr_mean"] + r["tr_std"] + 0.03,
+                f"{r['tr_mean']:.2f}", ha="center", va="bottom", fontsize=10)
+        ax.text(i + w / 2, r["ho_mean"] + (r["ho_std"] or 0) + 0.03,
+                f"{r['ho_mean']:.2f}", ha="center", va="bottom", fontsize=10)
+    ax.set_xticks(x); ax.set_xticklabels([r["label"] for r in rows])
+    ax.set_ylabel("휴리스틱 대비 마진 R")
+    ax.set_title("일반화 검증: 학습 좌표 vs hold-out (4시드, 오차막대=시드 std)", fontsize=13)
+    ax.grid(axis="y", alpha=0.3); ax.legend(loc="lower left")
+    ax.set_ylim(0, max(max(r["tr_mean"] + r["tr_std"], r["ho_mean"] + (r["ho_std"] or 0))
+                       for r in rows) + 0.5)
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
+    plt.savefig(out_path, dpi=150); plt.close(fig)
+    print(f"Saved: {os.path.abspath(out_path)}")
+
+
+def plot_vn_grid(eval_dir, grid_out, holdout_out):
+    """grid 서브커맨드 엔트리 — 그리드 + 일반화 hold-out 그림 2종 생성."""
+    rows = _vn_collect(eval_dir)
+    if not rows:
+        print("데이터 없음"); return
+    _vn_plot_grid(rows, grid_out)
+    _vn_plot_holdout(rows, holdout_out)
+
+
 def _cli():
     import argparse
     p = argparse.ArgumentParser()
@@ -291,6 +419,13 @@ def _cli():
     pp.add_argument("--csv", required=True, help="randeval_points CSV (85 rows)")
     pp.add_argument("--out", required=True)
 
+    pg = sub.add_parser("grid", help="vecnorm 그리드(obs×보상) + 일반화 hold-out 비교")
+    pg.add_argument("--eval_dir", default="results/analysis/eval_csv")
+    pg.add_argument("--grid_out",
+                    default="results/analysis/obs_ablation_study/fig_vn_grid_base_woG.png")
+    pg.add_argument("--holdout_out",
+                    default="results/analysis/champion_base_vn/fig_generalization_holdout.png")
+
     a = p.parse_args()
     if a.mode == "variant":
         plot_variant_eval(a.csv, a.f3_csv, a.tag, a.out)
@@ -298,6 +433,8 @@ def _cli():
         plot_extra_eval(a.csv, a.f3_csv, a.out)
     elif a.mode == "points":
         plot_randeval_points(a.csv, a.out)
+    elif a.mode == "grid":
+        plot_vn_grid(a.eval_dir, a.grid_out, a.holdout_out)
 
 
 if __name__ == "__main__":
