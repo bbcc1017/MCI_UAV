@@ -562,6 +562,7 @@ class EventManager():
         # 처치 완료 환자 상태 변경
         self.status['patient']['p_states'][p_idx, -1] = 1
         self._record_trace("care_complete", patient_id=int(p_idx), hospital_id=int(h_idx))
+        self.status['hospital']['h_states'][h_idx, -1] -= 1  # n_occupied -= 1 (퇴원 → 입원 정원 반환)
 
         n_idle, n_queue = self.status['hospital']['h_states'][h_idx][0:2]
         # 새로운 처치 시작
