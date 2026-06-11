@@ -616,7 +616,12 @@ class ScenarioGenerator:
         # --- (4) 후보군 확장: 기존 코드와 동일 ---
         # 가까운 병원들을 포함한 넉넉한 후보군(df_cand)
         df_sorted = df.sort_values("euclidean_distance").reset_index(drop=True)
-        sum_capa = 0; sum_capa_tier3 = 0; cand_idx = []; 
+        # ★ 중복 병원(요양기관명) 제거: 소스/선택/fill 어느 단계 중복이든 차단 (P1-a 방지)
+        _before_dedup = len(df_sorted)
+        df_sorted = df_sorted.drop_duplicates(subset="요양기관명", keep="first").reset_index(drop=True)
+        if len(df_sorted) < _before_dedup:
+            print(f"  ⚠️ 소스 병원풀 중복 {_before_dedup - len(df_sorted)}곳 제거 (요양기관명 기준)")
+        sum_capa = 0; sum_capa_tier3 = 0; cand_idx = [];
         for i, row in df_sorted.iterrows():
             cand_idx.append(i)
             sum_capa += int(row["eff"])
@@ -809,11 +814,13 @@ class ScenarioGenerator:
                     print(f"  ✓ fixed_hos_num={target} cap 적용 (보장 룰 모두 유지)")
             elif len(df_euc) < target:
                 deficit = target - len(df_euc)
-                extra = df_sorted[~df_sorted.index.isin(df_euc.index)].head(deficit)
+                # ★ 행번호(index) 아닌 요양기관명 기준으로 제외해야 중복 안 생김 (P1-a 버그 수정)
+                extra = df_sorted[~df_sorted["요양기관명"].isin(df_euc["요양기관명"])].head(deficit)
                 if len(extra) < deficit:
                     print(f"  ⚠️ fixed_hos_num={target} 채우기 부족 (전체 풀 모자람): {len(df_euc)+len(extra)}곳에서 멈춤")
                 df_euc = pd.concat([df_euc, extra]).sort_values("euclidean_distance").reset_index(drop=True)
                 print(f"  📌 fixed_hos_num={target} 채우기: {deficit}개 추가")
+                assert df_euc["요양기관명"].is_unique, "fixed_hos_num fill 후 병원 중복 발생 (P1-a)"
 
         print(f" 최종 생성된 병원: {len(df_euc)}곳 (상급: {df_euc['is_tier3'].sum()}곳, 종합 등: {len(df_euc) - df_euc['is_tier3'].sum()}곳)")
 
