@@ -234,7 +234,12 @@ class ScenarioGenerator:
             "car_fuel": "GASOLINE",
             "car_hipass": "false",
             "alternatives": "false",
-            "road_details": "false"
+            "road_details": "false",
+            # 유고(공사·사고 등 교통 통제) 도로를 회피한 우회 경로를 받는다.
+            # 미지정 시 도착·출발지 주변에 유고가 있으면 result_code=106/105로 경로 자체가
+            # 반환되지 않아 생성이 실패한다(시간대 무관 장기 통제는 departure_time으로도 회피 불가).
+            # 유고가 없는 경로에는 영향이 없고, 있을 때만 우회하므로 항상 켜 둔다.
+            "avoid": "roadevent",
         }
 
         # departure_time 파라미터 추가 (실시간 또는 미래시간)
@@ -263,10 +268,11 @@ class ScenarioGenerator:
                             103: "도착지 주변 도로 탐색 불가",
                             104: "출발지와 도착지가 5m 이내",
                             105: "출발지 주변 도로에 교통 장애(유고 정보) 존재",
+                            106: "도착지 주변 도로에 교통 장애(유고 정보) 존재",
                         }.get(result_code, "알 수 없는 오류")
                         raise RuntimeError(
                             f"카카오 API 경로 없음 (result_code={result_code}, {start} → {end}): "
-                            f"{_rc_msg}"
+                            f"{_rc_msg} (avoid=roadevent 우회로도 경로를 찾지 못함 — 진짜 고립 구간)"
                         )
                     summary = route.get("summary", {})
 
