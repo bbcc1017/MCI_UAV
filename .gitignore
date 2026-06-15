@@ -265,3 +265,18 @@ experiment_logs/
 # - tmp 파이프 로그
 /tmp/
 *.tfevents.*
+# Codex
+.codex/
+# 문서
+docs/
+# tools 대용량 데이터 (재생성 가능 — 스크립트만 버전관리)
+tools/vw_*/
+tools/nationwide/blocks/
+tools/nationwide/sgg/
+tools/nationwide/*.json
+tools/nationwide/*.log
+tools/nationwide/*.err.log
+tools/nationwide/*.output
+tools/seoul_pilot/_work/
+tools/_tmp_*.yaml
+tools/**/_hospital_coords.csv
