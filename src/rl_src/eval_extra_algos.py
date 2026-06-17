@@ -91,7 +91,7 @@ def eval_model(model, env_factory, n_episodes, seed_base):
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--model_root", default="results/rl/plan1nat_f3_extra/national")
-    p.add_argument("--manifest", default="scenarios/plan1nat_manifest.json")
+    p.add_argument("--manifest", default="scenarios/manifests/plan1nat_manifest.json")
     p.add_argument("--f3_csv", default="results/plan1nat_f3_eval.csv")
     p.add_argument("--algos", nargs="+", default=list(_ALGO_LOADERS),
                    choices=list(_ALGO_LOADERS))

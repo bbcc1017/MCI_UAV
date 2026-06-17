@@ -9,7 +9,7 @@
 
 사용:
   MCI_REDUCED_OBS=1 CUDA_VISIBLE_DEVICES="" python src/rl_src/eval_reward_compare.py \
-    --manifest scenarios/plan1nat_manifest.json --heur_csv results/plan1nat_f3_eval.csv \
+    --manifest scenarios/manifests/plan1nat_manifest.json --heur_csv results/plan1nat_f3_eval.csv \
     --f3_model results/rl/plan1nat_f3/national/ppo/final_model.zip \
     --wog_model results/rl/plan1nat_f3_woG/national/ppo/final_model.zip --n_episodes 100
 """

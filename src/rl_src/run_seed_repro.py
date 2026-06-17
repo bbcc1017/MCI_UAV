@@ -92,7 +92,7 @@ def compute_metrics(tag, out_csv, adir="results/analysis"):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--seed", type=int, required=True)
-    ap.add_argument("--manifest", default="scenarios/plan1nat_manifest.json")
+    ap.add_argument("--manifest", default="scenarios/manifests/plan1nat_manifest.json")
     ap.add_argument("--heur_csv", default="results/plan1nat_f3_eval.csv")
     ap.add_argument("--timesteps", type=int, default=500_000)
     ap.add_argument("--collect_ep", type=int, default=50)

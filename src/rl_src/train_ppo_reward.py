@@ -15,7 +15,7 @@ wrapping 순서 (외→내):
 사용 예 (woG + precomputed advantage, CPU 강제, plan1nat 매니페스트):
     CUDA_VISIBLE_DEVICES="" /home/RYU/anaconda3/envs/UAV/bin/python \\
         src/rl_src/train_ppo_reward.py \\
-        --config_path scenarios/plan1nat_manifest.json \\
+        --config_path scenarios/manifests/plan1nat_manifest.json \\
         --reward_mode woG \\
         --total_timesteps 100000 --n_envs 4 \\
         --log_dir results/rl/ppo_reward_woG

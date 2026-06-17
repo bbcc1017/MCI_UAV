@@ -15,7 +15,7 @@ train_ppo.py 의 파생본. env_wrapper.py / multi_region_env.py / env_factory.p
 
 예:
   CUDA_VISIBLE_DEVICES="" python src/rl_src/train_ppo_enriched.py \\
-    --config_path scenarios/plan1nat_manifest.json --total_timesteps 200000 \\
+    --config_path scenarios/manifests/plan1nat_manifest.json --total_timesteps 200000 \\
     --n_envs 4 --log_dir results/rl/ppo_enriched --topk 10
 """
 import argparse

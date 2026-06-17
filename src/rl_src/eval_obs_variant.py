@@ -10,7 +10,7 @@ MCI_OBS_VARIANT 를 import 전에 환경변수로 설정해 평가 env 의 obs �
 사용:
   MCI_REDUCED_OBS=1 CUDA_VISIBLE_DEVICES="" python src/rl_src/eval_obs_variant.py \
     --variant "idle+eta" --model results/rl/plan1nat_obsv2_idle_eta/national/ppo/final_model.zip \
-    --manifest scenarios/plan1nat_manifest.json --heur_csv results/plan1nat_f3_eval.csv \
+    --manifest scenarios/manifests/plan1nat_manifest.json --heur_csv results/plan1nat_f3_eval.csv \
     --tag idle_eta --n_episodes 100
 """
 import argparse

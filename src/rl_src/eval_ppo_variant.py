@@ -89,7 +89,7 @@ def eval_one_region(model, env_factory, n_episodes, seed_base):
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--model_path", required=True)
-    p.add_argument("--manifest", default="scenarios/plan1nat_manifest.json")
+    p.add_argument("--manifest", default="scenarios/manifests/plan1nat_manifest.json")
     p.add_argument("--f3_csv", default="results/plan1nat_f3_eval.csv",
                    help="휴리스틱·기준 PPO 비교를 위한 기존 평가 CSV")
     p.add_argument("--enriched", action="store_true")

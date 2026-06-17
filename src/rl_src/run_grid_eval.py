@@ -35,7 +35,7 @@ from cross_location_eval import plot_results
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--manifest", default="scenarios/plan1_manifest.json")
+    p.add_argument("--manifest", default="scenarios/manifests/plan1_manifest.json")
     p.add_argument("--regions", nargs="+", default=None)
     p.add_argument("--model_root", default="results/rl/plan1")
     p.add_argument("--national", action="store_true",

@@ -4,7 +4,7 @@
 
 사용 예 (스모크):
     MCI_REDUCED_OBS=1 CUDA_VISIBLE_DEVICES="" python src/rl_src/bc_dataset.py \
-        --manifest scenarios/plan1nat_manifest.json \
+        --manifest scenarios/manifests/plan1nat_manifest.json \
         --eval_csv results/plan1nat_f3_eval.csv \
         --n_episodes 10 --out /tmp/bc_smoke.pkl
 

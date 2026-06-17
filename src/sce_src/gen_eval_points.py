@@ -79,7 +79,7 @@ def resample_point(region_shape, rng, transformer):
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--points", default=os.path.join(REPO, "scenarios",
-                                                    "plan1nat_eval_points.json"))
+                                                    "manifests", "plan1nat_eval_points.json"))
     p.add_argument("--shp", default=os.path.join(REPO, "scenarios", "ctprvn.shp"))
     p.add_argument("--manifest", default=os.path.join(REPO, "scenarios",
                                                       "plan1nat_eval_manifest.json"))

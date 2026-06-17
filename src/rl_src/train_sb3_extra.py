@@ -16,7 +16,7 @@ config_path 가 .json 매니페스트면 MultiRegionEnv(전국 단일 정책)로
 
 예:
   MCI_REDUCED_OBS=1 python src/rl_src/train_sb3_extra.py --algo a2c \
-    --config_path scenarios/plan1nat_manifest.json \
+    --config_path scenarios/manifests/plan1nat_manifest.json \
     --total_timesteps 500000 --log_dir results/rl/.../a2c
 """
 import argparse

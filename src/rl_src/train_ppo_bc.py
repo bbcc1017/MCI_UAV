@@ -5,14 +5,14 @@ bc_dataset.py 로 모은 휴리스틱 best (obs, action, mask) 데이터로 정�
 
 사용 예 (스모크):
     MCI_REDUCED_OBS=1 CUDA_VISIBLE_DEVICES="" python src/rl_src/train_ppo_bc.py \
-        --config_path scenarios/plan1nat_manifest.json \
+        --config_path scenarios/manifests/plan1nat_manifest.json \
         --bc_data /tmp/bc_smoke.pkl \
         --bc_epochs 2 --total_timesteps 2000 \
         --log_dir /tmp/bc_smoke_train
 
 본 학습 (예시 — 풀 학습은 외부 orchestration 에서 수행):
     MCI_REDUCED_OBS=1 CUDA_VISIBLE_DEVICES="" python src/rl_src/train_ppo_bc.py \
-        --config_path scenarios/plan1nat_manifest.json \
+        --config_path scenarios/manifests/plan1nat_manifest.json \
         --bc_data results/rl/bc/bc_plan1nat.pkl \
         --bc_epochs 5 --total_timesteps 500000 \
         --log_dir results/rl/plan1nat_bc_ppo

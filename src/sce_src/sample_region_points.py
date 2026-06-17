@@ -11,7 +11,7 @@ EPSG:5179) 폴리곤 안에서 균일 랜덤 점을 뽑는다.
 - bbox 거부 샘플링(rejection sampling). 본토 면적이 압도적이라 섬보다 본토
   위주로 뽑힌다 — 도로망 위 점일 확률이 높아 Kakao 경로탐색 실패가 적다.
 
-출력: scenarios/plan1nat_eval_points.json  {region_short: [[lat,lon], ...]}
+출력: scenarios/manifests/plan1nat_eval_points.json  {region_short: [[lat,lon], ...]}
 
 예:
   python src/sce_src/sample_region_points.py --n 5 --seed 20260522
@@ -92,7 +92,7 @@ def parse_args():
     p.add_argument("--n", type=int, default=5, help="지역당 샘플 점 수")
     p.add_argument("--seed", type=int, default=20260522)
     p.add_argument("--out", default=os.path.join(REPO, "scenarios",
-                                                 "plan1nat_eval_points.json"))
+                                                 "manifests", "plan1nat_eval_points.json"))
     return p.parse_args()
 
 

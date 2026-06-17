@@ -3,7 +3,7 @@
 cross_location_eval.LOCATIONS 좌표를 단일 출처로 사용한다.
 출력:
   scenarios/exp_<prefix>_<region>_dep_<departure_time>/(lat,lon)/config_*.yaml
-  scenarios/plan1_manifest.json   (region -> config_path 매핑)
+  scenarios/manifests/plan1_manifest.json   (region -> config_path 매핑)
 
 Kakao API rate limit 을 고려해 지역을 순차 생성한다.
 키는 ENV KAKAO_API_KEY 에서 읽는다 (코드 하드코딩 금지).
@@ -44,7 +44,7 @@ def parse_args():
     p.add_argument("--base_path", default=".")
     p.add_argument("--regions", nargs="+", default=None,
                    help="부분 생성 (기본: 17개 전체). 예: --regions 서울 부산")
-    p.add_argument("--manifest", default="scenarios/plan1_manifest.json")
+    p.add_argument("--manifest", default="scenarios/manifests/plan1_manifest.json")
     p.add_argument("--fixed_hos_num", type=int, default=None,
                    help="모든 지역 hos_num 강제 고정 (전국 단일 정책용 obs 차원 통일)")
     return p.parse_args()

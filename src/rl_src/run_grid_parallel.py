@@ -1,6 +1,6 @@
 """17지역 × 3알고리즘 병렬 학습 그리드 런처 (Plan 1).
 
-scenarios/plan1_manifest.json (region -> config_path) 을 읽어 각 지역마다
+scenarios/manifests/plan1_manifest.json (region -> config_path) 을 읽어 각 지역마다
 DQN / PPO / REINFORCE 를 subprocess 로 띄운다.
 
 - 코어 예산 세마포어로 동시 실행 잡 수를 제한 (max_cores).
@@ -33,7 +33,7 @@ THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--manifest", default="scenarios/plan1_manifest.json")
+    p.add_argument("--manifest", default="scenarios/manifests/plan1_manifest.json")
     p.add_argument("--regions", nargs="+", default=None,
                    help="부분 학습 (기본: manifest 의 전 지역)")
     p.add_argument("--algos", nargs="+", default=["dqn", "ppo", "reinforce"],

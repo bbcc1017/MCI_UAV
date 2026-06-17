@@ -13,7 +13,7 @@
 
 사용:
   MCI_REDUCED_OBS=1 CUDA_VISIBLE_DEVICES="" python src/rl_src/distill_policy.py \
-    --manifest scenarios/plan1nat_manifest.json \
+    --manifest scenarios/manifests/plan1nat_manifest.json \
     --model results/rl/plan1nat_f3/national/ppo/final_model.zip \
     --heur_csv results/plan1nat_f3_eval.csv --n_episodes 100
 """
