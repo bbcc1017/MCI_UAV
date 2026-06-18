@@ -215,6 +215,7 @@ __marimo__/
 
 # Claude Code local settings
 .claude/
+.claude.local.md
 
 # Unity
 Library/
