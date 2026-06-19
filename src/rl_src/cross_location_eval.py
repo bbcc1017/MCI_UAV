@@ -78,7 +78,8 @@ def parse_args():
                    help="학습 시 사용한 값과 동일해야 함")
     p.add_argument("--amb_count", type=int, default=30,
                    help="학습 시 사용한 값과 동일해야 함")
-    p.add_argument("--uav_count", type=int, default=25)
+    p.add_argument("--uav_count", type=int, default=25, help="UAV 생성 superset 상한(헬기장 병원당 1대)")
+    p.add_argument("--uav_num", type=int, default=3, help="UAV 런타임 대수(YAML uav_num)")
     p.add_argument("--amb_velocity", type=int, default=40)
     p.add_argument("--uav_velocity", type=int, default=80)
     p.add_argument("--amb_handover_time", type=float, default=10.0)
@@ -106,7 +107,9 @@ def parse_args():
     p.add_argument("--departure_time", type=str, default=None,
                    help="kakao 모드 출발시간 (YYYYMMDDHHMM)")
     p.add_argument("--fixed_hos_num", type=int, default=None,
-                   help="모든 좌표에서 hos_num 강제 고정 (학습 시 obs 차원과 동일해야 함)")
+                   help="[구호환] hos_num cap (가까운 N개로 잘라냄). min_hos_num 과 동시지정 불가")
+    p.add_argument("--min_hos_num", type=int, default=None,
+                   help="hos_num floor (≥N 보장, cap-down 안 함). 2-pass H_max floor 시나리오용")
     p.add_argument("--regions", nargs="+", default=None,
                    help="평가할 지역 short_name 리스트 (기본: 17개 전체). 예: --regions 광주 강원 전남 경북")
     p.add_argument("--hybrid_amb_rule", nargs=4, default=None,
@@ -133,7 +136,7 @@ def parse_args():
 
 def _build_generator(base_path, exp_prefix, short_name, *,
                      is_use_time, osrm_url, kakao_api_key, departure_time,
-                     fixed_hos_num=None):
+                     fixed_hos_num=None, min_hos_num=None):
     return ScenarioGenerator(
         base_path=base_path,
         experiment_id=f"{exp_prefix}_{short_name}",
@@ -142,7 +145,28 @@ def _build_generator(base_path, exp_prefix, short_name, *,
         osrm_url=osrm_url,
         is_use_time=is_use_time,
         fixed_hos_num=fixed_hos_num,
+        min_hos_num=min_hos_num,
     )
+
+
+def natural_hos_count_for_region(short_name, lat, lon, *, incident_size, uav_num,
+                                 base_path, exp_prefix="pass1", is_use_time=False,
+                                 osrm_url=None, kakao_api_key=None, departure_time=None):
+    """Pass1: 자연 선정 병원 수와 후보 풀 크기를 반환 (road API 0회).
+
+    make_hospital_info 의 선정 단계(_select_hospitals)만 호출 → euclidean+용량/티어/헬기장만
+    사용하므로 Kakao/OSRM 호출이 없다. H_max = max(natural counts) 산출 + 희소지역 풀 보호용.
+
+    Returns:
+        (natural_count, pool_size): 보장룰 적용 후 선정 병원 수, dedup·정렬된 전체 후보 풀 크기.
+    """
+    gen = _build_generator(base_path, exp_prefix, short_name,
+                           is_use_time=is_use_time, osrm_url=osrm_url,
+                           kakao_api_key=kakao_api_key, departure_time=departure_time,
+                           fixed_hos_num=None, min_hos_num=None)
+    df_euc, df_sorted = gen._select_hospitals(lat, lon, incident_size, uav_count=uav_num)
+    assert gen.api_call_count == 0, f"Pass1 은 road API 0회여야 하는데 {gen.api_call_count}회 호출됨"
+    return len(df_euc), len(df_sorted)
 
 
 def gen_scenario_for_region(short_name, lat, lon, *,
@@ -151,12 +175,13 @@ def gen_scenario_for_region(short_name, lat, lon, *,
                             amb_handover_time, uav_handover_time,
                             total_samples, base_path, exp_prefix,
                             is_use_time, osrm_url, kakao_api_key,
-                            departure_time, fixed_hos_num=None):
+                            departure_time, fixed_hos_num=None, uav_num=3,
+                            min_hos_num=None):
     gen = _build_generator(base_path, exp_prefix, short_name,
                            is_use_time=is_use_time, osrm_url=osrm_url,
                            kakao_api_key=kakao_api_key,
                            departure_time=departure_time,
-                           fixed_hos_num=fixed_hos_num)
+                           fixed_hos_num=fixed_hos_num, min_hos_num=min_hos_num)
     return gen.generate_scenario(
         latitude=lat, longitude=lon,
         incident_size=incident_size, amb_count=amb_count, uav_count=uav_count,
@@ -165,6 +190,7 @@ def gen_scenario_for_region(short_name, lat, lon, *,
         is_use_time=is_use_time,
         amb_handover_time=amb_handover_time,
         uav_handover_time=uav_handover_time,
+        uav_num=uav_num,
     )
 
 
@@ -233,7 +259,8 @@ def _experiment_id_for(base, exp_prefix, short_name, args):
                            is_use_time=args.is_use_time, osrm_url=args.osrm_url,
                            kakao_api_key=args.kakao_api_key,
                            departure_time=args.departure_time,
-                           fixed_hos_num=args.fixed_hos_num)
+                           fixed_hos_num=args.fixed_hos_num,
+                           min_hos_num=getattr(args, "min_hos_num", None))
     return gen.experiment_id
 
 
@@ -316,6 +343,8 @@ def main():
                     kakao_api_key=args.kakao_api_key,
                     departure_time=args.departure_time,
                     fixed_hos_num=args.fixed_hos_num,
+                    uav_num=args.uav_num,
+                    min_hos_num=args.min_hos_num,
                 )
             except Exception as e:
                 print(f"  ! 시나리오 생성 실패: {e}")

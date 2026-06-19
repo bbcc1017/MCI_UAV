@@ -123,15 +123,9 @@ class ScenarioManager():
                 reg_prop['hos_tier'] = hos_info['종별코드'].to_numpy(dtype='int32')
                 reg_prop['hos_max_send'] = cfg_hospital['max_send_coeff'][0]*reg_prop['hos_max_capa'] \
                                            + cfg_hospital['max_send_coeff'][1]*reg_prop['hos_max_queue']
-                # 거리 정보 — UAV 전용 모드에서는 euc 만으로 충분.
-                # road CSV 가 비어있거나 부재하면 euc 로 폴백 (UAV는 직선거리 기반).
+                # Hos2Hos 거리 행렬 — 별도 파일 유지(diversion 용). road 부재/불일치 시 euc 폴백.
                 d_HtoH_euc = pd.read_csv(cfg_hospital['dist_Hos2Hos_euc_info'])
                 reg_prop['d_HtoH_euc'] = self._extract_matrix(d_HtoH_euc)
-
-                d_HtoS_euc = pd.read_csv(cfg_hospital['dist_Hos2Site_euc_info']).iloc[:, 1:]
-                reg_prop['d_HtoS_euc'] = d_HtoS_euc.to_numpy(dtype='float32')[:, 0]
-
-                # Hos2Hos road
                 try:
                     d_HtoH_road_df = pd.read_csv(cfg_hospital['dist_Hos2Hos_road_info'])
                     if d_HtoH_road_df.shape[0] == reg_prop['hos_num']:
@@ -142,18 +136,33 @@ class ScenarioManager():
                     print("  road Hos2Hos CSV 비어있음/부재 - euc 사용 (UAV-only)")
                     reg_prop['d_HtoH_road'] = reg_prop['d_HtoH_euc'].copy()
 
-                # Hos2Site road
-                try:
-                    d_HtoS_road_df = pd.read_csv(cfg_hospital['dist_Hos2Site_road_info'])
-                    if d_HtoS_road_df.shape[0] == reg_prop['hos_num']:
-                        reg_prop['d_HtoS_road'], reg_prop['t_HtoS_road_api'] = \
-                            self._extract_vector_distance_duration(d_HtoS_road_df)
+                # 현장거리(Hos2Site) — Phase 1: 통합 hospitals.csv 의 euc_dist/road_dist/
+                # road_duration 컬럼을 직접 사용(별도 distance_Hos2Site_*.csv 폐기).
+                if 'euc_dist' in hos_info.columns:
+                    reg_prop['d_HtoS_euc'] = hos_info['euc_dist'].to_numpy(dtype='float32')
+                    if 'road_dist' in hos_info.columns:
+                        reg_prop['d_HtoS_road'] = hos_info['road_dist'].to_numpy(dtype='float32')
+                        reg_prop['t_HtoS_road_api'] = hos_info['road_duration'].to_numpy(dtype='float32') \
+                            if 'road_duration' in hos_info.columns else None
                     else:
-                        raise pd.errors.EmptyDataError("row count mismatch")
-                except (FileNotFoundError, pd.errors.EmptyDataError):
-                    print("  road Hos2Site CSV 비어있음/부재 - euc 사용 (UAV-only)")
-                    reg_prop['d_HtoS_road'] = reg_prop['d_HtoS_euc'].copy()
-                    reg_prop['t_HtoS_road_api'] = None
+                        print("  road_dist 컬럼 부재 - euc 사용 (UAV-only)")
+                        reg_prop['d_HtoS_road'] = reg_prop['d_HtoS_euc'].copy()
+                        reg_prop['t_HtoS_road_api'] = None
+                else:
+                    # 구버전 호환: 별도 distance_Hos2Site_*.csv (YAML 에 키가 있을 때만)
+                    d_HtoS_euc = pd.read_csv(cfg_hospital['dist_Hos2Site_euc_info']).iloc[:, 1:]
+                    reg_prop['d_HtoS_euc'] = d_HtoS_euc.to_numpy(dtype='float32')[:, 0]
+                    try:
+                        d_HtoS_road_df = pd.read_csv(cfg_hospital['dist_Hos2Site_road_info'])
+                        if d_HtoS_road_df.shape[0] == reg_prop['hos_num']:
+                            reg_prop['d_HtoS_road'], reg_prop['t_HtoS_road_api'] = \
+                                self._extract_vector_distance_duration(d_HtoS_road_df)
+                        else:
+                            raise pd.errors.EmptyDataError("row count mismatch")
+                    except (FileNotFoundError, pd.errors.EmptyDataError):
+                        print("  road Hos2Site CSV 비어있음/부재 - euc 사용 (UAV-only)")
+                        reg_prop['d_HtoS_road'] = reg_prop['d_HtoS_euc'].copy()
+                        reg_prop['t_HtoS_road_api'] = None
             except FileNotFoundError:
                 print("병원 데이터 생성에 필요한 파일이 부족합니다.")
         else:
@@ -192,6 +201,20 @@ class ScenarioManager():
                 except pd.errors.EmptyDataError:
                     # 0바이트 파일 → AMB 0대로 처리
                     amb_info = pd.DataFrame()
+
+                # Phase 1: amb_bases.csv(고유 센터당 1행, 보유대수=count) → 보유대수만큼
+                # np.repeat 전개 후 YAML amb_num 만큼 슬라이스(도로 소요시간 오름차순 보존).
+                # 전개 결과는 구 복제방식 amb_info_road.csv 와 동일한 개별-ambulance 표현.
+                # (구 포맷: amb_num 키 없음 → 행이 곧 ambulance, 전개 생략.)
+                amb_num_cfg = cfg_amb.get('amb_num', None)
+                if amb_num_cfg is not None and len(amb_info) > 0 and '보유대수' in amb_info.columns:
+                    counts = pd.to_numeric(amb_info['보유대수'], errors='coerce').fillna(1).astype(int).clip(lower=1)
+                    amb_info = amb_info.loc[amb_info.index.repeat(counts.values)].reset_index(drop=True)
+                    target = int(amb_num_cfg)
+                    if target > len(amb_info):
+                        print(f"  ⚠️ amb_num={target} > 가용 {len(amb_info)}대 — 가용분으로 제한")
+                        target = len(amb_info)
+                    amb_info = amb_info.head(target).reset_index(drop=True)
                 reg_prop['amb_num'] = len(amb_info)
 
                 # AMB 0대일 경우 빈 파라미터로 초기화 후 조기 반환 (UAV-only 실험 호환)
@@ -264,7 +287,21 @@ class ScenarioManager():
         # From data
         if cfg_uav['load_data']:
             try:
-                uav_info = pd.read_csv(cfg_uav['dispatch_distance_info'])
+                try:
+                    uav_info = pd.read_csv(cfg_uav['dispatch_distance_info'])
+                except pd.errors.EmptyDataError:
+                    uav_info = pd.DataFrame()
+
+                # Phase 1: uav.csv(헬기장 병원 superset, 가까운 순) → YAML uav_num 만큼 슬라이스.
+                # 병원은 슬라이스 안 하므로 hospital_idx 재매핑 불필요. (구 포맷: uav_num 키
+                # 없음 → 행이 곧 UAV, 슬라이스 생략.)
+                uav_num_cfg = cfg_uav.get('uav_num', None)
+                if uav_num_cfg is not None and len(uav_info) > 0:
+                    target = int(uav_num_cfg)
+                    if target > len(uav_info):
+                        print(f"  ⚠️ uav_num={target} > 가용 헬기장 {len(uav_info)}대 — 가용분으로 제한")
+                        target = len(uav_info)
+                    uav_info = uav_info.head(target).reset_index(drop=True)
                 reg_prop['uav_num'] = len(uav_info)
 
                 # UAV 대수가 0이면 빈 배열로 초기화하고 조기 반환

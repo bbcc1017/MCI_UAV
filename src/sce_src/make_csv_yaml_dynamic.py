@@ -78,7 +78,8 @@ class ScenarioGenerator:
     """동적 파라미터 기반 시나리오 생성 클래스 (크로스 환경 호환)"""
 
     def __init__(self, base_path, experiment_id=None, kakao_api_key=None, departure_time=None,
-                 osrm_url=None, road_provider=None, is_use_time=True, fixed_hos_num=None):
+                 osrm_url=None, road_provider=None, is_use_time=True, fixed_hos_num=None,
+                 min_hos_num=None):
         # 실제 도로 API 호출 횟수 카운터 (Kakao + OSRM 공통)
         self.api_call_count = 0
         # 프로젝트 경로 절대화
@@ -168,13 +169,19 @@ class ScenarioGenerator:
         self.max_send_coeff_text = os.environ.get("MCI_MAX_SEND_COEFF", "1,1")
         
         # 모든 좌표에서 hos_num 을 동일하게 강제 (RL 학습/평가 obs 차원 일치용)
+        # fixed_hos_num = cap(가까운 N개로 잘라냄, 구호환) / min_hos_num = floor(≥N 보장, cap-down 안 함)
         self.fixed_hos_num = int(fixed_hos_num) if fixed_hos_num else None
+        self.min_hos_num = int(min_hos_num) if min_hos_num else None
+        if self.fixed_hos_num and self.min_hos_num:
+            raise ValueError("fixed_hos_num(cap)과 min_hos_num(floor)은 동시에 지정 불가 (상호배타).")
 
         print(f"📁 프로젝트 경로: {self.base_path}")
         print(f"🆔 실험 ID: {self.experiment_id}")
         print(f"buffer_ratio={self.buffer_ratio}")
         if self.fixed_hos_num:
             print(f"fixed_hos_num={self.fixed_hos_num} (보장 룰 후 가까운 N개로 cap)")
+        if self.min_hos_num:
+            print(f"min_hos_num={self.min_hos_num} (보장 룰 후 ≥N floor, cap-down 안 함)")
 
     def _validate_data_files(self):
         """필수 데이터 파일들의 존재성 검증"""
@@ -460,16 +467,25 @@ class ScenarioGenerator:
         )
 
     def make_amb_info(self, latitude, longitude, incident_size, amb_count, save_folder):
-        """구급차 정보 생성"""
-        print(f"  🚑 구급차 정보 생성 중...")
+        """구급차 정보 생성 — 카운트 방식 amb_bases.csv (Phase 1).
+
+        기존: 안전센터를 보유대수만큼 행 복제 후 amb_count로 슬라이스 → amb_info_road.csv.
+        변경: 고유 안전센터당 1행(보유대수=count)으로 넉넉한 superset 저장 → amb_bases.csv.
+              로드 시 ScenarioManager 가 보유대수만큼 np.repeat 전개 후 amb_num(YAML) 으로
+              슬라이스한다(원본 수작업 수정 불필요). 도로 API 는 고유 좌표당 1회.
+              amb_info_euc.csv 는 폐기(sim 미사용).
+
+        Args:
+            amb_count: 런타임 AMB 수(YAML amb_num). 후보 superset 의 하한 산정에만 쓰인다.
+        """
+        print(f"  🚑 구급차 정보 생성 중 (amb_bases.csv 카운트 방식)...")
         try:
             df = pd.read_csv(self.fire_data_path, encoding="cp949")
         except Exception as e:
             print(f"❌ 소방서 데이터 로드 실패: {e}")
             return
-        
-        # '수량' 기반으로 센터 행 복제 (구급차 개체 수 반영)
-        # ------------------------------------------------------------
+
+        # 보유대수(count) 정규화 — 행 복제는 하지 않는다(고유 센터당 1행 유지).
         if "수량" in df.columns:
             df["수량"] = pd.to_numeric(df["수량"], errors="coerce").fillna(1).astype(int)
             df.loc[df["수량"] < 1, "수량"] = 1
@@ -477,56 +493,35 @@ class ScenarioGenerator:
             df["수량"] = 1
         df["보유대수"] = df["수량"]
 
-        # 센터를 수량만큼 복제
-        df = df.loc[df.index.repeat(df["수량"])].copy()
-        # ------------------------------------------------------------
         coords = list(zip(df["y좌표"], df["x좌표"]))
-        euc_distances = [haversine(coord, (latitude, longitude)) for coord in coords]
-        df["euclidean_distance"] = euc_distances
+        df["euclidean_distance"] = [haversine(coord, (latitude, longitude)) for coord in coords]
 
-        # EUC 저장
-        # df_sorted_euc = df.sort_values("euclidean_distance").head(incident_size).copy()
-        df_sorted_euc = df.sort_values("euclidean_distance").head(amb_count).copy()
-        df_sorted_euc = df_sorted_euc.rename(columns={
-            "euclidean_distance": "init_distance",
-            "기관명": "안전센터/소방서이름"
-        })
-        df_sorted_euc = df_sorted_euc.reset_index(drop=True)
-        df_sorted_euc = df_sorted_euc[["init_distance", "안전센터/소방서이름", "보유대수"]]
-        euc_save_path = os.path.join(save_folder, "amb_info_euc.csv")
-        df_sorted_euc.to_csv(euc_save_path, index=True, index_label="Index", encoding="utf-8-sig")
-        
-        # [ADD] center2site 저장 폴더
+        # 후보 superset: 가까운 고유 센터부터 누적 보유대수가 충분히 커질 때까지.
+        # 하한 = max(incident_size*multiplier, 2*amb_count) — 로드 시 amb_num 을 넉넉히 슬라이스
+        # 할 수 있도록(원본 수정 없이 amb_num 가변) 여유 있게 보관한다.
+        df_sorted_euc = df.sort_values("euclidean_distance").reset_index(drop=True)
+        superset_target = max(int(incident_size * self.multiplier), int(2 * amb_count))
+        cum = 0
+        n_centers = 0
+        for _, row in df_sorted_euc.iterrows():
+            n_centers += 1
+            cum += int(row["보유대수"])
+            if cum >= superset_target:
+                break
+        df_candidates = df_sorted_euc.head(max(1, n_centers)).copy()
+
+        # 도로 거리/시간 (고유 센터당 1회 — Kakao 절감)
         routes_dir = os.path.join(save_folder, "routes", "center2site")
         ensure_dir(routes_dir)
-
-        # 후보군 확장 및 도로 거리/시간 계산 (카카오 API)
-        df_candidates = df.sort_values("euclidean_distance").head(int(incident_size * self.multiplier)).copy()
-        road_distances = []
-        road_durations = []
-
-        # for j, (_, row) in enumerate(df_candidates.iterrows()):
-        #     coord = (row["y좌표"], row["x좌표"])  # (lat, lon) of center
-        #     dist_km, duration_min = self.get_road_distance_kakao(
-        #         start=coord, end=(latitude, longitude),  # center → site
-        #         save_json_dir=routes_dir, route_type="center2site",
-        #         source_index=j, name=row.get("기관명", f"center_{j}"),
-        #         start_label="center", goal_label="site"
-        #     )
-        cache = {}  # key: (center_lat, center_lon) -> (dist_km, duration_min)
+        road_distances, road_durations = [], []
         for j, (_, row) in enumerate(df_candidates.iterrows()):
             coord = (row["y좌표"], row["x좌표"])  # (lat, lon)
-            key = coord
-            if key in cache:
-                dist_km, duration_min = cache[key]
-            else:
-                dist_km, duration_min = self.get_road_distance(
-                    start=coord, end=(latitude, longitude),  # center → site
-                    save_json_dir=routes_dir, route_type="center2site",
-                    source_index=j, name=row.get("기관명", f"center_{j}"),
-                    start_label="center", goal_label="site"
-                )
-                cache[key] = (dist_km, duration_min)
+            dist_km, duration_min = self.get_road_distance(
+                start=coord, end=(latitude, longitude),  # center → site
+                save_json_dir=routes_dir, route_type="center2site",
+                source_index=j, name=row.get("기관명", f"center_{j}"),
+                start_label="center", goal_label="site"
+            )
             road_distances.append(dist_km)
             road_durations.append(duration_min)
             time.sleep(0.05)
@@ -534,33 +529,44 @@ class ScenarioGenerator:
         df_candidates["road_distance"] = road_distances
         df_candidates["road_duration"] = road_durations
 
-        # ROAD 저장 (duration 기준으로 정렬 후 상위 incident_size개 선택)
-        # df_sorted_road = df_candidates.sort_values("road_duration").head(incident_size).copy()
-        df_sorted_road = df_candidates.sort_values("road_duration").head(amb_count).copy()
-        df_sorted_road = df_sorted_road.rename(columns={
+        # 도로 소요시간 오름차순으로 저장(로드 시 repeat 후 그대로 사용 → 구 복제방식과 동일 순서).
+        df_bases = df_candidates.sort_values("road_duration").reset_index(drop=True)
+        df_bases = df_bases.rename(columns={
             "road_distance": "init_distance",
             "road_duration": "duration",
-            "기관명": "안전센터/소방서이름"
+            "기관명": "안전센터/소방서이름",
         })
-        df_sorted_road = df_sorted_road.reset_index(drop=True)
-        df_sorted_road = df_sorted_road[["init_distance", "duration", "안전센터/소방서이름", "보유대수"]]
-        road_save_path = os.path.join(save_folder, "amb_info_road.csv")
-        df_sorted_road.to_csv(road_save_path, index=True, index_label="Index", encoding="utf-8-sig")
-        
-        print(f"  ✅ 구급차 정보 생성 완료")
+        df_bases = df_bases[["init_distance", "duration", "안전센터/소방서이름", "보유대수"]]
+        bases_path = os.path.join(save_folder, "amb_bases.csv")
+        df_bases.to_csv(bases_path, index=True, index_label="Index", encoding="utf-8-sig")
+
+        total_amb = int(df_bases["보유대수"].sum())
+        print(f"  ✅ 구급차 정보 생성 완료 (고유센터 {len(df_bases)}곳, 누적 보유대수 {total_amb}, "
+              f"런타임 amb_num={amb_count})")
 
     def make_hospital_info(self, latitude, longitude, incident_size, save_folder, uav_count=0):
-        """병원 정보 생성 (기존 로직 유지 + 최소 조건 추가 보장)
+        """병원 정보 생성 — Phase 2: 선정 / 수조정 / road계산+write 3단계 wrapper.
 
-        Args:
-            latitude: 사고지점 위도
-            longitude: 사고지점 경도
-            incident_size: 환자 수
-            save_folder: 저장 폴더
-            uav_count: UAV 대수 (헬기장 병원 최소 보장에 사용)
+        - _select_hospitals: 순수 선정(보장룰 포함, API 0회)
+        - _apply_hos_count: fixed_hos_num(cap, 구호환) / min_hos_num(floor) 적용
+        - _finalize_hospitals: road 거리/시간 계산 + 통합 hospitals.csv write (유일한 API 지점)
         """
-        print(f"  🏥 병원 정보 생성 중...")
-        
+        df_euc, df_sorted = self._select_hospitals(latitude, longitude, incident_size, uav_count)
+        df_euc = self._apply_hos_count(df_euc, df_sorted, uav_count)
+        self._finalize_hospitals(df_euc, latitude, longitude, save_folder)
+
+    def _select_hospitals(self, latitude, longitude, incident_size, uav_count=0):
+        """순수 병원 선정 (API 0회). euclidean + 용량/티어/헬기장만 사용.
+
+        후보풀(누적 eff ≥ incident_size×buffer_ratio) + 보장룰 1~5(Tier3≥2, Tier3용량≥40%,
+        Tier2≥1, 헬기장≥uav_count, 헬기장+Tier3≥1, 헬기장+Tier2≥1)를 적용해 선정. cap/floor 는
+        적용하지 않는다(_apply_hos_count 담당). road API 미호출 → Pass1(H_max 산출)에서 재사용.
+
+        Returns:
+            (df_euc, df_sorted): df_euc=선정결과(euclidean 정렬), df_sorted=dedup·정렬된 전체 풀.
+        """
+        print(f"  🏥 병원 선정 중...")
+
         # ---------- (0) 데이터 로드 ----------
         try:
             df_full = pd.read_excel(self.hospital_data_path, engine='openpyxl')
@@ -767,9 +773,22 @@ class ScenarioGenerator:
             print("  ⚠️ '헬기장 여부' 컬럼이 원본 데이터에 없습니다. 헬기장+Tier 교집합 보장 로직을 건너뜁니다.")
 
         df_euc = df_selected.sort_values("euclidean_distance").reset_index(drop=True).copy()
+        return df_euc, df_sorted
 
-        # ---------- (5.5) fixed_hos_num cap (RL obs 차원 일치) ----------
+    def _apply_hos_count(self, df_euc, df_sorted, uav_count=0):
+        """병원 수 조정 (API 0회). fixed_hos_num(cap, 구호환) | min_hos_num(floor, add-only).
+
+        - 둘 다 None → 동적(no-op).
+        - fixed_hos_num → 가까운 N개로 cap(부족시 채움, 헬기장 swap 보정). 기존 동작 보존.
+        - min_hos_num → floor: len<min 이면 가까운 풀에서 add until==min, len>=min 이면 그대로.
+          add-only 라 보장룰(Tier3/헬기장 등)을 깨지 않는다.
+        """
         fixed_n = getattr(self, "fixed_hos_num", None)
+        min_n = getattr(self, "min_hos_num", None)
+        if fixed_n is not None and min_n is not None:
+            raise ValueError("fixed_hos_num(cap)과 min_hos_num(floor)은 동시에 지정 불가 (상호배타).")
+
+        # ---------- fixed_hos_num cap (구호환, RL obs 차원 일치) ----------
         if fixed_n is not None:
             target = int(fixed_n)
             if len(df_euc) > target:
@@ -828,23 +847,32 @@ class ScenarioGenerator:
                 print(f"  📌 fixed_hos_num={target} 채우기: {deficit}개 추가")
                 assert df_euc["요양기관명"].is_unique, "fixed_hos_num fill 후 병원 중복 발생 (P1-a)"
 
+        # ---------- min_hos_num floor (Phase 2: ≥N 보장, cap-down 안 함) ----------
+        elif min_n is not None:
+            target = int(min_n)
+            if len(df_euc) < target:
+                deficit = target - len(df_euc)
+                # 요양기관명 기준 제외로 중복 방지 (가까운 풀 병원으로 채움, add-only)
+                extra = df_sorted[~df_sorted["요양기관명"].isin(df_euc["요양기관명"])].head(deficit)
+                if len(extra) < deficit:
+                    print(f"  ⚠️ min_hos_num={target} floor 부족 (전체 풀 모자람): {len(df_euc)+len(extra)}곳에서 멈춤")
+                df_euc = pd.concat([df_euc, extra]).sort_values("euclidean_distance").reset_index(drop=True)
+                print(f"  📌 min_hos_num={target} floor: {min(deficit, len(extra))}개 추가 (cap-down 없음)")
+                assert df_euc["요양기관명"].is_unique, "min_hos_num floor 후 병원 중복 발생"
+            else:
+                print(f"  ✓ min_hos_num={target} floor: 자연 선정 {len(df_euc)}곳 ≥ {target} (그대로 유지)")
+
+        return df_euc
+
+    def _finalize_hospitals(self, df_euc, latitude, longitude, save_folder):
+        """선정·조정된 df_euc 에 road 거리/시간 계산(API) 후 통합 hospitals.csv write."""
         print(f" 최종 생성된 병원: {len(df_euc)}곳 (상급: {df_euc['is_tier3'].sum()}곳, 종합 등: {len(df_euc) - df_euc['is_tier3'].sum()}곳)")
 
-        # ---------- (6) EUC 파일은 나중에 road 순서로 저장 (인덱스 일치 보장) ----------
-        # ★ CRITICAL: distance_Hos2Site_euc.csv는 road 순서를 따라야 h_states와 인덱스가 일치
-        # ★ 따라서 이 시점에서는 euc_info만 저장하고, distance는 road 재정렬 후 저장합니다.
-
-        euc_info = df_euc[["operating_rooms", "capa", "종별코드", "요양기관명", "헬기장 여부"]].copy()
-        euc_info.columns = ["수술실수", "병상수", "종별코드", "요양기관명", "헬기장 여부"]
-        euc_info_path = os.path.join(save_folder, "hospital_info_euc.csv")
-        euc_info.to_csv(euc_info_path, index=True, index_label="Index", encoding="utf-8-sig")
-        
+        # ---------- ROAD 거리/시간 계산 (선정 병원만, site → hospital) ----------
         routes_dir_hos = os.path.join(save_folder, "routes", "hos2site")
         ensure_dir(routes_dir_hos)
-        # ---------- (7) ROAD 거리 & 시간 계산 & 저장 (선정 병원만) ----------
         road_distances = []
         road_durations = []
-
         for j, (_, row) in enumerate(df_euc.iterrows()):
             end = (row["y좌표"], row["x좌표"])
             road_km, duration_min = self.get_road_distance(
@@ -860,145 +888,90 @@ class ScenarioGenerator:
         df_euc = df_euc.copy()
         df_euc["road_distance"] = road_distances
         df_euc["road_duration"] = road_durations
+
+        # ---------- (7) 통합 hospitals.csv 저장 (도로 소요시간 오름차순) ----------
+        # ★ 병원 인덱스(Index) = 도로 소요시간 정렬순. h_states/p_sent/거리행렬 모두 이 순서로 정렬.
+        # ★ Phase 1: 기존 4개 파일(hospital_info_euc/road, distance_Hos2Site_euc/road)을
+        #    한 파일로 통합. euc_dist=UAV용, road_dist/road_duration=AMB용, 종별코드/헬기장 여부=
+        #    마스킹·치료용, 수술실수/병상수=용량용. sim 은 필요한 열만 참조한다.
         df_road = df_euc.sort_values("road_duration").reset_index(drop=True).copy()
-
-        # distance_Hos2Site_road.csv에 duration 컬럼 추가
-        dist_road_df = pd.DataFrame({
-            "distance": df_road["road_distance"],
-            "duration": df_road["road_duration"]
+        hospitals = pd.DataFrame({
+            "요양기관명": df_road["요양기관명"].values,
+            "종별코드": df_road["종별코드"].values,
+            "헬기장 여부": df_road["헬기장 여부"].values,
+            "수술실수": df_road["operating_rooms"].values,
+            "병상수": df_road["capa"].values,
+            "euc_dist": df_road["euclidean_distance"].values,
+            "road_dist": df_road["road_distance"].values,
+            "road_duration": df_road["road_duration"].values,
         })
-        dist_road_path = os.path.join(save_folder, "distance_Hos2Site_road.csv")
-        dist_road_df.to_csv(dist_road_path, index=True, index_label="Index", encoding="utf-8-sig")
+        hospitals_path = os.path.join(save_folder, "hospitals.csv")
+        hospitals.to_csv(hospitals_path, index=True, index_label="Index", encoding="utf-8-sig")
 
-        # ★ CRITICAL FIX: distance_Hos2Site_euc.csv를 road 순서로 저장 (인덱스 일치 보장)
-        # df_road는 road_duration 기준으로 정렬되어 있으므로, h_states와 동일한 인덱스 순서를 가집니다.
-        # euclidean_distance 값은 유지하되, 순서만 road 기준으로 변경합니다.
-        dist_euc_df = pd.DataFrame({"distance": df_road["euclidean_distance"]})
-        dist_euc_path = os.path.join(save_folder, "distance_Hos2Site_euc.csv")
-        dist_euc_df.to_csv(dist_euc_path, index=True, index_label="Index", encoding="utf-8-sig")
-
-        road_info = df_road[["operating_rooms", "capa", "종별코드", "요양기관명", "헬기장 여부"]].copy()
-        road_info.columns = ["수술실수", "병상수", "종별코드", "요양기관명", "헬기장 여부"]
-        road_info_path = os.path.join(save_folder, "hospital_info_road.csv")
-        road_info.to_csv(road_info_path, index=True, index_label="Index", encoding="utf-8-sig")
-
-        print(f"  ✅ 병원 정보 생성 완료 (distance_Hos2Site_euc.csv는 road 순서로 저장됨)")
+        print(f"  ✅ 병원 정보 생성 완료 (통합 hospitals.csv, {len(hospitals)}곳, 도로 소요시간순)")
 
 
     
     def make_uav_info(self, latitude, longitude, incident_size, uav_count, save_folder):
-        """UAV 정보 생성 - hospital_info_road.csv 기반 (★핵심 변경★)
-        - hospital_info_road.csv에서 "헬기장 여부"=1인 병원만 필터링
-        - 사고지점 기준 거리 계산 후 가장 가까운 N개 헬기장 병원 선정
-        - 각 병원당 최대 1개 UAV 배정
-        - ★ uav_info 병원 = hospital_info의 부분집합 보장 (인덱스 일치)
-        - CSV 구조: Index, init_distance, 수술실수, 병상수, 종별코드, 요양기관명
+        """UAV 정보 생성 — 통합 hospitals.csv 기반 superset (Phase 1).
+
+        - hospitals.csv 의 "헬기장 여부"=1 병원만 필터 → 직선거리(euc_dist) 가까운 순 정렬
+        - **한 헬기장 병원당 UAV 1대**, 상위 uav_count(superset 상한, 예 25)곳 선정
+        - 로드 시 ScenarioManager 가 uav_num(YAML) 만큼 슬라이스(가까운 순) → 원본 수정 불필요
+        - 병원은 슬라이스 안 하므로 hospital_idx(= hospitals.csv 의 Index) 재매핑 불필요
+        - CSV 구조: Index, uav_id, hospital_idx, init_distance, 요양기관명
+
+        Args:
+            uav_count: UAV superset 상한(생성 대수). 헬리패드 최소 보장은 make_hospital_info 가
+                       런타임 uav_num 기준으로 이미 처리한다.
         """
-        print(f"  🚁 UAV 정보 생성 중 (hospital_info_road.csv 기반)...")
+        print(f"  🚁 UAV 정보 생성 중 (hospitals.csv 기반 superset)...")
 
-        import os
-        import pandas as pd
-        from haversine import haversine
-
-        # 0) 파라미터 정리
+        # 0) superset 상한
         try:
-            uav_n = int(max(0, int(uav_count)))
+            uav_cap = int(max(0, int(uav_count)))
         except Exception:
-            uav_n = 0
-        if uav_n <= 0:
-            print("⚠️ UAV 대수가 0입니다. UAV 정보 생성 생략.")
-            # 생략안하고 UAV=0대일 때 실험을 위한 빈 CSV 파일 생성 (헤더만 포함)
-            empty_df = pd.DataFrame(columns=["Index", "init_distance", "수술실수", "병상수", "종별코드", "요양기관명"])
-            save_path = os.path.join(save_folder, "uav_info.csv")
-            empty_df.to_csv(save_path, index=False, encoding="utf-8-sig")
+            uav_cap = 0
+        if uav_cap <= 0:
+            print("⚠️ UAV superset 상한이 0입니다. UAV 정보 생성 생략(빈 파일).")
+            empty_df = pd.DataFrame(columns=["uav_id", "hospital_idx", "init_distance", "요양기관명"])
+            save_path = os.path.join(save_folder, "uav.csv")
+            empty_df.to_csv(save_path, index=True, index_label="Index", encoding="utf-8-sig")
             print(f"  빈 UAV 정보 파일 생성 완료: {save_path}")
             return
 
-        # 1) ★ hospital_info_road.csv 로드 (기존 엑셀 대신!)
-        hospital_info_path = os.path.join(save_folder, "hospital_info_road.csv")
+        # 1) 통합 hospitals.csv 로드
+        hospital_info_path = os.path.join(save_folder, "hospitals.csv")
         if not os.path.exists(hospital_info_path):
-            print(f"❌ {hospital_info_path} 파일이 없습니다.")
-            print("   make_hospital_info()를 먼저 실행해주세요.")
-            raise FileNotFoundError(f"❌ {hospital_info_path} 파일이 없습니다.")
+            raise FileNotFoundError(f"❌ {hospital_info_path} 파일이 없습니다. make_hospital_info() 먼저 실행 필요.")
+        df_pool = pd.read_csv(hospital_info_path, encoding="utf-8-sig")
 
-        try:
-            df_hospital_pool = pd.read_csv(hospital_info_path, encoding="utf-8-sig")
-        except Exception as e:
-            print(f"❌ hospital_info_road.csv 로드 실패: {e}")
-            return
+        if "헬기장 여부" not in df_pool.columns:
+            raise KeyError("❌ hospitals.csv 에 '헬기장 여부' 컬럼이 없습니다.")
+        if "euc_dist" not in df_pool.columns:
+            raise KeyError("❌ hospitals.csv 에 'euc_dist' 컬럼이 없습니다.")
 
-        # 2) "헬기장 여부" 컬럼 확인 (필수)
-        if "헬기장 여부" not in df_hospital_pool.columns:
-            print("❌ '헬기장 여부' 컬럼이 hospital_info_road.csv에 없습니다.")
-            print("   make_hospital_info()에서 헬기장 컬럼 추가 로직을 확인해주세요.")
-            raise KeyError("❌ hospital_info_road.csv에 '헬기장 여부' 컬럼이 없습니다.")
+        # 2) 헬기장 병원만 필터 (hospitals.csv 의 Index = sim 병원 인덱스)
+        df_helipad = df_pool[df_pool["헬기장 여부"] == 1].copy()
+        if df_helipad.empty:
+            raise ValueError("❌ hospitals.csv 에 헬기장 병원이 없습니다. make_hospital_info 헬기장 보장 확인.")
 
-        # 3) hospital_info 내에서 헬기장 병원만 필터링
-        df_helipad_in_pool = df_hospital_pool[df_hospital_pool["헬기장 여부"] == 1].copy()
+        # 3) 직선거리(euc_dist, site→병원) 가까운 순 정렬 → 상위 uav_cap 곳 (헬기장 1병원당 UAV 1대)
+        df_helipad = df_helipad.sort_values("euc_dist").reset_index(drop=False)  # 'index' = 원래 Index
+        df_selected = df_helipad.head(uav_cap).copy()
 
-        if df_helipad_in_pool.empty:
-            print("❌ hospital_info_road.csv에 헬기장이 있는 병원이 없습니다.")
-            print("   make_hospital_info()의 헬기장 보장 로직을 확인해주세요.")
-            raise ValueError("❌ hospital_info에 헬기장이 있는 병원이 없습니다.")
-
-        # 4) 헬기장 병원 개수 검증 (UAV 대수와 비교)
-        if len(df_helipad_in_pool) < uav_n:
-            print(f"❌ hospital_info에 헬기장 병원이 {len(df_helipad_in_pool)}개밖에 없어 UAV {uav_n}대를 배치할 수 없습니다.")
-            print(f"   make_hospital_info()의 헬기장 보장 로직을 확인하거나 UAV 대수를 줄여주세요.")
-            raise ValueError(
-                f"❌ hospital_info에 헬기장 병원이 {len(df_helipad_in_pool)}개밖에 없어 "
-                f"UAV {uav_n}대를 배치할 수 없습니다."
-            )
-
-        # 5) 사고지점-병원 유클리드 거리 계산 (hospital_info에는 좌표가 없으므로 원본 Excel에서 가져와야 함)
-        # ★ hospital_info_road.csv에 이미 거리 정보가 있을 수 있지만, 안전하게 원본에서 좌표를 가져옴
-        try:
-            df_full_excel = pd.read_excel(self.hospital_data_path, engine="openpyxl")
-        except Exception as e:
-            print(f"❌ 원본 Excel 데이터 로드 실패: {e}")
-            return
-
-        # 병원명 기준으로 좌표 매칭
-        df_helipad_in_pool = df_helipad_in_pool.merge(
-            df_full_excel[["요양기관명", "x좌표", "y좌표"]],
-            on="요양기관명",
-            how="left"
-        )
-
-        # 좌표가 없는 병원 체크
-        if df_helipad_in_pool[["x좌표", "y좌표"]].isnull().any().any():
-            missing_hospitals = df_helipad_in_pool[df_helipad_in_pool[["x좌표", "y좌표"]].isnull().any(axis=1)]["요양기관명"].tolist()
-            print(f"⚠️ 경고: 다음 병원의 좌표 정보가 없습니다: {missing_hospitals}")
-            df_helipad_in_pool = df_helipad_in_pool.dropna(subset=["x좌표", "y좌표"])
-
-        df_helipad_in_pool["distance"] = df_helipad_in_pool.apply(
-            lambda row: haversine((row["y좌표"], row["x좌표"]), (latitude, longitude)),
-            axis=1
-        )
-
-        # 6) 거리순 정렬 (가까운 헬기장 병원부터)
-        df_helipad_in_pool = df_helipad_in_pool.sort_values("distance").reset_index(drop=True)
-
-        # 7) 상위 N개 선정 (각 병원 최대 1개 UAV)
-        df_selected = df_helipad_in_pool.head(uav_n).copy()
-
-        # 8) CSV 저장 (hospital_info와 동일한 병원 사용, 인덱스 일치 보장)
         result_df = pd.DataFrame({
-            "uav_id": range(len(df_selected)),                 # UAV 번호 (0..)
-            "hospital_idx": df_selected["Index"].astype(int),
-            "init_distance": df_selected["distance"].round(3),
-            "수술실수": df_selected["수술실수"],
-            "병상수": df_selected["병상수"],
-            "종별코드": df_selected["종별코드"],
-            "요양기관명": df_selected["요양기관명"]
+            "uav_id": range(len(df_selected)),                  # UAV 번호 (0..)
+            "hospital_idx": df_selected["Index"].astype(int),   # hospitals.csv 의 Index (병원 인덱스)
+            "init_distance": df_selected["euc_dist"].round(3),  # site→병원 직선거리 (UAV 출동거리)
+            "요양기관명": df_selected["요양기관명"],
         })
+        save_path = os.path.join(save_folder, "uav.csv")
+        result_df.to_csv(save_path, index=True, index_label="Index", encoding="utf-8-sig")
 
-        save_path = os.path.join(save_folder, "uav_info.csv")
-        result_df.to_csv(save_path, index=False, encoding="utf-8-sig")
-
-        print(f"  ✅ UAV 정보 생성 완료: {len(result_df)}개 UAV")
+        print(f"  ✅ UAV 정보 생성 완료: superset {len(result_df)}대 "
+              f"(헬기장 병원 {len(df_helipad)}곳 중 가까운 순)")
         print(f"     헬기장 병원: {', '.join(df_selected['요양기관명'].head(3).tolist())}{'...' if len(df_selected) > 3 else ''}")
-        print(f"     ★ hospital_info의 부분집합으로 생성됨 (인덱스 일치 보장)")
 
 
 
@@ -1033,10 +1006,9 @@ class ScenarioGenerator:
             print(f"❌ 병원 데이터 로드 실패: {e}")
             return
 
-        # Euclidean (★ CRITICAL FIX: road 순서 기준으로 생성)
+        # Euclidean (★ road 소요시간 순서 기준 — hospitals.csv 의 Index 순서와 일치)
         try:
-            # ★ hospital_info_euc.csv 대신 hospital_info_road.csv 사용 (인덱스 일치 보장)
-            file_road = os.path.join(save_folder, "hospital_info_road.csv")
+            file_road = os.path.join(save_folder, "hospitals.csv")
             df_road_hos = pd.read_csv(file_road, encoding="utf-8-sig")
             names_road = df_road_hos["요양기관명"].tolist()
             coords_road = []
@@ -1064,7 +1036,7 @@ class ScenarioGenerator:
 
         # Road (엑셀 파일 사용 - 기존 계산 데이터)
         try:
-            file_road = os.path.join(save_folder, "hospital_info_road.csv")
+            file_road = os.path.join(save_folder, "hospitals.csv")
             df_road = pd.read_csv(file_road, encoding="utf-8-sig")
             names_road = df_road["요양기관명"].tolist()
 
@@ -1129,7 +1101,8 @@ class ScenarioGenerator:
     
     def make_config_yaml(self, latitude, longitude, incident_size, amb_velocity,
                          uav_velocity, total_samples, random_seed, save_folder, is_use_time=True,
-                         amb_handover_time=0, uav_handover_time=0, duration_coeff=1.0):
+                         amb_handover_time=0, uav_handover_time=0, duration_coeff=1.0,
+                         amb_num=30, uav_num=3):
         """Config YAML 파일 생성"""
         print(f"  ⚙️ Config YAML 생성 중...")
         folder_name = f"({latitude},{longitude})"
@@ -1157,15 +1130,14 @@ entity_info:
     info_path: "{relative_folder}/patient_info.csv"
   hospital:
     load_data: True
-    info_path: "{relative_folder}/hospital_info_road.csv"
+    info_path: "{relative_folder}/hospitals.csv" # 통합 병원 파일 (메타+euc/road 현장거리)
     dist_Hos2Hos_euc_info: "{relative_folder}/distance_Hos2Hos_euc.csv"
     dist_Hos2Hos_road_info: "{relative_folder}/distance_Hos2Hos_road.csv"
-    dist_Hos2Site_euc_info: "{relative_folder}/distance_Hos2Site_euc.csv"
-    dist_Hos2Site_road_info: "{relative_folder}/distance_Hos2Site_road.csv"
     max_send_coeff: [{self._sanitize_coeff_text(self.max_send_coeff_text)}]
   ambulance:
     load_data: True
-    dispatch_distance_info: "{relative_folder}/amb_info_road.csv"
+    dispatch_distance_info: "{relative_folder}/amb_bases.csv" # 고유 센터당 1행(보유대수=count)
+    amb_num: {amb_num} # 런타임 AMB 대수 — 로드 시 보유대수 전개 후 이 수만큼 슬라이스
     velocity: {amb_velocity} # unit: km/h
     handover_time: {amb_handover_time} # unit: minutes
     is_use_time: {('True' if is_use_time else 'False')} # True: API duration 사용, False: 거리/속도 기반 계산
@@ -1173,7 +1145,8 @@ entity_info:
     road_provider: {self.road_provider or ('kakao' if is_use_time else 'osrm')} # 도로 데이터 공급자 (kakao | osrm) - 시나리오 생성 시 기록
   uav:
     load_data: True
-    dispatch_distance_info: "{relative_folder}/uav_info.csv"
+    dispatch_distance_info: "{relative_folder}/uav.csv" # 헬기장 병원 superset (가까운 순)
+    uav_num: {uav_num} # 런타임 UAV 대수 — 로드 시 superset 에서 가까운 순 이 수만큼 슬라이스
     velocity: {uav_velocity} # unit: km/h
     handover_time: {uav_handover_time} # unit: minutes
     is_use_time: False # UAV는 항상 유클리드 거리 기반
@@ -1205,10 +1178,14 @@ run_setting:
     def generate_scenario(self, latitude, longitude, incident_size, amb_count,
                           uav_count, amb_velocity, uav_velocity,
                           total_samples, random_seed, is_use_time=True,
-                          amb_handover_time=0, uav_handover_time=0, duration_coeff=1.0):
+                          amb_handover_time=0, uav_handover_time=0, duration_coeff=1.0,
+                          uav_num=3):
         """
         완전한 시나리오 생성 (모든 CSV + YAML)
         Args:
+            amb_count: AMB 런타임 대수(YAML amb_num). amb_bases 는 넉넉한 superset 으로 저장됨.
+            uav_count: UAV 생성 superset 상한(예 25).
+            uav_num: UAV 런타임 대수(YAML uav_num, 예 3). 헬리패드 최소 보장도 이 값 기준.
             is_use_time: True면 API duration 사용, False면 거리/속도 기반 계산
             amb_handover_time: 구급차 환자 인계시간 (분)
             uav_handover_time: UAV 환자 인계시간 (분)
@@ -1261,8 +1238,9 @@ run_setting:
         print(f"  📍 좌표: ({latitude}, {longitude}) - 역지오코딩은 orchestrator에서 수행")
 
         # 생성 파이프라인
+        # 헬리패드 최소 보장은 런타임 uav_num 기준, UAV superset 은 uav_count 상한으로 생성.
         self.make_amb_info(latitude, longitude, incident_size, amb_count, save_folder)
-        self.make_hospital_info(latitude, longitude, incident_size, save_folder, uav_count)
+        self.make_hospital_info(latitude, longitude, incident_size, save_folder, uav_num)
         self.make_uav_info(latitude, longitude, incident_size, uav_count, save_folder)
         self.make_patient_info(save_folder)
         self.make_distance_Hos2Hos(save_folder)
@@ -1270,7 +1248,8 @@ run_setting:
             latitude, longitude, incident_size,
             amb_velocity, uav_velocity, total_samples,
             random_seed, save_folder, is_use_time,
-            amb_handover_time, uav_handover_time, duration_coeff
+            amb_handover_time, uav_handover_time, duration_coeff,
+            amb_num=amb_count, uav_num=uav_num
         )
         
         elapsed = round(time.time() - start_time, 2)
@@ -1286,8 +1265,9 @@ if __name__ == "__main__":
     parser.add_argument("--latitude", type=float, required=False, help="위도")
     parser.add_argument("--longitude", type=float, required=False, help="경도")
     parser.add_argument("--incident_size", type=int, default=100, help="환자 수")
-    parser.add_argument("--amb_count", type=int, default=30, help="구급차 수")
-    parser.add_argument("--uav_count", type=int, default=25, help="UAV 수")
+    parser.add_argument("--amb_count", type=int, default=30, help="구급차 런타임 대수(YAML amb_num). amb_bases 는 superset 저장")
+    parser.add_argument("--uav_count", type=int, default=25, help="UAV 생성 superset 상한(헬기장 병원당 1대, 최대 N)")
+    parser.add_argument("--uav_num", type=int, default=3, help="UAV 런타임 대수(YAML uav_num). 헬리패드 최소 보장도 이 값 기준")
     parser.add_argument("--amb_velocity", type=int, default=40, help="구급차 속도")
     parser.add_argument("--uav_velocity", type=int, default=80, help="UAV 속도")
     parser.add_argument("--total_samples", type=int, default=1000, help="시뮬레이션 반복 수")
@@ -1311,7 +1291,9 @@ if __name__ == "__main__":
     parser.add_argument("--uav_handover_time", type=float, default=15.0, help="UAV 환자 인계시간 (분)")
     parser.add_argument("--duration_coeff", type=float, default=1.0, help="API duration 시간가중치 (기본값: 1.0)")
     parser.add_argument("--fixed_hos_num", type=int, default=None,
-                        help="모든 좌표에서 hos_num 고정 (RL 학습/평가 obs 차원 일치). 보장 룰 후 가까운 N개로 cap. 미지정 시 buffer_ratio 동적 결정")
+                        help="[구호환] hos_num cap (가까운 N개로 잘라냄). min_hos_num 과 동시지정 불가")
+    parser.add_argument("--min_hos_num", type=int, default=None,
+                        help="hos_num floor (보장 룰 후 ≥N 보장, cap-down 안 함). 2-pass H_max floor 용. 미지정 시 동적")
 
     args = parser.parse_args()
     try:
@@ -1331,6 +1313,7 @@ if __name__ == "__main__":
             osrm_url=args.osrm_url,
             is_use_time=args.is_use_time,
             fixed_hos_num=args.fixed_hos_num,
+            min_hos_num=args.min_hos_num,
         )
 
         # CLI가 주어지면 ENV 기본값을 덮어씀
@@ -1363,7 +1346,8 @@ if __name__ == "__main__":
             is_use_time=args.is_use_time,
             amb_handover_time=args.amb_handover_time,
             uav_handover_time=args.uav_handover_time,
-            duration_coeff=args.duration_coeff
+            duration_coeff=args.duration_coeff,
+            uav_num=args.uav_num
         )
         
         if config_path:

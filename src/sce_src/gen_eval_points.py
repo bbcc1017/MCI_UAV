@@ -41,7 +41,7 @@ from sample_region_points import KOR_TO_SHORT, _shape_rings, _polygon_contains
 
 
 def count_hospitals(config_path):
-    """생성된 config 의 hospital_info_road.csv 병원 수 (헤더 제외)."""
+    """생성된 config 의 hospital info(hospitals.csv) 병원 수 (헤더 제외)."""
     import yaml
     with open(config_path, encoding="utf-8") as f:
         cfg = yaml.safe_load(f)

@@ -3,7 +3,7 @@ Seoul MCI 파일럿 — Unity scene_data.json 빌더.
 
 입력:
   tools/seoul_pilot/_work/scenario/(<lat>,<lon>)/
-    hospital_info_road.csv, amb_info_road.csv, uav_info.csv, patient_info.csv,
+    hospitals.csv, amb_bases.csv, uav.csv, patient_info.csv,  # (구 *_road.csv/uav_info.csv 폴백)
     routes/hos2site/<idx>_<hospital_name>.json   (direction: site->hospital)
     routes/center2site/<idx>_<center_name>.json  (direction: center->site)
   tools/seoul_pilot/_work/trace/trace_*.json
@@ -104,9 +104,15 @@ def main() -> int:
     tfm = make_transformer()
     print(f"[anchor] EPSG:5186 = ({ax:.3f}, {ay:.3f})")
 
-    hospitals = read_csv(SCENARIO_DIR / "hospital_info_road.csv")
-    ambs = read_csv(SCENARIO_DIR / "amb_info_road.csv")
-    uavs = read_csv(SCENARIO_DIR / "uav_info.csv")
+    # Phase 1: 통합/카운트 포맷 우선, 구 포맷 폴백
+    def _pick(*names):
+        for n in names:
+            if (SCENARIO_DIR / n).exists():
+                return SCENARIO_DIR / n
+        return SCENARIO_DIR / names[0]
+    hospitals = read_csv(_pick("hospitals.csv", "hospital_info_road.csv"))
+    ambs = read_csv(_pick("amb_bases.csv", "amb_info_road.csv"))
+    uavs = read_csv(_pick("uav.csv", "uav_info.csv"))
 
     h2s = SCENARIO_DIR / "routes" / "hos2site"
     c2s = SCENARIO_DIR / "routes" / "center2site"

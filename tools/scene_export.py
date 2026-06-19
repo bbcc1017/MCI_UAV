@@ -37,6 +37,15 @@ def read_csv_rows(path):
         return list(csv.DictReader(f))
 
 
+def pick(coord_dir, *names):
+    """후보 파일명 중 먼저 존재하는 경로 반환(신규 포맷 우선, 구 포맷 폴백)."""
+    for n in names:
+        p = os.path.join(coord_dir, n)
+        if os.path.exists(p):
+            return p
+    return os.path.join(coord_dir, names[0])
+
+
 def col(row, *names):
     """여러 후보 컬럼명 중 존재하는 값 반환."""
     for n in names:
@@ -129,9 +138,9 @@ def main():
     hos_origin = {r["idx"]: r["origin"] for r in hos_routes if r["idx"] is not None}
     amb_origin = {r["idx"]: r["origin"] for r in center_routes if r["idx"] is not None}
 
-    # 병원
+    # 병원 (Phase 1: 통합 hospitals.csv, 구 hospital_info_road.csv 폴백)
     hospitals = []
-    hpath = os.path.join(coord_dir, "hospital_info_road.csv")
+    hpath = pick(coord_dir, "hospitals.csv", "hospital_info_road.csv")
     if os.path.exists(hpath):
         for row in read_csv_rows(hpath):
             idx = int(col(row, "Index", "index") or len(hospitals))
@@ -145,9 +154,9 @@ def main():
                 "helipad": str(col(row, "헬기장 여부", "헬기장여부") or "0").strip() in ("1", "True", "true"),
             })
 
-    # AMB 기지
+    # AMB 기지 (Phase 1: amb_bases.csv 고유 센터당 1행, 구 amb_info_road.csv 폴백)
     amb_bases = []
-    apath = os.path.join(coord_dir, "amb_info_road.csv")
+    apath = pick(coord_dir, "amb_bases.csv", "amb_info_road.csv")
     if os.path.exists(apath):
         for row in read_csv_rows(apath):
             idx = int(col(row, "Index", "index") or len(amb_bases))
@@ -160,9 +169,9 @@ def main():
                 "duration_min": float(col(row, "duration") or 0),
             })
 
-    # UAV
+    # UAV (Phase 1: uav.csv superset, 구 uav_info.csv 폴백)
     uavs = []
-    upath = os.path.join(coord_dir, "uav_info.csv")
+    upath = pick(coord_dir, "uav.csv", "uav_info.csv")
     if os.path.exists(upath):
         for row in read_csv_rows(upath):
             uavs.append({
