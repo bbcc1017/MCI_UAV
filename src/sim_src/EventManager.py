@@ -491,7 +491,9 @@ class EventManager():
 
         transportation_t = self.sample_transportation_time(mode=0, origination=h_idx + 1, destination=destination)
         if destination == 0:
-            self.status['ambulance']['amb_states'][a_idx] = (destination, transportation_t, 0)
+            # 복귀 leg: 병원 handover(인계) 후 현장 복귀 → 상태 time 도 handover 포함해야
+            # amb_arrival_site 이벤트(transportation_t+handover_time)와 일치(obs 충실도).
+            self.status['ambulance']['amb_states'][a_idx] = (destination, transportation_t + handover_time, 0)
             self.add_event(transportation_t + handover_time, 'amb_arrival_site', (a_idx,))
         else:
             self.status['ambulance']['amb_states'][a_idx] = (destination, transportation_t, p_class + 1)
@@ -544,7 +546,8 @@ class EventManager():
 
         transportation_t = self.sample_transportation_time(mode=1, origination=h_idx + 1, destination=destination)
         if destination == 0:
-            self.status['uav']['uav_states'][u_idx] = (destination, transportation_t, 0)
+            # 복귀 leg: handover 후 현장 복귀 → 상태 time 도 handover 포함(obs 충실도, amb 와 동일).
+            self.status['uav']['uav_states'][u_idx] = (destination, transportation_t + handover_time, 0)
             self.add_event(transportation_t + handover_time, 'uav_arrival_site', (u_idx,))
         else:
             self.status['uav']['uav_states'][u_idx] = (destination, transportation_t, p_class + 1)
