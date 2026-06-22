@@ -80,8 +80,13 @@ pip install -r requirements.txt
 
 ```bash
 # (A) OSRM — 기본, 결정적, 교통 미반영. 대량 평가는 로컬 컨테이너 권장
-docker run -t -i -p 5000:5000 osrm/osrm-backend osrm-routed --algorithm mld /data/<korea>.osrm
+tools/osrm_prepare_korea.sh
+docker compose -f docker-compose.osrm.yml up -d
 export MCI_OSRM_URL=http://localhost:5000
+# docker 그룹 권한이 없는 세션에서는 `sudo -n docker compose -f docker-compose.osrm.yml up -d`
+
+# 병원-병원 원본 도로거리 행렬 재생성(엑셀 결합 데이터.xlsx 기준, 페리 포함 OSRM 경로 사용)
+tools/build_distance_matrix_osrm.py
 
 # (B) Kakao Mobility — 출발시각 교통 반영(실험 본편). 키는 ENV 로만
 export KAKAO_API_KEY=<your_key>

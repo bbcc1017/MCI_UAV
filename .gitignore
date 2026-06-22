@@ -287,3 +287,4 @@ tools/nationwide/*.output
 tools/seoul_pilot/_work/
 tools/_tmp_*.yaml
 tools/**/_hospital_coords.csv
+osrm_data/
