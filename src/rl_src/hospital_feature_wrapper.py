@@ -167,7 +167,9 @@ class HospitalFeatureWrapper(gym.Wrapper):
         """병원당 특징 행렬 (H, F)."""
         h = np.asarray(obs['h_states'], dtype=np.float32)  # (H,3) = [idle, queue, occ]
         p_sent = np.asarray(obs['p_sent'], dtype=np.float32).reshape(-1)
-        cap_remain = np.maximum(self._max_send - p_sent, 0.0)
+        # cap_remain 도 게이트 기준에 맞춤: occ(실시간 잔여) | psent(보낸 만큼 차감). 마스크와 동일 의미.
+        cap_used = h[:, 2] if os.environ.get("MCI_CAP_GATE", "occ").strip().lower() != "psent" else p_sent
+        cap_remain = np.maximum(self._max_send - cap_used, 0.0)
         col_map = {
             "is_tier3": self._is_tier3,
             "helipad": self._helipad,

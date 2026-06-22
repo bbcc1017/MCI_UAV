@@ -1,8 +1,15 @@
+import os
 import gymnasium as gym
 import numpy as np
 import math
 
 from gymnasium import spaces
+
+
+def _cap_gate_is_occ():
+    """용량 게이트 기준. occ(기본)=실시간 점유(휴리스틱·sim 입원게이트와 일치, 병원 실시간 통신 가정),
+    psent=누적 발송수(현장중심 제한정보 — 보낸 만큼만 알고 안 줄어듦). MCI_CAP_GATE 로 토글."""
+    return os.environ.get("MCI_CAP_GATE", "occ").strip().lower() != "psent"
 
 
 class MCIEnvironment_gym(gym.Env):
@@ -230,11 +237,11 @@ class MCIEnvironment_gym(gym.Env):
         any_amb = len(full['amb_wait'][0]) > 0
         any_uav = len(full['uav_wait'][0]) > 0
         if any_amb or any_uav:
+            cap_used_arr = full['h_states'][:, -1] if _cap_gate_is_occ() else full['p_sent']
             for h in range(H):
-                # 보낼 곳 capa 여유 있으면 허용
+                # 보낼 곳 capa 여유 있으면 허용 (occ 기본 / psent 토글)
                 max_send = self.en_manager.en_properties['hospital']['hos_max_send'][h]
-                p_sent = full['p_sent'][h]
-                if p_sent < max_send:
+                if cap_used_arr[h] < max_send:
                     m_dest[h + 1] = True
 
         # dim 2: mode
@@ -265,7 +272,8 @@ class MCIEnvironment_gym(gym.Env):
         any_uav = len(full['uav_wait'][0]) > 0
         hos_props = self.en_manager.en_properties['hospital']
         max_send = hos_props['hos_max_send']
-        p_sent = full['p_sent']
+        # 용량 게이트: occ(실시간 점유, 기본) | psent(누적 발송, 현장중심). _cap_gate_is_occ 참고.
+        cap_used = full['h_states'][:, -1] if _cap_gate_is_occ() else full['p_sent']
 
         # UAV → helipad 보유 병원만. helipad_idx 가 비어있으면 UAV는 어떤 병원도 못 감.
         helipad_idx = np.asarray(hos_props.get('hos_helipad_idx', np.array([]))).reshape(-1)
@@ -279,7 +287,7 @@ class MCIEnvironment_gym(gym.Env):
                 mask[c, 0, m] = True
                 if class_avail and mode_avail:
                     for h in range(H):
-                        if p_sent[h] >= max_send[h]:
+                        if cap_used[h] >= max_send[h]:
                             continue
                         if m == 1 and h not in helipad_set:
                             continue  # UAV: 헬기장 없는 병원 금지

@@ -16,6 +16,12 @@ sb3-contrib>=2.3,<3
 # 정책 해석/증류 (distill_policy, analyze_policy, viper_distill)
 scikit-learn>=1.3,<2
 
+# 지리/공간 — 시나리오 점 샘플링(sample_region_points / gen_eval_points: ctprvn.shp 17 시도, sig.shp 250 시군구)
+geopandas>=0.14
+shapely>=2.0
+pyproj>=3.6
+pyogrio>=0.7   # geopandas 1.x 기본 I/O 엔진(fiona 대체)
+
 # Torch — RTX 50 (Blackwell) 호환 빌드
 # pip install torch==2.8.0+cu128 --index-url https://download.pytorch.org/whl/cu128
 torch>=2.8
