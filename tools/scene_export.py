@@ -138,9 +138,9 @@ def main():
     hos_origin = {r["idx"]: r["origin"] for r in hos_routes if r["idx"] is not None}
     amb_origin = {r["idx"]: r["origin"] for r in center_routes if r["idx"] is not None}
 
-    # 병원 (Phase 1: 통합 hospitals.csv, 구 hospital_info_road.csv 폴백)
+    # 병원 (Phase 1: 통합 hospital_info.csv, 구 이름/구 포맷 폴백)
     hospitals = []
-    hpath = pick(coord_dir, "hospitals.csv", "hospital_info_road.csv")
+    hpath = pick(coord_dir, "hospital_info.csv", "hospitals.csv", "hospital_info_road.csv")
     if os.path.exists(hpath):
         for row in read_csv_rows(hpath):
             idx = int(col(row, "Index", "index") or len(hospitals))
@@ -154,9 +154,9 @@ def main():
                 "helipad": str(col(row, "헬기장 여부", "헬기장여부") or "0").strip() in ("1", "True", "true"),
             })
 
-    # AMB 기지 (Phase 1: amb_bases.csv 고유 센터당 1행, 구 amb_info_road.csv 폴백)
+    # AMB 기지 (Phase 1: amb_station_info.csv 고유 센터당 1행, 구 이름/구 포맷 폴백)
     amb_bases = []
-    apath = pick(coord_dir, "amb_bases.csv", "amb_info_road.csv")
+    apath = pick(coord_dir, "amb_station_info.csv", "amb_bases.csv", "amb_info_road.csv")
     if os.path.exists(apath):
         for row in read_csv_rows(apath):
             idx = int(col(row, "Index", "index") or len(amb_bases))
@@ -169,9 +169,9 @@ def main():
                 "duration_min": float(col(row, "duration") or 0),
             })
 
-    # UAV (Phase 1: uav.csv superset, 구 uav_info.csv 폴백)
+    # UAV (Phase 1: uav_info.csv superset)
     uavs = []
-    upath = pick(coord_dir, "uav.csv", "uav_info.csv")
+    upath = pick(coord_dir, "uav_info.csv", "uav.csv")
     if os.path.exists(upath):
         for row in read_csv_rows(upath):
             uavs.append({

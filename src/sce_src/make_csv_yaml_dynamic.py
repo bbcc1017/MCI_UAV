@@ -467,10 +467,10 @@ class ScenarioGenerator:
         )
 
     def make_amb_info(self, latitude, longitude, incident_size, amb_count, save_folder):
-        """구급차 정보 생성 — 카운트 방식 amb_bases.csv (Phase 1).
+        """구급차 정보 생성 — 카운트 방식 amb_station_info.csv (Phase 1).
 
         기존: 안전센터를 보유대수만큼 행 복제 후 amb_count로 슬라이스 → amb_info_road.csv.
-        변경: 고유 안전센터당 1행(보유대수=count)으로 넉넉한 superset 저장 → amb_bases.csv.
+        변경: 고유 안전센터당 1행(보유대수=count)으로 넉넉한 superset 저장 → amb_station_info.csv.
               로드 시 ScenarioManager 가 보유대수만큼 np.repeat 전개 후 amb_num(YAML) 으로
               슬라이스한다(원본 수작업 수정 불필요). 도로 API 는 고유 좌표당 1회.
               amb_info_euc.csv 는 폐기(sim 미사용).
@@ -478,7 +478,7 @@ class ScenarioGenerator:
         Args:
             amb_count: 런타임 AMB 수(YAML amb_num). 후보 superset 의 하한 산정에만 쓰인다.
         """
-        print(f"  🚑 구급차 정보 생성 중 (amb_bases.csv 카운트 방식)...")
+        print(f"  🚑 구급차 정보 생성 중 (amb_station_info.csv 카운트 방식)...")
         try:
             df = pd.read_csv(self.fire_data_path, encoding="cp949")
         except Exception as e:
@@ -537,7 +537,7 @@ class ScenarioGenerator:
             "기관명": "안전센터/소방서이름",
         })
         df_bases = df_bases[["init_distance", "duration", "안전센터/소방서이름", "보유대수"]]
-        bases_path = os.path.join(save_folder, "amb_bases.csv")
+        bases_path = os.path.join(save_folder, "amb_station_info.csv")
         df_bases.to_csv(bases_path, index=True, index_label="Index", encoding="utf-8-sig")
 
         total_amb = int(df_bases["보유대수"].sum())
@@ -549,7 +549,7 @@ class ScenarioGenerator:
 
         - _select_hospitals: 순수 선정(보장룰 포함, API 0회)
         - _apply_hos_count: fixed_hos_num(cap, 구호환) / min_hos_num(floor) 적용
-        - _finalize_hospitals: road 거리/시간 계산 + 통합 hospitals.csv write (유일한 API 지점)
+        - _finalize_hospitals: road 거리/시간 계산 + 통합 hospital_info.csv write (유일한 API 지점)
         """
         df_euc, df_sorted = self._select_hospitals(latitude, longitude, incident_size, uav_count)
         df_euc = self._apply_hos_count(df_euc, df_sorted, uav_count)
@@ -865,7 +865,7 @@ class ScenarioGenerator:
         return df_euc
 
     def _finalize_hospitals(self, df_euc, latitude, longitude, save_folder):
-        """선정·조정된 df_euc 에 road 거리/시간 계산(API) 후 통합 hospitals.csv write."""
+        """선정·조정된 df_euc 에 road 거리/시간 계산(API) 후 통합 hospital_info.csv write."""
         print(f" 최종 생성된 병원: {len(df_euc)}곳 (상급: {df_euc['is_tier3'].sum()}곳, 종합 등: {len(df_euc) - df_euc['is_tier3'].sum()}곳)")
 
         # ---------- ROAD 거리/시간 계산 (선정 병원만, site → hospital) ----------
@@ -889,7 +889,7 @@ class ScenarioGenerator:
         df_euc["road_distance"] = road_distances
         df_euc["road_duration"] = road_durations
 
-        # ---------- (7) 통합 hospitals.csv 저장 (도로 소요시간 오름차순) ----------
+        # ---------- (7) 통합 hospital_info.csv 저장 (도로 소요시간 오름차순) ----------
         # ★ 병원 인덱스(Index) = 도로 소요시간 정렬순. h_states/p_sent/거리행렬 모두 이 순서로 정렬.
         # ★ Phase 1: 기존 4개 파일(hospital_info_euc/road, distance_Hos2Site_euc/road)을
         #    한 파일로 통합. euc_dist=UAV용, road_dist/road_duration=AMB용, 종별코드/헬기장 여부=
@@ -905,27 +905,27 @@ class ScenarioGenerator:
             "road_dist": df_road["road_distance"].values,
             "road_duration": df_road["road_duration"].values,
         })
-        hospitals_path = os.path.join(save_folder, "hospitals.csv")
+        hospitals_path = os.path.join(save_folder, "hospital_info.csv")
         hospitals.to_csv(hospitals_path, index=True, index_label="Index", encoding="utf-8-sig")
 
-        print(f"  ✅ 병원 정보 생성 완료 (통합 hospitals.csv, {len(hospitals)}곳, 도로 소요시간순)")
+        print(f"  ✅ 병원 정보 생성 완료 (통합 hospital_info.csv, {len(hospitals)}곳, 도로 소요시간순)")
 
 
     
     def make_uav_info(self, latitude, longitude, incident_size, uav_count, save_folder):
-        """UAV 정보 생성 — 통합 hospitals.csv 기반 superset (Phase 1).
+        """UAV 정보 생성 — 통합 hospital_info.csv 기반 superset (Phase 1).
 
-        - hospitals.csv 의 "헬기장 여부"=1 병원만 필터 → 직선거리(euc_dist) 가까운 순 정렬
+        - hospital_info.csv 의 "헬기장 여부"=1 병원만 필터 → 직선거리(euc_dist) 가까운 순 정렬
         - **한 헬기장 병원당 UAV 1대**, 상위 uav_count(superset 상한, 예 25)곳 선정
         - 로드 시 ScenarioManager 가 uav_num(YAML) 만큼 슬라이스(가까운 순) → 원본 수정 불필요
-        - 병원은 슬라이스 안 하므로 hospital_idx(= hospitals.csv 의 Index) 재매핑 불필요
+        - 병원은 슬라이스 안 하므로 hospital_idx(= hospital_info.csv 의 Index) 재매핑 불필요
         - CSV 구조: Index, uav_id, hospital_idx, init_distance, 요양기관명
 
         Args:
             uav_count: UAV superset 상한(생성 대수). 헬리패드 최소 보장은 make_hospital_info 가
                        런타임 uav_num 기준으로 이미 처리한다.
         """
-        print(f"  🚁 UAV 정보 생성 중 (hospitals.csv 기반 superset)...")
+        print(f"  🚁 UAV 정보 생성 중 (hospital_info.csv 기반 superset)...")
 
         # 0) superset 상한
         try:
@@ -935,26 +935,26 @@ class ScenarioGenerator:
         if uav_cap <= 0:
             print("⚠️ UAV superset 상한이 0입니다. UAV 정보 생성 생략(빈 파일).")
             empty_df = pd.DataFrame(columns=["uav_id", "hospital_idx", "init_distance", "요양기관명"])
-            save_path = os.path.join(save_folder, "uav.csv")
+            save_path = os.path.join(save_folder, "uav_info.csv")
             empty_df.to_csv(save_path, index=True, index_label="Index", encoding="utf-8-sig")
             print(f"  빈 UAV 정보 파일 생성 완료: {save_path}")
             return
 
-        # 1) 통합 hospitals.csv 로드
-        hospital_info_path = os.path.join(save_folder, "hospitals.csv")
+        # 1) 통합 hospital_info.csv 로드
+        hospital_info_path = os.path.join(save_folder, "hospital_info.csv")
         if not os.path.exists(hospital_info_path):
             raise FileNotFoundError(f"❌ {hospital_info_path} 파일이 없습니다. make_hospital_info() 먼저 실행 필요.")
         df_pool = pd.read_csv(hospital_info_path, encoding="utf-8-sig")
 
         if "헬기장 여부" not in df_pool.columns:
-            raise KeyError("❌ hospitals.csv 에 '헬기장 여부' 컬럼이 없습니다.")
+            raise KeyError("❌ hospital_info.csv 에 '헬기장 여부' 컬럼이 없습니다.")
         if "euc_dist" not in df_pool.columns:
-            raise KeyError("❌ hospitals.csv 에 'euc_dist' 컬럼이 없습니다.")
+            raise KeyError("❌ hospital_info.csv 에 'euc_dist' 컬럼이 없습니다.")
 
-        # 2) 헬기장 병원만 필터 (hospitals.csv 의 Index = sim 병원 인덱스)
+        # 2) 헬기장 병원만 필터 (hospital_info.csv 의 Index = sim 병원 인덱스)
         df_helipad = df_pool[df_pool["헬기장 여부"] == 1].copy()
         if df_helipad.empty:
-            raise ValueError("❌ hospitals.csv 에 헬기장 병원이 없습니다. make_hospital_info 헬기장 보장 확인.")
+            raise ValueError("❌ hospital_info.csv 에 헬기장 병원이 없습니다. make_hospital_info 헬기장 보장 확인.")
 
         # 3) 직선거리(euc_dist, site→병원) 가까운 순 정렬 → 상위 uav_cap 곳 (헬기장 1병원당 UAV 1대)
         df_helipad = df_helipad.sort_values("euc_dist").reset_index(drop=False)  # 'index' = 원래 Index
@@ -962,11 +962,11 @@ class ScenarioGenerator:
 
         result_df = pd.DataFrame({
             "uav_id": range(len(df_selected)),                  # UAV 번호 (0..)
-            "hospital_idx": df_selected["Index"].astype(int),   # hospitals.csv 의 Index (병원 인덱스)
+            "hospital_idx": df_selected["Index"].astype(int),   # hospital_info.csv 의 Index (병원 인덱스)
             "init_distance": df_selected["euc_dist"].round(3),  # site→병원 직선거리 (UAV 출동거리)
             "요양기관명": df_selected["요양기관명"],
         })
-        save_path = os.path.join(save_folder, "uav.csv")
+        save_path = os.path.join(save_folder, "uav_info.csv")
         result_df.to_csv(save_path, index=True, index_label="Index", encoding="utf-8-sig")
 
         print(f"  ✅ UAV 정보 생성 완료: superset {len(result_df)}대 "
@@ -1006,9 +1006,9 @@ class ScenarioGenerator:
             print(f"❌ 병원 데이터 로드 실패: {e}")
             return
 
-        # Euclidean (★ road 소요시간 순서 기준 — hospitals.csv 의 Index 순서와 일치)
+        # Euclidean (★ road 소요시간 순서 기준 — hospital_info.csv 의 Index 순서와 일치)
         try:
-            file_road = os.path.join(save_folder, "hospitals.csv")
+            file_road = os.path.join(save_folder, "hospital_info.csv")
             df_road_hos = pd.read_csv(file_road, encoding="utf-8-sig")
             names_road = df_road_hos["요양기관명"].tolist()
             coords_road = []
@@ -1036,7 +1036,7 @@ class ScenarioGenerator:
 
         # Road (엑셀 파일 사용 - 기존 계산 데이터)
         try:
-            file_road = os.path.join(save_folder, "hospitals.csv")
+            file_road = os.path.join(save_folder, "hospital_info.csv")
             df_road = pd.read_csv(file_road, encoding="utf-8-sig")
             names_road = df_road["요양기관명"].tolist()
 
@@ -1130,13 +1130,13 @@ entity_info:
     info_path: "{relative_folder}/patient_info.csv"
   hospital:
     load_data: True
-    info_path: "{relative_folder}/hospitals.csv" # 통합 병원 파일 (메타+euc/road 현장거리)
+    info_path: "{relative_folder}/hospital_info.csv" # 통합 병원 파일 (메타+euc/road 현장거리)
     dist_Hos2Hos_euc_info: "{relative_folder}/distance_Hos2Hos_euc.csv"
     dist_Hos2Hos_road_info: "{relative_folder}/distance_Hos2Hos_road.csv"
     max_send_coeff: [{self._sanitize_coeff_text(self.max_send_coeff_text)}]
   ambulance:
     load_data: True
-    dispatch_distance_info: "{relative_folder}/amb_bases.csv" # 고유 센터당 1행(보유대수=count)
+    dispatch_distance_info: "{relative_folder}/amb_station_info.csv" # 고유 센터당 1행(보유대수=count)
     amb_num: {amb_num} # 런타임 AMB 대수 — 로드 시 보유대수 전개 후 이 수만큼 슬라이스
     velocity: {amb_velocity} # unit: km/h
     handover_time: {amb_handover_time} # unit: minutes
@@ -1145,7 +1145,7 @@ entity_info:
     road_provider: {self.road_provider or ('kakao' if is_use_time else 'osrm')} # 도로 데이터 공급자 (kakao | osrm) - 시나리오 생성 시 기록
   uav:
     load_data: True
-    dispatch_distance_info: "{relative_folder}/uav.csv" # 헬기장 병원 superset (가까운 순)
+    dispatch_distance_info: "{relative_folder}/uav_info.csv" # 헬기장 병원 superset (가까운 순)
     uav_num: {uav_num} # 런타임 UAV 대수 — 로드 시 superset 에서 가까운 순 이 수만큼 슬라이스
     velocity: {uav_velocity} # unit: km/h
     handover_time: {uav_handover_time} # unit: minutes

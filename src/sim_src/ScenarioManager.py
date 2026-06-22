@@ -136,7 +136,7 @@ class ScenarioManager():
                     print("  road Hos2Hos CSV 비어있음/부재 - euc 사용 (UAV-only)")
                     reg_prop['d_HtoH_road'] = reg_prop['d_HtoH_euc'].copy()
 
-                # 현장거리(Hos2Site) — Phase 1: 통합 hospitals.csv 의 euc_dist/road_dist/
+                # 현장거리(Hos2Site) — Phase 1: 통합 hospital_info.csv 의 euc_dist/road_dist/
                 # road_duration 컬럼을 직접 사용(별도 distance_Hos2Site_*.csv 폐기).
                 if 'euc_dist' in hos_info.columns:
                     reg_prop['d_HtoS_euc'] = hos_info['euc_dist'].to_numpy(dtype='float32')
@@ -202,7 +202,7 @@ class ScenarioManager():
                     # 0바이트 파일 → AMB 0대로 처리
                     amb_info = pd.DataFrame()
 
-                # Phase 1: amb_bases.csv(고유 센터당 1행, 보유대수=count) → 보유대수만큼
+                # Phase 1: amb_station_info.csv(고유 센터당 1행, 보유대수=count) → 보유대수만큼
                 # np.repeat 전개 후 YAML amb_num 만큼 슬라이스(도로 소요시간 오름차순 보존).
                 # 전개 결과는 구 복제방식 amb_info_road.csv 와 동일한 개별-ambulance 표현.
                 # (구 포맷: amb_num 키 없음 → 행이 곧 ambulance, 전개 생략.)
@@ -292,7 +292,7 @@ class ScenarioManager():
                 except pd.errors.EmptyDataError:
                     uav_info = pd.DataFrame()
 
-                # Phase 1: uav.csv(헬기장 병원 superset, 가까운 순) → YAML uav_num 만큼 슬라이스.
+                # Phase 1: uav_info.csv(헬기장 병원 superset, 가까운 순) → YAML uav_num 만큼 슬라이스.
                 # 병원은 슬라이스 안 하므로 hospital_idx 재매핑 불필요. (구 포맷: uav_num 키
                 # 없음 → 행이 곧 UAV, 슬라이스 생략.)
                 uav_num_cfg = cfg_uav.get('uav_num', None)

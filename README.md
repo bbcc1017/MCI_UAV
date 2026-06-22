@@ -38,7 +38,7 @@ SSH 서버의 기존 시나리오가 소실되어 **재생성·재실험**이 �
 
 | 단계 | 내용 | 상태 |
 |---|---|---|
-| **Phase 1** | 시나리오 파일 I/O 통합 (`hospitals.csv`/`amb_bases.csv`/`uav.csv`, amb 카운트화, load-time 슬라이스) | ✅ 완료 |
+| **Phase 1** | 시나리오 파일 I/O 통합 (`hospital_info.csv`/`amb_station_info.csv`/`uav_info.csv`, amb 카운트화, load-time 슬라이스) | ✅ 완료 |
 | **Phase 2** | 데이터 기반 **H_max floor** (2-pass, 임의의 46 폐기) | ✅ 완료 |
 | **Phase 3a** | 특징기반 병원 obs 래퍼 (`HospitalFeatureWrapper`) | ✅ 완료 |
 | **Phase 3b·c** | 특징 obs 학습 통합 (`train_ppo_feature.py`) + 순열등변 집합 인코더 (`hospital_set_extractor.py`) | ✅ 완료 |
@@ -236,9 +236,9 @@ RL 경로는 **결합 마스크**(`action_masks_joint`)만 사용한다(per-dim 
 <summary><b id="dsn-contract">시나리오 파일 계약 (Phase 1)</b></summary>
 
 지역 폴더 `scenarios/exp_<prefix>_<region>_dep_<ts>/(lat,lon)/` 산출물:
-- `hospitals.csv` — 통합 병원 메타+현장거리: 요양기관명/종별코드/헬기장 여부/수술실수/병상수/`euc_dist`/`road_dist`/`road_duration`. **도로소요시간 오름차순 = 병원 인덱스**.
-- `amb_bases.csv` — 고유 안전센터/소방서당 1행(`보유대수`=count). load 시 보유대수만큼 `np.repeat` 전개 후 `amb_num` 만큼 슬라이스 → 같은 센터 동일거리 차량(Kakao road API 호출 절감).
-- `uav.csv` — 헬기장 병원 superset(가까운 순, `hospital_idx` 보존). load 시 `uav_num` 슬라이스.
+- `hospital_info.csv` — 통합 병원 메타+현장거리: 요양기관명/종별코드/헬기장 여부/수술실수/병상수/`euc_dist`/`road_dist`/`road_duration`. **도로소요시간 오름차순 = 병원 인덱스**.
+- `amb_station_info.csv` — 고유 안전센터/소방서당 1행(`보유대수`=count). load 시 보유대수만큼 `np.repeat` 전개 후 `amb_num` 만큼 슬라이스 → 같은 센터 동일거리 차량(Kakao road API 호출 절감).
+- `uav_info.csv` — 헬기장 병원 superset(가까운 순, `hospital_idx` 보존). load 시 `uav_num` 슬라이스.
 - `distance_Hos2Hos_{euc,road}.csv` — diversion 용 병원간 거리행렬(유지). `patient_info.csv`, `config_*.yaml`, `scene.json`(Unity 용).
 
 **매핑**: `수술실수→hos_max_capa`, `병상수→hos_max_queue`, `종별코드 1→Tier3·그외→Tier2`, `헬기장 여부→helipad_idx`.
