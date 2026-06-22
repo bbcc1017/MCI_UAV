@@ -2,13 +2,15 @@
 """한 시군구 bbox에서 OSM이 제공하는 '현실 요소' 종류·개수 탐색(구현 우선순위 판단용)."""
 import json, os, sys, requests
 
+from osm_overpass_endpoints import overpass_endpoint
+
 TOOLS = os.path.dirname(os.path.abspath(__file__))
 SGG = json.load(open(os.path.join(TOOLS, "nationwide", "sgg.json"), encoding="utf-8"))
 name = sys.argv[1] if len(sys.argv) > 1 else "gyeonggi_gwangmyeongsi"
 d = next(s for s in SGG if s["name"] == name)
 b = d["bbox"]  # minLat,minLon,maxLat,maxLon
 bb = f"{b[0]},{b[1]},{b[2]},{b[3]}"
-EP = "https://overpass-api.de/api/interpreter"
+EP = overpass_endpoint()
 H = {"User-Agent": "MCI-UAV-research/1.0"}
 
 # (라벨, overpass 조각)

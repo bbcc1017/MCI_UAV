@@ -21,11 +21,13 @@ import time
 
 import requests
 
+from osm_overpass_endpoints import overpass_endpoints
+
 TOOLS = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.join(TOOLS, "nationwide")
 SGG_JSON = os.path.join(ROOT, "sgg.json")
 SGGDIR = os.path.join(ROOT, "sgg")
-EP = "https://overpass-api.de/api/interpreter"
+ENDPOINTS = overpass_endpoints()
 HEADERS = {"User-Agent": "MCI-UAV-research/1.0 (academic disaster sim)"}
 
 # highway 등급 → 도로 폭(m). lanes 태그 있으면 lanes*3.5 우선.
@@ -45,22 +47,26 @@ def overpass(bbox, retries=4):
          f"({bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]});out geom;")
     backoff = 5
     for attempt in range(retries):
-        try:
-            r = requests.post(EP, data={"data": q}, headers=HEADERS, timeout=180)
-            if r.status_code == 200:
-                return r.json().get("elements", [])
-            if r.status_code in (429, 504):   # rate limit / gateway timeout
-                print(f"  overpass {r.status_code} — {backoff}s 대기")
-                time.sleep(backoff)
-                backoff = min(backoff * 2, 120)
+        last_error = None
+        for ep in ENDPOINTS:
+            try:
+                r = requests.post(ep, data={"data": q}, headers=HEADERS, timeout=180)
+                if r.status_code == 200:
+                    return r.json().get("elements", [])
+                if r.status_code in (429, 503, 504):
+                    last_error = RuntimeError(f"overpass {r.status_code} from {ep}")
+                    continue
+                r.raise_for_status()
+            except Exception as e:  # noqa: BLE001
+                last_error = e
                 continue
-            r.raise_for_status()
-        except Exception as e:  # noqa: BLE001
-            if attempt == retries - 1:
-                raise
-            print(f"  overpass 재시도({attempt + 1}): {str(e)[:80]}")
-            time.sleep(backoff)
-            backoff = min(backoff * 2, 120)
+        if attempt == retries - 1:
+            if last_error:
+                raise last_error
+            return []
+        print(f"  overpass retry {attempt + 1}/{retries}; waiting {backoff}s")
+        time.sleep(backoff)
+        backoff = min(backoff * 2, 120)
     return []
 
 

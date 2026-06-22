@@ -219,6 +219,10 @@ __marimo__/
 
 # Unity
 Library/
+
+# Local OSM/OSRM runtime data
+osrm_data/
+overpass_db/
 Temp/
 Obj/
 Build/
@@ -280,6 +284,12 @@ tools/nationwide/feat/
 tools/nationwide/poi/
 tools/nationwide/roads2/
 tools/nationwide/roads/
+tools/nationwide/infra/
+# 지형 DEM(.bin/.json)·정사 모자이크 — 대용량 재생성물(terrain_fetch.py / vworld_fetch.py)
+tools/nationwide/terrain/
+tools/nationwide/ortho_fill/
+tools/nationwide/layer_audit.txt
+tools/nationwide/_poifeat_start
 tools/nationwide/*.json
 tools/nationwide/*.log
 tools/nationwide/*.err.log

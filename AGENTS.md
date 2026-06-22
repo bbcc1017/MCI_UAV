@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
 ## What this repo is
 
@@ -37,14 +37,6 @@ Data flows: **scenario YAML → gym env → wrapper → trainer/evaluator.**
 - `src/rl_src/env_wrapper.py` (`FlattenAndDiscreteWrapper`) is the keystone: dict→flat obs, MultiDiscrete→Discrete, **action masking**, and `encode_action`/`decode_action`. It **auto-adjusts dimensions** based on amb_num/uav_num. The hybrid evaluator (`hybrid_eval.py`, "2안") uses this encode/decode to let RL pick the UAV action while a heuristic rule overrides the AMB action.
 - Heuristics (`sim_src/RuleManager.py`) enumerate 32 rule combos (START/ReSTART × RedOnly/YellowNearest × red/yellow modes); RL is compared against these.
 
-### Observation / action / reward encoding
-
-- **Obs** (dict, flattened by the wrapper into one float32 vector): `p_states (incident_size,5)` = [class, rescued, move_start, moved, cared]; `h_states (H,3)` = [idle, queue, occupied]; `p_sent (H,)`; `amb_states`/`uav_states (n,3)` = [dest, time_remaining, severity]; `p_at_site (4,)` = [R/Y/G/B waiting]; `n_amb_at_site`, `n_uav_at_site`, `time`.
-- **Action** `[class, dest, mode]`: class 0=Red/1=Yellow/2=Green; dest 0=stay on scene, 1..H=hospital; mode 0=AMB/1=UAV. Mode is auto-pinned when only one vehicle type exists (`amb_num=0`→UAV, `uav_num=0`→AMB). `encode_action`/`decode_action` map this to/from the flat Discrete index.
-- **Reward** = patient survival probability at hospital-admit time (Red/Yellow decay with time, Green=1, Black=0). `reward_redesign_wrapper.py` reshapes it: `raw` | `woG` (drop Green; also exposed as `info['r_woG']`) | `rywt` (Red/Yellow weighted) — picked by `--reward_mode` on `train_ppo*.py` or the `MCI_REWARD_MODE` env var (works for any algo).
-- **Masking is a hard constraint** via `action_masks()`, not a penalty: Red→Tier3-only, UAV→helipad hospitals only. Effective wrapper chain (outer→inner): `Monitor → ActionMasker → [HeuristicAdvantageWrapper] → FlattenAndDiscreteWrapper (or HybridAMBHeurWrapper) → [RewardRedesignWrapper] → base env` — keep core files unmodified; variants wrap.
-- **`hybrid_eval.py --mode_split`**: `strict` = heuristic decides the full `[c,d,m]`; `loose` = RL decides class+dest, heuristic decides only mode.
-
 ### Multi-region / nationwide RL (Plan 1 + plan1nat)
 
 Beyond single-coordinate training, there are two multi-region pipelines driven by **manifest JSONs in `scenarios/manifests/`** (`{region: config_path}`, with **absolute paths** — note training is also run on a Linux box, so paths there are `/home/...`):
@@ -54,13 +46,6 @@ Beyond single-coordinate training, there are two multi-region pipelines driven b
 - **plan1nat (single national policy)**: trained on `national_train.json` → `plan1nat_manifest.json` via `MultiRegionEnv`. **Generalization eval** uses hold-out points: `sample_region_points.py` rejection-samples random WGS84 points inside `scenarios/ctprvn.shp` (통계청 시도 경계, EPSG:5179→4326) → `gen_eval_points.py` builds scenarios at those points (retries/re-samples on Kakao route failure or hospital-count mismatch).
 - **sim_src debug-print spam**: the sim emits a `print` per event; trainers/workers therefore redirect **stdout → `/dev/null`** (monitor via TensorBoard) and capture only **stderr → `.err`** files. Don't "fix" this by editing `sim_src` — it's stable by decision.
 - The many other `rl_src/*` scripts are research variants on the same wrapper (`enriched_env_wrapper`/`reward_redesign_wrapper`/`advantage_wrapper` obs-reward ablations, `train_ppo_bc.py`+`bc_dataset.py`+`distill_policy.py` for BC/distillation, `eval_*`/`aggregate_*`/`plot_*` for analysis). Read the module docstring — each states its reuse deps and purpose.
-
-### Key env vars (RL/sim & scenario gen)
-
-- **`MCI_REDUCED_OBS=1`** aggregates the obs to summary stats (smaller obs dim). **Must match between train and eval** or the model won't load; batch scripts (`run_seed_repro.py`, grid launchers) force it on.
-- **`MCI_TIER_MASK=0`** disables tier-based action masking (backward compat). **`MCI_REWARD_MODE`** = `raw`|`woG`|`rywt`. **`MCI_OBS_VARIANT`** selects an obs-ablation variant (needs reduced obs).
-- **`MCI_ADV_MODE` / `MCI_ADV_SUBTRACT_AT` / `MCI_ADV_CSV` / `MCI_ADV_REGION`** configure `advantage_wrapper.py` (baseline-relative reward shaping from a precomputed CSV).
-- **Routing**: `MCI_OSRM_URL` (OSRM backend, default public router), `KAKAO_API_KEY` (Kakao mode). **Scenario-gen knobs** (fallbacks when the CLI flag is omitted): `MCI_UTIL_BY_TIER`, `MCI_BUFFER_RATIO` (default 1.5), `MCI_MAX_SEND_COEFF`.
 
 ## Unity digital-twin architecture (big picture)
 
@@ -89,7 +74,7 @@ Full cheat-sheet is in the auto-memory `reference_unity_mcp_osm_techniques.md`. 
 - **Mass-scene batch pattern**: `EditorApplication.update` driver (1 scene/tick), idempotent via a **marker child GameObject** (e.g. `__terrain_rebased`) skipped on re-run; monitor with a `run_in_background` bash watcher polling scene `.unity` mtimes (the editor is too busy for reliable MCP polling).
 - **Screenshot a scene**: temp `Camera`→`RenderTexture`→`ReadPixels`→`EncodeToPNG` to a path **outside `Assets/`**, then Read it. Frame on the *buildings* bounds — Sudogwon-frame geometry sits at huge world coords (~128000), so all-renderer bounds mis-frame to empty sky. Region scenes have **no Camera** → Play shows "No cameras rendering"; inspect via Scene view or Play the entry `SampleScene`.
 - Entering Play after a script change briefly drops the MCP bridge ("No Unity Editor instances"); re-read `mcpforunity://instances` and retry.
-- **The Unity MCP bridge is often NOT connected to the Claude session** (only `claude.ai Figma/Notion/...` may be present) — confirm with `ListMcpResourcesTool` / `claude mcp list` **before** planning MCP-driven Unity work; `/unity-mcp-skill` is docs, not a connection. With no bridge you can still verify from disk: `.unity` scenes are YAML, so `grep -l '<marker>' Assets/Scenes/Regions/*.unity` confirms a pass applied across the 255 scenes, and a `StartBackgroundImport` pass saving scenes at all is **proof every edited runtime+editor script compiled clean** ("compile-proof" — Unity won't run editor code with any compile error).
+- **The Unity MCP bridge is often NOT connected to the Codex session** (only `Codex.ai Figma/Notion/...` may be present) — confirm with `ListMcpResourcesTool` / `Codex mcp list` **before** planning MCP-driven Unity work; `/unity-mcp-skill` is docs, not a connection. With no bridge you can still verify from disk: `.unity` scenes are YAML, so `grep -l '<marker>' Assets/Scenes/Regions/*.unity` confirms a pass applied across the 255 scenes, and a `StartBackgroundImport` pass saving scenes at all is **proof every edited runtime+editor script compiled clean** ("compile-proof" — Unity won't run editor code with any compile error).
 - Flat/ribbon meshes need **CCW winding (viewed from above)** so `RecalculateNormals` faces +Y; CW → normals point down → backface-culled (invisible from above). Test visibility with a **URP** Unlit material (built-in `Unlit/Color` renders invisible under URP).
 
 ## Long-running background work

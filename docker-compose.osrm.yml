@@ -1,0 +1,15 @@
+services:
+  osrm:
+    image: ${OSRM_IMAGE:-ghcr.io/project-osrm/osrm-backend}
+    command:
+      - osrm-routed
+      - --algorithm
+      - mld
+      - --max-table-size
+      - "${OSRM_MAX_TABLE_SIZE:-10000}"
+      - /data/${OSRM_BASENAME:-south-korea-latest}.osrm
+    ports:
+      - "${OSRM_PORT:-5000}:5000"
+    volumes:
+      - ./osrm_data:/data
+    restart: unless-stopped

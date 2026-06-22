@@ -1,0 +1,30 @@
+services:
+  overpass:
+    image: wiktorn/overpass-api:0.7.62
+    container_name: mci_uav_overpass
+    ports:
+      - "${OVERPASS_PORT:-12345}:80"
+    volumes:
+      - ./overpass_db:/db
+      - ./osrm_data/south-korea-latest.osm.pbf:/pbf/south-korea-latest.osm.pbf:ro
+    environment:
+      OVERPASS_META: "no"
+      OVERPASS_MODE: "init"
+      OVERPASS_PLANET_URL: "file:///pbf/south-korea-latest.osm.pbf"
+      OVERPASS_DIFF_URL: "https://planet.openstreetmap.org/replication/minute/"
+      OVERPASS_UPDATE_SLEEP: "86400"
+      OVERPASS_USE_AREAS: "false"
+      OVERPASS_STOP_AFTER_INIT: "false"
+      OVERPASS_COMPRESSION: "gz"
+      OVERPASS_FASTCGI_PROCESSES: "${OVERPASS_FASTCGI_PROCESSES:-4}"
+      OVERPASS_MAX_TIMEOUT: "${OVERPASS_MAX_TIMEOUT:-1000s}"
+      OVERPASS_SPACE: "${OVERPASS_SPACE:-10737418240}"
+      OVERPASS_PLANET_PREPROCESS: "mv /db/planet.osm.bz2 /db/planet.osm.pbf && osmium cat -o /db/planet.osm.bz2 /db/planet.osm.pbf && rm /db/planet.osm.pbf"
+    shm_size: "2gb"
+    restart: unless-stopped
+    healthcheck:
+      test: "curl --noproxy '*' -qfg 'http://localhost/api/interpreter?data=[out:json];node(1);out;' | jq '.generator' | grep -q Overpass || exit 1"
+      start_period: 48h
+      interval: 1m
+      timeout: 30s
+      retries: 5

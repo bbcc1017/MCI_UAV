@@ -8,15 +8,13 @@
 """
 import argparse, json, os, time, requests
 
+from osm_overpass_endpoints import overpass_endpoints
+
 TOOLS = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.join(TOOLS, "nationwide")
 SGG_JSON = os.path.join(ROOT, "sgg.json")
 OUTDIR = os.path.join(ROOT, "poi")
-ENDPOINTS = [
-    "https://overpass-api.de/api/interpreter",
-    "https://overpass.kumi.systems/api/interpreter",
-    "https://overpass.openstreetmap.fr/api/interpreter",
-]
+ENDPOINTS = overpass_endpoints()
 H = {"User-Agent": "MCI-UAV-research/1.0 (academic disaster sim)"}
 AMENITIES = ["hospital", "school", "fire_station", "police", "fuel"]
 

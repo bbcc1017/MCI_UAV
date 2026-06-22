@@ -55,20 +55,30 @@ def col(row, *names):
 
 
 def flatten_route(path):
-    """카카오 route JSON → {idx, name, origin[lat,lon], dist_km, dur_min, path[[lat,lon],...]}."""
+    """카카오 route JSON → {idx, name, origin[lat,lon], dist_km, dur_min, path[[lat,lon],...], states[...]}.
+
+    states: 각 정점이 속한 도로 구간의 traffic_state(0~5, 혼잡도) — path와 동일 길이. Unity NPC 교통량/속도 변조용.
+    """
     d = json.load(open(path, encoding="utf-8"))
     meta = d.get("meta", {})
     origin = meta.get("center") or meta.get("hospital")  # [lon,lat]
     pts = []
+    states = []
     try:
         routes = d["payload"]["kakao_response"]["routes"]
         for r in routes:
             for sec in r.get("sections", []):
                 for road in sec.get("roads", []):
                     v = road.get("vertexes", [])
+                    ts = road.get("traffic_state", 0)
+                    try:
+                        ts = int(ts)
+                    except (TypeError, ValueError):
+                        ts = 0
                     for i in range(0, len(v) - 1, 2):
                         lon, lat = v[i], v[i + 1]
                         pts.append([round(lat, 7), round(lon, 7)])
+                        states.append(ts)
     except (KeyError, IndexError, TypeError):
         pass
     return {
@@ -78,15 +88,16 @@ def flatten_route(path):
         "dist_km": meta.get("distance_km"),
         "dur_min": meta.get("duration_min"),
         "path": pts,
+        "states": states,
     }
 
 
 def _flat_route(r):
-    """{idx, path[[lat,lon]]} → {idx, pts:[lat,lon,lat,lon,...]} (JsonUtility 친화)."""
+    """{idx, path[[lat,lon]], states} → {idx, pts:[lat,lon,...], states:[...]} (JsonUtility 친화)."""
     pts = []
     for lat, lon in r["path"]:
         pts.append(lat); pts.append(lon)
-    return {"idx": r["idx"], "pts": pts}
+    return {"idx": r["idx"], "pts": pts, "states": r.get("states", [])}
 
 
 def main():

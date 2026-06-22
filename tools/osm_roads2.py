@@ -22,16 +22,14 @@ import time
 
 import requests
 
+from osm_overpass_endpoints import overpass_endpoints
+
 TOOLS = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.join(TOOLS, "nationwide")
 SGG_JSON = os.path.join(ROOT, "sgg.json")
 OUTDIR = os.path.join(ROOT, "roads2")
 # 여러 미러 로테이션 — 한 곳이 429/504면 다음 미러를 즉시 시도(백오프 대기 최소화).
-ENDPOINTS = [
-    "https://overpass-api.de/api/interpreter",
-    "https://overpass.kumi.systems/api/interpreter",
-    "https://overpass.openstreetmap.fr/api/interpreter",
-]
+ENDPOINTS = overpass_endpoints()
 HEADERS = {"User-Agent": "MCI-UAV-research/1.0 (academic disaster sim)"}
 
 CLASSES = [
