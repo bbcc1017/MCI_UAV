@@ -14,7 +14,8 @@ Two loosely-coupled codebases that share the same MCI (mass-casualty incident) s
 - `external/ml-agents` is a **git submodule pointing at the upstream Unity-Technologies/ml-agents** repo (`ignore = dirty`). The entire Unity project `UAV_test/` sits **untracked inside that submodule's working tree**.
 - Consequence: **all Unity C# / Assets changes are local-to-`C:` only — they are NOT tracked by `origin` and cannot be pushed** with the current layout. This is intentional ("Unity = local-C only"). Do not try to commit Unity changes to the parent repo; don't be alarmed that `git status` ignores them.
 - Only `src/`, `tools/*.py`, docs config get committed to `origin`. Commit messages **and code comments** are written **in Korean** (keep the `Co-Authored-By` trailer in English); match the surrounding comment density.
-- `.gitignore` excludes large/generated data: `scenarios/exp_*`, `results/`, `docs/`, `.codex/`, and `tools/nationwide/{roads2,feat,area,poi,blocks,...}` bulk data.
+- **`origin` is pushed from multiple machines** (a Linux training box; **Codex** cloud branches `codex/*`) — a local push is often rejected ("fetch first"): `git fetch` → `git rebase origin/main` (changes are usually in non-overlapping files) → push. **Never force-push** (clobbers the other side's RL/sim commits). `AGENTS.md` is Codex's `CLAUDE.md` mirror.
+- `.gitignore` excludes large/generated data: `scenarios/exp_*`, `results/`, `docs/`, `.codex/`, `osrm_data/`, `overpass_db/`, and `tools/nationwide/{roads2,feat,area,poi,blocks,infra,terrain,ortho_fill,...}` bulk data (the last holds **multi-GB** DEM/ortho — **stage tool scripts explicitly; never `git add -A`**).
 
 ## Environment & commands
 
@@ -74,8 +75,9 @@ Project root: `external/ml-agents/UAV_test/`. Pipeline: **GIS/OSM fetch (tools) 
 
 ## tools/ data pipeline
 
-- OSM via Overpass: `osm_roads2.py` (lanes/oneway/class → detailed roads), `osm_features.py` (signals/crossings/bus stops), `osm_areas.py` (park/green/water polygons), `osm_poi.py` (hospital/school/fire/police/fuel). All rotate 3 Overpass mirrors to dodge 429, attribute features to a district by **center-point-in-polygon**, are resumable (skip existing output, `--force`), and write compact text to `tools/nationwide/<kind>/<name>.txt`.
+- OSM via Overpass: `osm_roads2.py` (lanes/oneway/class → detailed roads), `osm_features.py` (signals/crossings/bus stops), `osm_areas.py` (park/green/water polygons), `osm_poi.py` (hospital/school/fire/police/fuel). All read `MCI_OVERPASS_URL`/`OVERPASS_URL` (local self-hosted Overpass, via `osm_overpass_endpoints.py`) else rotate 3 public mirrors to dodge 429, attribute features to a district by **center-point-in-polygon**, are resumable (skip existing output, `--force`), and write compact text to `tools/nationwide/<kind>/<name>.txt`.
 - `vworld_fetch.py` pulls buildings/orthophoto tiles via the vWorld API. `nationwide_build.py`/`build_region_index.py` drive the citywide build + `region_index.json`. `scene_export.py`/`trace_export.py`/`run_sim_trace.py` bridge the Python sim output into Unity-loadable JSON. `scene_export.py` also emits per-route `states[]` (Kakao `traffic_state` 0–5, index-aligned to `pts`) for congestion-aware NPC density/speed.
+- **Local self-hosted routing/OSM** (avoids Kakao cost + mirror 429; needs Docker Desktop/WSL2): `docker-compose.osrm.yml` (`MCI_OSRM_URL`; data via `tools/osrm_prepare_korea.ps1`→`osrm_start_local.ps1`) + `docker-compose.overpass.yml` (`MCI_OVERPASS_URL`); `tools/osm_fetch_local.ps1` runs the OSM scripts against local Overpass; `fill_h2h_road_osrm.py` backfills 0-valued hospital↔hospital road distances via OSRM table API. Guide: `docs/local_osm_osrm.md` (docs/ is gitignored).
 
 ## Working with Unity via MCP (hard-won gotchas)
 

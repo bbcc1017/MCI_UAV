@@ -274,6 +274,10 @@ experiment_logs/
 .codex/
 # 문서
 docs/
+
+# Claude Code 로컬 전용 메모(Unity 작업 등) — 팀 공유 CLAUDE.md와 분리
+.claude.local.md
+
 # tools 대용량 데이터 (재생성 가능 — 스크립트만 버전관리)
 tools/vw_*/
 tools/nationwide/blocks/
