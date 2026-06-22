@@ -1,0 +1,11 @@
+{
+  "hospital_master": "scenarios/엑셀 결합 데이터.xlsx",
+  "output": "scenarios/DISTANCE_MATRIX_FINAL.xlsx",
+  "rows": 548,
+  "duplicate_hospital_names": 4,
+  "unreachable_pairs_written_as_zero": 0,
+  "elapsed_sec": 46.25,
+  "backup": "scenarios/DISTANCE_MATRIX_FINAL.bak_20260622124458.xlsx",
+  "osrm_url": "http://localhost:5000",
+  "chunk_size": 16
+}

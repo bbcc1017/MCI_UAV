@@ -898,6 +898,8 @@ class ScenarioGenerator:
         hospitals = pd.DataFrame({
             "요양기관명": df_road["요양기관명"].values,
             "종별코드": df_road["종별코드"].values,
+            "x좌표": df_road["x좌표"].values,
+            "y좌표": df_road["y좌표"].values,
             "헬기장 여부": df_road["헬기장 여부"].values,
             "수술실수": df_road["operating_rooms"].values,
             "병상수": df_road["capa"].values,
@@ -1012,12 +1014,15 @@ class ScenarioGenerator:
             df_road_hos = pd.read_csv(file_road, encoding="utf-8-sig")
             names_road = df_road_hos["요양기관명"].tolist()
             coords_road = []
-            for name in names_road:
-                row = df_full[df_full["요양기관명"] == name]
-                if not row.empty:
-                    coords_road.append((row.iloc[0]["y좌표"], row.iloc[0]["x좌표"]))
-                else:
-                    coords_road.append((0, 0))
+            if {"x좌표", "y좌표"}.issubset(df_road_hos.columns):
+                coords_road = list(zip(df_road_hos["y좌표"], df_road_hos["x좌표"]))
+            else:
+                for name in names_road:
+                    row = df_full[df_full["요양기관명"] == name]
+                    if not row.empty:
+                        coords_road.append((row.iloc[0]["y좌표"], row.iloc[0]["x좌표"]))
+                    else:
+                        coords_road.append((0, 0))
             N = len(coords_road)
             matrix = np.zeros((N, N))
             for i in range(N):
@@ -1043,33 +1048,68 @@ class ScenarioGenerator:
             # Load pre-calculated distance matrix from Excel
             excel_path = os.path.join(self.base_path, "scenarios", "DISTANCE_MATRIX_FINAL.xlsx")
             print(f"  📂 엑셀 거리 행렬 로드 중: {excel_path}")
-            df_matrix = pd.read_excel(excel_path, sheet_name="Distance_Matrix", engine="openpyxl")
+            # header=None keeps duplicate hospital-name columns intact. The rebuilt
+            # source matrix can contain same-name hospitals, so row order plus
+            # Hospital_Info coordinates are the stable lookup keys.
+            df_matrix_raw = pd.read_excel(
+                excel_path, sheet_name="Distance_Matrix", engine="openpyxl", header=None
+            )
+            matrix_names = df_matrix_raw.iloc[0, 1:].astype(str).tolist()
+            matrix_values = (
+                df_matrix_raw.iloc[1:, 1:]
+                .apply(pd.to_numeric, errors="coerce")
+                .to_numpy(dtype=float)
+            )
+            df_matrix_info = pd.read_excel(excel_path, sheet_name="Hospital_Info", engine="openpyxl")
 
-            # Use first column as index (hospital names)
-            df_matrix_indexed = df_matrix.set_index(df_matrix.columns[0])  # Use first column as index
+            def coord_key(name, lon, lat):
+                return (str(name), round(float(lon), 6), round(float(lat), 6))
+
+            coord_to_matrix_idx = {}
+            if {"요양기관명", "x좌표", "y좌표"}.issubset(df_matrix_info.columns):
+                for idx, row in df_matrix_info.reset_index(drop=True).iterrows():
+                    if idx < len(matrix_names):
+                        coord_to_matrix_idx[coord_key(row["요양기관명"], row["x좌표"], row["y좌표"])] = idx
+
+            name_to_indices = {}
+            for idx, name in enumerate(matrix_names):
+                name_to_indices.setdefault(str(name), []).append(idx)
+
+            def find_matrix_idx(row):
+                name = str(row["요양기관명"])
+                if {"x좌표", "y좌표"}.issubset(df_road.columns):
+                    key = coord_key(name, row["x좌표"], row["y좌표"])
+                    if key in coord_to_matrix_idx:
+                        return coord_to_matrix_idx[key]
+                indices = name_to_indices.get(name, [])
+                if len(indices) == 1:
+                    return indices[0]
+                return None
 
             # Build distance matrix by looking up values
-            N = len(names_road)
+            N = len(df_road)
             matrix = np.zeros((N, N))
             missing_hospitals = []
+            matrix_indices = [find_matrix_idx(row) for _, row in df_road.iterrows()]
 
             for i in range(N):
                 for j in range(N):
                     if i == j:
                         matrix[i][j] = 0
                     else:
-                        hospital_i = names_road[i]
-                        hospital_j = names_road[j]
+                        idx_i = matrix_indices[i]
+                        idx_j = matrix_indices[j]
 
-                        # Look up distance from Excel matrix
-                        if hospital_i in df_matrix_indexed.index and hospital_j in df_matrix_indexed.columns:
-                            dist = df_matrix_indexed.loc[hospital_i, hospital_j]
+                        if idx_i is not None and idx_j is not None:
+                            dist = matrix_values[idx_i, idx_j]
                             matrix[i][j] = float(dist) if pd.notna(dist) else 0
                         else:
                             matrix[i][j] = 0
-                            if hospital_i not in missing_hospitals:
+                            hospital_i = names_road[i]
+                            hospital_j = names_road[j]
+                            if idx_i is None and hospital_i not in missing_hospitals:
                                 missing_hospitals.append(hospital_i)
-                            if hospital_j not in missing_hospitals:
+                            if idx_j is None and hospital_j not in missing_hospitals:
                                 missing_hospitals.append(hospital_j)
 
             if missing_hospitals:
