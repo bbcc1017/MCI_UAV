@@ -44,6 +44,18 @@ def _parse_variant():
     return set(t for t in raw.replace(",", "+").split("+") if t)
 
 
+def _cared_visible():
+    """환자 '입원완료'(cared, 생애단계 4)를 obs 에서 보이게 둘지 — 통신 단절 실험 토글.
+
+    기본=보임(병원과 실시간 통신 가능: 입원여부를 안다).
+    MCI_CARED_OBS=0/off/hide/fold → 단계4를 단계3(병원도착)으로 흡수한다. 통신이 끊기면
+    현장은 '차량이 환자를 전달'한 것까지만 알고 병원이 실제 입원시켰는지는 모르기 때문
+    (보수적 현장-한정 정보). cap_remain 의 psent 게이트(MCI_CAP_GATE)와 짝이 되는 축.
+    단계 수(5)는 유지 → 단계4 칸이 항상 0 이 될 뿐 obs 차원·모델 호환은 그대로."""
+    v = os.environ.get("MCI_CARED_OBS", "1").strip().lower()
+    return v not in ("0", "off", "hide", "fold", "false", "no")
+
+
 class AggregateObsWrapper(gym.ObservationWrapper):
     """Dict obs 의 환자/차량 행렬을 집계 통계로 치환한다.
 
@@ -122,8 +134,12 @@ class AggregateObsWrapper(gym.ObservationWrapper):
         stage = np.zeros(p_states.shape[0], dtype=int)
         stage[(rescued == 1) & (move == 0)] = 1
         stage[(move == 1) & (moved == 0)] = 2
-        stage[(moved == 1) & (cared == 0)] = 3
-        stage[cared == 1] = 4
+        if _cared_visible():
+            stage[(moved == 1) & (cared == 0)] = 3
+            stage[cared == 1] = 4
+        else:
+            # 통신단절: 입원완료(cared)를 못 봄 → 병원도착(3)으로 흡수(단계4 항상 0)
+            stage[moved == 1] = 3
         for ci in range(cls.N_CLASS):
             for si in range(cls.N_STAGE):
                 agg[ci, si] = np.sum((c == ci) & (stage == si))
