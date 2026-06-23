@@ -21,6 +21,7 @@ geopandas>=0.14
 shapely>=2.0
 pyproj>=3.6
 pyogrio>=0.7   # geopandas 1.x 기본 I/O 엔진(fiona 대체)
+pyshp>=2.3     # sample_region_points / 시군구 점 추출 (cp949 dbf 읽기)
 
 # Torch — RTX 50 (Blackwell) 호환 빌드
 # pip install torch==2.8.0+cu128 --index-url https://download.pytorch.org/whl/cu128

@@ -36,7 +36,7 @@ Data flows: **scenario YAML → gym env → wrapper → trainer/evaluator.**
 - `src/sce_src/make_csv_yaml_dynamic.py` builds a per-incident scenario (`scenarios/exp_*/(lat,lon)/config_*.yaml` + `scene.json`) from the hospital pool (`엑셀 결합 데이터.xlsx`) + AMB bases (`안전센터와 소방서.csv`). Distances come from **OSRM (default, `is_use_time=False`)** or **Kakao Mobility (`--is_use_time True --kakao_api_key`)**.
 - `src/sim_src/` is the event-driven simulator core (treat as stable). `MCIEnvironment_gymnasium.py` exposes the gym env; AMB+UAV are both active when `amb_num>0`, giving `action_space = MultiDiscrete([3, H+1, 2])` (class, destination hospital, mode).
 - `src/rl_src/env_wrapper.py` (`FlattenAndDiscreteWrapper`) is the keystone: dict→flat obs, MultiDiscrete→Discrete, **action masking**, and `encode_action`/`decode_action`. It **auto-adjusts dimensions** based on amb_num/uav_num. The hybrid evaluator (`hybrid_eval.py`, "2안") uses this encode/decode to let RL pick the UAV action while a heuristic rule overrides the AMB action.
-- Heuristics (`sim_src/RuleManager.py`) enumerate 32 rule combos (START/ReSTART × RedOnly/YellowNearest × red/yellow modes); RL is compared against these.
+- Heuristics (`sim_src/RuleManager.py`) enumerate **64** rule combos (START/ReSTART × RedOnly/YellowNearest × **4 red modes × 4 yellow modes** = 2*2*4*4); RL is compared against these. (`config.yaml` `rule_info` lists the 4 modes per class; the `results_*_stat.txt` block is 64 rules × 5 metric groups = 320 rows.)
 
 ### Observation / action / reward encoding
 
@@ -60,6 +60,7 @@ Beyond single-coordinate training, there are two multi-region pipelines driven b
 
 - **`MCI_REDUCED_OBS=1`** aggregates the obs to summary stats (smaller obs dim). **Must match between train and eval** or the model won't load; batch scripts (`run_seed_repro.py`, grid launchers) force it on.
 - **`MCI_TIER_MASK=0`** disables tier-based action masking (backward compat). **`MCI_REWARD_MODE`** = `raw`|`woG`|`rywt`. **`MCI_OBS_VARIANT`** selects an obs-ablation variant (needs reduced obs).
+- **`MCI_CAP_GATE`** = `occ` (default) | `psent` — which hospital-capacity signal gates the **RL action mask** (`MCIEnvironment_gymnasium.action_masks_joint`/`action_masks`) and the `cap_remain` feature in `HospitalFeatureWrapper`. `occ` = real-time occupancy (`h_states[:,-1] < max_send`, identical to the heuristic + the sim's actual admission gate `n_occupied < max_capa`); `psent` = cumulative dispatched (`p_sent < max_send`, never released → site-centric limited info). Run as two separate experiments: `occ` = hospital real-time comms, `psent` = on-site-only knowledge. (The heuristic `RuleManager` always gates on `occ`.)
 - **`MCI_ADV_MODE` / `MCI_ADV_SUBTRACT_AT` / `MCI_ADV_CSV` / `MCI_ADV_REGION`** configure `advantage_wrapper.py` (baseline-relative reward shaping from a precomputed CSV).
 - **Routing**: `MCI_OSRM_URL` (OSRM backend, default public router), `KAKAO_API_KEY` (Kakao mode). **Scenario-gen knobs** (fallbacks when the CLI flag is omitted): `MCI_UTIL_BY_TIER`, `MCI_BUFFER_RATIO` (default 1.5), `MCI_MAX_SEND_COEFF`.
 
