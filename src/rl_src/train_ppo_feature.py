@@ -32,10 +32,11 @@ from sb3_contrib.common.maskable.evaluation import evaluate_policy as masked_eva
 from sb3_contrib.common.wrappers import ActionMasker
 from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
 
 from env_factory import make_base_env
 from hospital_feature_wrapper import HospitalFeatureWrapper
+from reward_redesign_wrapper import RewardRedesignWrapper
 from learning_curve_plot import try_plot_learning_curve
 
 
@@ -61,7 +62,8 @@ class FeatureMultiRegionEnv(gym.Env):
             if not os.path.exists(cfg):
                 raise FileNotFoundError(f"[{region}] config 미발견: {cfg}")
             base = make_base_env(cfg, seed=seed + i, rule_test=False, eval_mode=eval_mode)
-            self._envs.append(HospitalFeatureWrapper(base))
+            # 보상 변환(woG 등, 최내곽) → 그 위에 특징 obs 래퍼. info['r_woG'] 는 base 가 채움.
+            self._envs.append(HospitalFeatureWrapper(RewardRedesignWrapper(base)))
 
         obs_shapes = {tuple(e.observation_space.shape) for e in self._envs}
         act_ns = {int(e.action_space.n) for e in self._envs}
@@ -119,7 +121,7 @@ def make_env_fn(config_path: str, seed: int = 0):
             env = FeatureMultiRegionEnv(config_path, seed=seed)
         else:
             base = make_base_env(config_path, seed=seed, rule_test=False, eval_mode=False)
-            env = HospitalFeatureWrapper(base)
+            env = HospitalFeatureWrapper(RewardRedesignWrapper(base))
         env = ActionMasker(env, mask_fn)
         env = Monitor(env)
         return env
@@ -153,17 +155,26 @@ def parse_args():
     p.add_argument("--vec", choices=["dummy", "subproc"], default="dummy")
     p.add_argument("--extractor", choices=["mlp", "deepsets"], default="mlp",
                    help="mlp(기본): 평탄 obs+MlpPolicy / deepsets: 순열불변 인코더(3c, hospital_set_extractor)")
+    p.add_argument("--reward_mode", choices=["raw", "woG", "rywt"], default="woG",
+                   help="보상 변환(RewardRedesignWrapper). 기본 woG(Green 제외).")
+    p.add_argument("--norm_reward", action="store_true", default=False,
+                   help="VecNormalize 보상 정규화(기본 off — woG 스케일 해석/휴리스틱 비교 유지).")
     return p.parse_args()
 
 
 def main():
     args = parse_args()
     os.makedirs(args.log_dir, exist_ok=True)
-    print(f"[feature] MCI_OBS_VARIANT={os.environ.get('MCI_OBS_VARIANT','(full)')} extractor={args.extractor}")
+    # RewardRedesignWrapper 는 MCI_REWARD_MODE 를 읽음 — CLI 값으로 강제(Subproc 자식에도 전파).
+    os.environ["MCI_REWARD_MODE"] = args.reward_mode
+    print(f"[feature] MCI_OBS_VARIANT={os.environ.get('MCI_OBS_VARIANT','(essential)')} "
+          f"reward={args.reward_mode} norm_reward={args.norm_reward} extractor={args.extractor}")
 
     env_fns = [make_env_fn(args.config_path, seed=args.seed + i) for i in range(args.n_envs)]
     vec_cls = SubprocVecEnv if args.vec == "subproc" else DummyVecEnv
     venv = vec_cls(env_fns)
+    # obs 정규화 필수(ETA·cap_remain 스케일) / reward 정규화는 옵션. eval·VIPER 는 통계 동결 로드.
+    venv = VecNormalize(venv, norm_obs=True, norm_reward=args.norm_reward, clip_obs=10.0)
 
     policy_kwargs = dict(net_arch=[256, 256])
     if args.extractor == "deepsets":
@@ -198,7 +209,9 @@ def main():
                 tb_log_name="ppo_feature", progress_bar=False)
     final_path = os.path.join(args.log_dir, "final_model.zip")
     model.save(final_path)
-    print(f"Saved: {final_path}")
+    vecnorm_path = os.path.join(args.log_dir, "vecnormalize.pkl")
+    venv.save(vecnorm_path)  # eval/VIPER 에서 VecNormalize.load 후 training=False 로 동결 적용 필수
+    print(f"Saved: {final_path}\nSaved: {vecnorm_path}")
     try_plot_learning_curve(args.log_dir)
 
     eval_env = make_env_fn(args.config_path, seed=args.seed + 999)()

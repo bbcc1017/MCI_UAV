@@ -1308,8 +1308,8 @@ if __name__ == "__main__":
     parser.add_argument("--amb_count", type=int, default=30, help="구급차 런타임 대수(YAML amb_num). amb_bases 는 superset 저장")
     parser.add_argument("--uav_count", type=int, default=25, help="UAV 생성 superset 상한(헬기장 병원당 1대, 최대 N)")
     parser.add_argument("--uav_num", type=int, default=3, help="UAV 런타임 대수(YAML uav_num). 헬리패드 최소 보장도 이 값 기준")
-    parser.add_argument("--amb_velocity", type=int, default=40, help="구급차 속도")
-    parser.add_argument("--uav_velocity", type=int, default=80, help="UAV 속도")
+    parser.add_argument("--amb_velocity", type=int, default=50, help="구급차 속도")
+    parser.add_argument("--uav_velocity", type=int, default=200, help="UAV 속도")
     parser.add_argument("--total_samples", type=int, default=1000, help="시뮬레이션 반복 수")
     parser.add_argument("--random_seed", type=int, default=0, help="랜덤 시드")
     parser.add_argument("--experiment_id", type=str, default=None, help="실험 ID")
@@ -1327,8 +1327,8 @@ if __name__ == "__main__":
     # OSRM 백엔드 (is_use_time=false일 때 사용)
     parser.add_argument("--osrm_url", type=str, default=None,
                         help="OSRM HTTP API base URL (기본: env MCI_OSRM_URL 또는 https://router.project-osrm.org)")
-    parser.add_argument("--amb_handover_time", type=float, default=10.0, help="구급차 환자 인계시간 (분)")
-    parser.add_argument("--uav_handover_time", type=float, default=15.0, help="UAV 환자 인계시간 (분)")
+    parser.add_argument("--amb_handover_time", type=float, default=5.0, help="구급차 환자 인계시간 (분)")
+    parser.add_argument("--uav_handover_time", type=float, default=10.0, help="UAV 환자 인계시간 (분)")
     parser.add_argument("--duration_coeff", type=float, default=1.0, help="API duration 시간가중치 (기본값: 1.0)")
     parser.add_argument("--fixed_hos_num", type=int, default=None,
                         help="[구호환] hos_num cap (가까운 N개로 잘라냄). min_hos_num 과 동시지정 불가")

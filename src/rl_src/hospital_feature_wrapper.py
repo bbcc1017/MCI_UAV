@@ -11,19 +11,23 @@
   * 자체적으로 compact obs 를 만들므로 MCI_REDUCED_OBS(AggregateObsWrapper) 불필요
     — 다만 글로벌 집계는 AggregateObsWrapper._patient_agg/_fleet_agg 를 재사용한다.
 
-병원당 특징 F (MCI_OBS_VARIANT 로 그룹 토글, 3b):
-  local(정적 사전지식, 지도로 사전에 앎): [is_tier3, helipad, eta_amb, eta_uav]
-  comms(실시간 동적, 통신으로만):          [idle, queue, occ, cap_remain]
-  - MCI_OBS_VARIANT=local → local 4열만, =comms → comms 4열만, 그 외/full → 8열.
-  - ETA = amb/uav_HtoS_t[0](=lognormal 평균=API duration, #1). 시나리오 최소 ETA 로 정규화
-    (지역간 스케일 제거). 정적이라 1회 캐시.
-  - cap_remain = max(hos_max_send - p_sent, 0) (동적).
+병원당 특징 F (MCI_OBS_VARIANT 로 토글):
+  essential(기본): [is_tier3, cap_remain, eta_amb, eta_uav] — 중복 제거 최소핵심(F=4).
+  full(ablation):  [is_tier3, helipad, eta_amb, eta_uav, idle, queue, occ, cap_remain] (F=8).
+  local/comms(ablation): 위 8열을 정적4/실시간4 로 분리.
+  - 미설정/"essential" → essential. helipad 는 UAV 마스크가 강제(중복), idle/occ 는
+    cap_remain 과 affine 중복, queue 는 ablation 무신호라 essential 에서 제외.
+  - ETA = amb/uav_HtoS_t[0](=lognormal 평균=사전계산 deterministic, #1). 시나리오 최소
+    ETA 로 정규화(최근접=1) 후 MCI_ETA_CLIP(기본 10배) 클립. 정적이라 1회 캐시.
+  - cap_remain = max(hos_max_send - cap_used, 0). cap_used=occ(기본)|p_sent(psent게이트).
 
-글로벌 특징 (병원 비의존): patient_agg(20) + vehicle_agg(10) + p_at_site(4) +
-  n_amb_at_site(1) + n_uav_at_site(1) + time(1) = 37. (raw h_states/p_sent 는 엔티티로
-  흡수되어 중복 제거.)
+글로벌 특징 (병원 비의존): patient_agg(R/Y 2등급×5단계=10) + vehicle_agg(10) + time(1) = 21.
+  - Green/Black 은 행동대상 아님(R/Y 소진+구조완료 시 sim 코어가 자동일괄 이송) → patient_agg
+    에서 제거(R/Y 만). p_at_site·n_amb/uav_at_site 는 patient_agg stage1·vehicle_agg n_avail
+    의 부분집합이라 제거(중복). raw h_states/p_sent 는 엔티티로 흡수.
 
-train 스크립트에서 ActionMasker 와 함께 사용한다(FlattenAndDiscreteWrapper 대체).
+행동 마스크: tier(Red→Tier3, MCI_TIER_MASK) + Green 이송 차단(MCI_GREEN_MASK) + helipad/capa
+  (joint). train 스크립트에서 ActionMasker 와 함께 사용(FlattenAndDiscreteWrapper 대체).
 """
 from __future__ import annotations
 
@@ -36,9 +40,16 @@ from gymnasium import spaces
 from aggregate_obs import AggregateObsWrapper  # _patient_agg / _fleet_agg 재사용
 
 # 병원당 특징 열 정의 (순서 고정)
-_LOCAL_COLS = ["is_tier3", "helipad", "eta_amb", "eta_uav"]   # 정적 사전지식
-_COMMS_COLS = ["idle", "queue", "occ", "cap_remain"]          # 실시간 동적
-_GLOBAL_DIM = 20 + 10 + 4 + 1 + 1 + 1                          # patient_agg+vehicle_agg+p_at_site+n_amb+n_uav+time
+# essential(기본): 중복 제거 최소핵심. helipad(마스크중복)·idle/occ(cap_remain과 affine중복)·
+#   queue(ablation 무신호) 제거 → capability+여유+AMB도달+UAV도달.
+_ESSENTIAL_COLS = ["is_tier3", "cap_remain", "eta_amb", "eta_uav"]
+_LOCAL_COLS = ["is_tier3", "helipad", "eta_amb", "eta_uav"]   # 정적 사전지식 (ablation)
+_COMMS_COLS = ["idle", "queue", "occ", "cap_remain"]          # 실시간 동적 (ablation)
+# 글로벌: patient_agg(R/Y 2등급×5단계=10) + vehicle_agg(10) + time(1).
+#   p_at_site·n_amb_at_site·n_uav_at_site 는 각각 patient_agg stage1·vehicle_agg n_avail 의
+#   정확한 부분집합이라 제거(0손실). Green/Black 은 행동대상 아님(자동일괄 start_GB_transport)이라
+#   patient_agg 에서 제거 — R/Y 만 유지.
+_GLOBAL_DIM = 10 + 10 + 1
 
 
 def _parse_variant():
@@ -107,21 +118,26 @@ class HospitalFeatureWrapper(gym.Wrapper):
             eta_uav = np.asarray(uav_t[0], dtype=np.float32)
         else:
             eta_uav = d_euc * 60.0 / (float(uavp.get('uav_v', 80)) or 80.0)
-        # 시나리오 최소 ETA 로 정규화(>0 기준) → 지역간 스케일 제거
-        self._eta_amb = self._norm_by_min(eta_amb)
-        self._eta_uav = self._norm_by_min(eta_uav)
+        # 시나리오 최소 ETA 로 정규화(>0 기준, 최근접=1) → 지역간 스케일 제거.
+        # + 외곽 병원 이상치 클립(최근접의 MCI_ETA_CLIP 배, 기본 10) → VecNorm std 왜곡 방지.
+        eta_clip = float(os.environ.get("MCI_ETA_CLIP", "10.0"))
+        self._eta_amb = np.minimum(self._norm_by_min(eta_amb), eta_clip).astype(np.float32)
+        self._eta_uav = np.minimum(self._norm_by_min(eta_uav), eta_clip).astype(np.float32)
 
         # ---------- 3) MCI_OBS_VARIANT → 특징 열 선택 (local/comms/full) ----------
         toks = _parse_variant()
-        if "local" in toks and "comms" not in toks:
+        if "full" in toks:
+            self._cols = _LOCAL_COLS + _COMMS_COLS
+            var_label = "full(ablation)"
+        elif "local" in toks and "comms" not in toks:
             self._cols = list(_LOCAL_COLS)
-            var_label = "local(정적)"
+            var_label = "local(ablation)"
         elif "comms" in toks and "local" not in toks:
             self._cols = list(_COMMS_COLS)
-            var_label = "comms(실시간)"
-        else:
-            self._cols = _LOCAL_COLS + _COMMS_COLS
-            var_label = "full"
+            var_label = "comms(ablation)"
+        else:  # 기본 = essential (essential 토큰 또는 미설정)
+            self._cols = list(_ESSENTIAL_COLS)
+            var_label = "essential"
         self._F = len(self._cols)
 
         # ---------- 4) obs space ----------
@@ -183,16 +199,15 @@ class HospitalFeatureWrapper(gym.Wrapper):
         return np.stack([col_map[c] for c in self._cols], axis=1).astype(np.float32)  # (H, F)
 
     def _globals(self, obs: dict) -> np.ndarray:
-        pa = AggregateObsWrapper._patient_agg(np.asarray(obs['p_states']))           # (20,)
+        # patient_agg 4등급×5단계(20) 중 R/Y(앞 2등급=10)만 — Green/Black 은 행동대상 아님(자동일괄).
+        pa = AggregateObsWrapper._patient_agg(np.asarray(obs['p_states']))[:10]       # (10,) R/Y
         va = np.concatenate([
             AggregateObsWrapper._fleet_agg(np.asarray(obs['amb_states'])),
             AggregateObsWrapper._fleet_agg(np.asarray(obs['uav_states'])),
         ])                                                                            # (10,)
+        # p_at_site/n_amb_at_site/n_uav_at_site 는 pa·va 의 부분집합이라 제거(중복 0손실).
         return np.concatenate([
             pa, va,
-            np.asarray(obs['p_at_site'], dtype=np.float32).reshape(-1),               # (4,)
-            np.asarray(obs['n_amb_at_site'], dtype=np.float32).reshape(-1),           # (1,)
-            np.asarray(obs['n_uav_at_site'], dtype=np.float32).reshape(-1),           # (1,)
             np.asarray(obs['time'], dtype=np.float32).reshape(-1),                    # (1,)
         ]).astype(np.float32)
 
@@ -227,11 +242,14 @@ class HospitalFeatureWrapper(gym.Wrapper):
 
     def action_masks(self) -> np.ndarray:
         full = self.env.unwrapped.action_masks_joint()
-        full = full.reshape(self._orig_nvec[0], self._orig_nvec[1], self._orig_nvec[2])
+        full = full.reshape(self._orig_nvec[0], self._orig_nvec[1], self._orig_nvec[2]).copy()
         if os.environ.get("MCI_TIER_MASK", "1") != "0":
             ct = self._can_treat_mask()           # (3, H) bool
-            full = full.copy()
             full[:, 1:, :] &= ct[:, :, None]      # dest 1..H 만 차단, stay(0) 유지
+        # Green(class=2) 이송 차단 → 자동일괄(start_GB_transport)에 위임. R/Y 만 행동대상.
+        # (Black 은 행동공간(class dim=3)에 애초에 없음. stay(dest=0)는 유지해 합법행동 보장.)
+        if os.environ.get("MCI_GREEN_MASK", "1") != "0":
+            full[2, 1:, :] = False
         if self._fixed_mode is not None:
             return full[:, :, self._fixed_mode].reshape(-1)
         return full.reshape(-1)
