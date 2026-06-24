@@ -47,6 +47,28 @@ from env_factory import make_base_env
 from hospital_feature_wrapper import HospitalFeatureWrapper
 from evaluate import eval_policy, ppo_policy
 from distill_policy import make_codec
+import gymnasium as gym
+import warnings as _warnings
+_warnings.filterwarnings("ignore", message=r".*action_masks.*")  # NormObs 래퍼 경유 접근 경고 억제(롱런 로그 도배 방지)
+
+
+class _NormObs(gym.ObservationWrapper):
+    """학습 때 쓴 VecNormalize(obs) 통계를 동결 적용 — 오라클/트리/eval 모두 정규화 obs 사용.
+    안 하면 정규화 안 된 obs 가 오라클에 들어가 라벨이 틀어지고 트리가 망가진다."""
+    def __init__(self, env, mean, std, clip):
+        super().__init__(env); self._m = mean; self._s = std; self._c = clip
+    def observation(self, obs):
+        return np.clip((np.asarray(obs, dtype=np.float32) - self._m) / self._s, -self._c, self._c).astype(np.float32)
+
+
+def load_vecnorm(path):
+    """vecnormalize.pkl → (mean, std, clip_obs). 학습 VecNormalize(obs) 동결 통계."""
+    with open(path, "rb") as f:
+        vn = pickle.load(f)
+    rms = vn.obs_rms
+    mean = np.asarray(rms.mean, dtype=np.float32)
+    std = np.sqrt(np.asarray(rms.var, dtype=np.float32) + vn.epsilon).astype(np.float32)
+    return mean, std, float(vn.clip_obs)
 
 
 @contextlib.contextmanager
@@ -61,18 +83,25 @@ def _suppress_stdout():
 
 
 # ---------- feature env factory (HospitalFeatureWrapper) ----------
-def make_feature_env(config_path: str):
-    """eval_policy 용 env_factory(seed)->env (특징 obs, eval_mode)."""
+def make_feature_env(config_path: str, norm=None):
+    """eval_policy 용 env_factory(seed)->env (특징 obs, eval_mode).
+    norm=(mean,std,clip) 면 학습 VecNormalize(obs) 동결 정규화를 _NormObs 로 적용."""
+    wrap = (lambda e: _NormObs(e, *norm)) if norm else (lambda e: e)
+    cache = {}  # env 1회만 생성·재사용 (매니페스트면 250 env 매번 빌드 방지; reset(seed)가 지역샘플 담당)
     if config_path.endswith(".json"):
         from train_ppo_feature import FeatureMultiRegionEnv
 
         def _f(seed: int = 0):
-            return FeatureMultiRegionEnv(config_path, seed=seed, eval_mode=True)
+            if "e" not in cache:
+                cache["e"] = wrap(FeatureMultiRegionEnv(config_path, seed=seed, eval_mode=True))
+            return cache["e"]
         return _f
 
     def _f(seed: int = 0):
-        base = make_base_env(config_path, seed=seed, rule_test=False, eval_mode=True)
-        return HospitalFeatureWrapper(base)
+        if "e" not in cache:
+            base = make_base_env(config_path, seed=seed, rule_test=False, eval_mode=True)
+            cache["e"] = wrap(HospitalFeatureWrapper(base))
+        return cache["e"]
     return _f
 
 
@@ -191,6 +220,8 @@ def main():
     ap.add_argument("--seed_base", type=int, default=2000)
     ap.add_argument("--heur_csv", default=None, help="지역별 best 휴리스틱 룰 CSV(있으면 비교)")
     ap.add_argument("--out_dir", default="results/viper")
+    ap.add_argument("--vecnorm", default=None,
+                    help="vecnormalize.pkl (미지정시 --model 디렉터리/상위 자동탐색). 학습이 VecNorm이면 필수.")
     args = ap.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
 
@@ -201,8 +232,22 @@ def main():
     from sb3_contrib import MaskablePPO
     model = MaskablePPO.load(args.model)
 
+    # VecNormalize(obs) 동결 통계 로드 (학습과 동일 정규화 — 미적용 시 오라클 라벨/트리 부정확)
+    vn_path = args.vecnorm
+    if vn_path is None:
+        for cand in [os.path.join(os.path.dirname(args.model), "vecnormalize.pkl"),
+                     os.path.join(os.path.dirname(os.path.dirname(args.model)), "vecnormalize.pkl")]:
+            if os.path.exists(cand):
+                vn_path = cand; break
+    norm = None
+    if vn_path and os.path.exists(vn_path):
+        norm = load_vecnorm(vn_path)
+        print(f"[VIPER] VecNorm 동결 로드: {vn_path}")
+    else:
+        print("[VIPER] ⚠️ vecnorm 파일 없음 — 정규화 미적용(학습이 VecNorm이면 트리 부정확!)")
+
     # 트리 학습용 롤아웃 env (manifest 면 멀티지역, 아니면 단일)
-    train_factory = make_feature_env(src)
+    train_factory = make_feature_env(src, norm)
     print(f"[VIPER] crit={args.crit} n_iter={args.n_iter} rollout_eps={args.rollout_eps} "
           f"max_depth={args.max_depth} variant={os.environ.get('MCI_OBS_VARIANT','(full)')}")
     best, history = viper(train_factory, model, args.n_iter, args.rollout_eps, args.eval_eps,

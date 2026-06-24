@@ -1,16 +1,23 @@
-"""17개 광역시도 Plan1 시나리오 일괄 생성 (Kakao API).
+"""17개 광역시도 Plan1 시나리오 일괄 생성 (Kakao API 또는 OSRM).
 
 cross_location_eval.LOCATIONS 좌표를 단일 출처로 사용한다.
-출력:
-  scenarios/exp_<prefix>_<region>_dep_<departure_time>/(lat,lon)/config_*.yaml
-  scenarios/manifests/plan1_manifest.json   (region -> config_path 매핑)
+출력 (suffix 는 road_mode 에 따라 자동 결정):
+  kakao: scenarios/exp_<prefix>_<region>_dep_<departure_time>/(lat,lon)/config_*.yaml
+  osrm : scenarios/exp_<prefix>_<region>_osrm/(lat,lon)/config_*.yaml
+  manifest: --manifest 경로 (region -> config_path 매핑)
 
-Kakao API rate limit 을 고려해 지역을 순차 생성한다.
-키는 ENV KAKAO_API_KEY 에서 읽는다 (코드 하드코딩 금지).
+road_mode:
+  kakao (기본) — 길찾기 API 시간거리. ENV KAKAO_API_KEY 필요 (하드코딩 금지).
+                Kakao rate limit 고려해 지역을 순차 생성.
+  osrm        — 로컬/원격 OSRM 백엔드 거리. --osrm_url (또는 ENV MCI_OSRM_URL).
+                kakao 시도와 동일 좌표·동일 병원선정(라우팅 무관)이라 도로행렬만 교체된다.
 
 예:
-  python src/sce_src/gen_regions.py                 # 17개 전체
+  python src/sce_src/gen_regions.py                 # 17개 전체 (kakao)
   python src/sce_src/gen_regions.py --regions 서울   # 1개만 (스모크 테스트)
+  python src/sce_src/gen_regions.py --road_mode osrm \
+      --osrm_url http://127.0.0.1:5000 --exp_prefix 시도/osrm/exp \
+      --manifest scenarios/manifests/sido_osrm_manifest.json
 """
 import argparse
 import json
@@ -43,6 +50,10 @@ def parse_args():
     p.add_argument("--total_samples", type=int, default=1000,
                    help="config YAML 의 totalSamples (휴리스틱/평가 ep 수)")
     p.add_argument("--exp_prefix", default="plan1")
+    p.add_argument("--road_mode", choices=["kakao", "osrm"], default="kakao",
+                   help="도로거리 공급자. kakao: 길찾기 API(시간). osrm: OSRM 백엔드(거리/속도).")
+    p.add_argument("--osrm_url", default=None,
+                   help="road_mode=osrm 일 때 OSRM URL (미지정 시 ENV MCI_OSRM_URL).")
     p.add_argument("--base_path", default=".")
     p.add_argument("--regions", nargs="+", default=None,
                    help="부분 생성 (기본: 17개 전체). 예: --regions 서울 부산")
@@ -62,10 +73,20 @@ def main():
     args = parse_args()
     base = os.path.abspath(args.base_path)
 
-    if not os.environ.get("KAKAO_API_KEY"):
-        raise SystemExit(
-            "환경변수 KAKAO_API_KEY 가 필요합니다. "
-            "예: export KAKAO_API_KEY=<your_key>")
+    is_use_time = (args.road_mode == "kakao")
+    osrm_url = None
+    if args.road_mode == "kakao":
+        if not os.environ.get("KAKAO_API_KEY"):
+            raise SystemExit(
+                "환경변수 KAKAO_API_KEY 가 필요합니다. "
+                "예: export KAKAO_API_KEY=<your_key>")
+    else:  # osrm
+        osrm_url = args.osrm_url or os.environ.get("MCI_OSRM_URL")
+        if not osrm_url:
+            raise SystemExit(
+                "road_mode=osrm 인데 --osrm_url(또는 ENV MCI_OSRM_URL) 미지정. "
+                "예: --osrm_url http://127.0.0.1:5000")
+        print(f"[gen_regions] OSRM 모드 — url={osrm_url}")
 
     locations = LOCATIONS if not args.regions \
         else [l for l in LOCATIONS if l[0] in args.regions]
@@ -137,9 +158,9 @@ def main():
                 total_samples=args.total_samples,
                 base_path=base,
                 exp_prefix=args.exp_prefix,
-                is_use_time=True,
-                osrm_url=None,
-                kakao_api_key=None,  # ENV(KAKAO_API_KEY) fallback
+                is_use_time=is_use_time,
+                osrm_url=osrm_url,
+                kakao_api_key=None,  # ENV(KAKAO_API_KEY) fallback (kakao 모드)
                 departure_time=args.departure_time,
                 fixed_hos_num=args.fixed_hos_num,
                 min_hos_num=min_hos_num,
