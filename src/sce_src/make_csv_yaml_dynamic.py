@@ -126,10 +126,15 @@ class ScenarioGenerator:
         self.kakao_api_key = kakao_api_key or os.environ.get("KAKAO_API_KEY")
         self.departure_time = departure_time  # YYYYMMDDHHMM 형식
 
-        # OSRM 백엔드 설정 (is_use_time=False일 때 사용)
+        # OSRM 백엔드 설정 (is_use_time=False일 때 사용; kakao 모드에서도 스냅/폴백용으로 사용)
         self.osrm_url = (osrm_url
                          or os.environ.get("MCI_OSRM_URL", "https://router.project-osrm.org"))
-        
+
+        # 라우팅 스냅/폴백 상태 (kakao 모드): 도로에 스냅되지 않는 산간/오지 대표점은
+        # OSRM /nearest 로 가장 가까운 도로에 스냅해 Kakao 재시도, 해상/페리 구간은 OSRM 폴백.
+        self._snap_cache = {}      # (lat,lon) -> (snapped_lat, snapped_lon, offset_m)
+        self._route_adjust = []    # 레그별 스냅/폴백 기록 (generate_scenario 시작 시 초기화)
+
         # 데이터 파일 경로들 (절대경로로 설정)
         self.scenarios_path = os.path.join(self.base_path, "scenarios")
         self.fire_data_path = os.path.join(self.scenarios_path, "안전센터와 소방서.csv")
@@ -200,8 +205,60 @@ class ScenarioGenerator:
             raise FileNotFoundError("필수 데이터 파일들을 확인해주세요.")
         print("✅ 모든 필수 데이터 파일 확인 완료")
 
+    @staticmethod
+    def _haversine_m(a, b):
+        """(lat,lon) 두 점 사이 거리(m)."""
+        from math import radians, sin, cos, asin, sqrt
+        lat1, lon1 = radians(a[0]), radians(a[1])
+        lat2, lon2 = radians(b[0]), radians(b[1])
+        dlat, dlon = lat2 - lat1, lon2 - lon1
+        h = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlon / 2) ** 2
+        return 2 * 6371000.0 * asin(min(1.0, sqrt(h)))
+
+    def _osrm_snap(self, coord):
+        """좌표를 OSRM /nearest 로 가장 가까운 도로에 스냅.
+
+        Kakao 는 도로 스냅 반경이 작아 산간/오지 대표점에서 result_code 102/103 으로 실패하지만
+        OSRM 은 사실상 무제한 반경으로 스냅한다 — 그 스냅점을 Kakao 에 재투입해 구제한다.
+        Returns: (snapped_lat, snapped_lon, offset_m). 실패 시 (원좌표, 0.0).
+        """
+        coord = (coord[0], coord[1])
+        if coord in self._snap_cache:
+            return self._snap_cache[coord]
+        lat, lon = coord
+        base = (self.osrm_url or "https://router.project-osrm.org").rstrip("/")
+        out = (lat, lon, 0.0)
+        try:
+            r = requests.get(f"{base}/nearest/v1/driving/{lon},{lat}",
+                             params={"number": 1}, timeout=10)
+            if r.status_code == 200:
+                wps = (r.json().get("waypoints") or [])
+                if wps and wps[0].get("location"):
+                    slon, slat = wps[0]["location"][0], wps[0]["location"][1]
+                    off = float(wps[0].get("distance",
+                                self._haversine_m((lat, lon), (slat, slon))))
+                    out = (slat, slon, off)
+        except Exception:
+            pass
+        self._snap_cache[coord] = out
+        return out
+
+    @staticmethod
+    def _is_kakao_quota_error(msg):
+        """Kakao 할당량 소진/인증 오류 — 폴백 금지(상위 키 로테이션이 처리해야 함)."""
+        m = str(msg)
+        return ("API limit has been exceeded" in m or "호출 한도 초과" in m
+                or "할당량" in m or "인증 실패 (401)" in m)
+
     def get_road_distance(self, start, end, **kwargs):
         """도로 거리/시간 디스패처. self.road_provider에 따라 kakao/osrm으로 위임.
+
+        kakao 모드에서 좌표가 도로에 스냅되지 않거나(result_code 102/103) 경로가 없으면:
+          ① OSRM /nearest 로 양 끝점을 가장 가까운 도로에 스냅해 Kakao 재시도(산간/오지 대표점 구제),
+          ② 그래도 실패하면(해상·페리·완전고립) OSRM 라우팅으로 폴백한다. OSRM 차량 프로파일은
+             페리(route=ferry)를 포함하고 OSRM-셋은 250/250 성공했으므로 모든 레그가 라우팅 가능.
+        스냅 이동거리/폴백 여부는 self._route_adjust 에 기록한다. 할당량/인증 오류는 폴백하지
+        않고 그대로 올린다(키 로테이션 담당).
 
         Returns:
             (distance_km, duration_min) 튜플
@@ -209,7 +266,51 @@ class ScenarioGenerator:
         provider = (self.road_provider or "kakao").lower()
         if provider == "osrm":
             return self.get_road_distance_osrm(start, end, **kwargs)
-        return self.get_road_distance_kakao(start, end, **kwargs)
+
+        try:
+            return self.get_road_distance_kakao(start, end, **kwargs)
+        except RuntimeError as e:
+            if self._is_kakao_quota_error(e):
+                raise
+
+            rec = {
+                "route_type": kwargs.get("route_type"),
+                "name": kwargs.get("name"),
+                "source_index": kwargs.get("source_index"),
+                "start": [start[0], start[1]], "end": [end[0], end[1]],
+                "kakao_error": str(e).splitlines()[-1][:200],
+            }
+
+            # ① 도로 스냅 재시도 (양 끝점 → 가장 가까운 도로)
+            slat, slon, off_s = self._osrm_snap(start)
+            elat, elon, off_e = self._osrm_snap(end)
+            if off_s > 1.0 or off_e > 1.0:
+                try:
+                    dist_km, dur_min = self.get_road_distance_kakao(
+                        (slat, slon), (elat, elon), **kwargs)
+                    rec.update({"mode": "kakao_snap",
+                                "snap_start_offset_m": round(off_s, 1),
+                                "snap_end_offset_m": round(off_e, 1),
+                                "dist_km": round(dist_km, 3), "dur_min": round(dur_min, 2)})
+                    self._route_adjust.append(rec)
+                    print(f"  🧲 [snap] {kwargs.get('route_type')} {kwargs.get('name')}: "
+                          f"start+{off_s:.0f}m / end+{off_e:.0f}m → Kakao 재시도 성공")
+                    return dist_km, dur_min
+                except RuntimeError as e2:
+                    if self._is_kakao_quota_error(e2):
+                        raise
+                    rec["kakao_snap_error"] = str(e2).splitlines()[-1][:200]
+
+            # ② OSRM 폴백 (해상·페리·완전고립)
+            dist_km, dur_min = self.get_road_distance_osrm(start, end, **kwargs)
+            rec.update({"mode": "osrm_fallback",
+                        "snap_start_offset_m": round(off_s, 1),
+                        "snap_end_offset_m": round(off_e, 1),
+                        "dist_km": round(dist_km, 3), "dur_min": round(dur_min, 2)})
+            self._route_adjust.append(rec)
+            print(f"  🛟 [osrm_fallback] {kwargs.get('route_type')} {kwargs.get('name')}: "
+                  f"Kakao 경로 불가 → OSRM {dist_km:.1f}km")
+            return dist_km, dur_min
 
     def get_road_distance_kakao(self, start, end, max_retries=3, save_json_dir=None, route_type=None, source_index=None, name=None, start_label="start", goal_label="goal"):
         """카카오 모빌리티 API를 사용한 도로 거리 및 시간 계산 (재시도 로직 포함)
@@ -1234,6 +1335,9 @@ run_setting:
         # 방어적 bool 변환 (혹시 호출 측에서 문자열을 넘겨도 정상 동작)
         is_use_time = bool(is_use_time) if not isinstance(is_use_time, str) else str2bool(is_use_time)
 
+        # 라우팅 스냅/폴백 기록 초기화 (이 좌표 생성에서 발생한 스냅/폴백만 집계)
+        self._route_adjust = []
+
         # road_provider는 __init__에서 is_use_time을 보고 이미 결정되어 있다.
         # 다만 호출 시점 is_use_time과 __init__ 때 가정이 다르면 갱신하고 경고한다.
         expected_provider = "kakao" if is_use_time else "osrm"
@@ -1292,6 +1396,36 @@ run_setting:
             amb_num=amb_count, uav_num=uav_num
         )
         
+        # 라우팅 스냅/폴백 요약 기록 (kakao 모드): 대표점이 도로에서 얼마나 떨어졌는지(site offset),
+        # 스냅 재시도/OSRM 폴백 레그 수를 route_adjustments.json + stdout(ROUTE_ADJUST)으로 남긴다.
+        if self.road_provider == "kakao":
+            try:
+                s_lat, s_lon, s_off = self._osrm_snap((latitude, longitude))
+                n_snap = sum(1 for r in self._route_adjust if r.get("mode") == "kakao_snap")
+                n_fb = sum(1 for r in self._route_adjust if r.get("mode") == "osrm_fallback")
+                max_leg = max([0.0] + [max(r.get("snap_start_offset_m", 0) or 0,
+                                           r.get("snap_end_offset_m", 0) or 0)
+                                       for r in self._route_adjust])
+                adj = {
+                    "site": {"lat": latitude, "lon": longitude,
+                             "snapped_lat": round(s_lat, 7), "snapped_lon": round(s_lon, 7),
+                             "offset_m": round(s_off, 1)},
+                    "n_kakao_snap_legs": n_snap,
+                    "n_osrm_fallback_legs": n_fb,
+                    "max_leg_snap_offset_m": round(max_leg, 1),
+                    "road_provider": self.road_provider,
+                    "legs": self._route_adjust,
+                }
+                with open(os.path.join(save_folder, "route_adjustments.json"), "w",
+                          encoding="utf-8") as f:
+                    json.dump(adj, f, ensure_ascii=False, indent=2)
+                print("ROUTE_ADJUST:" + json.dumps({
+                    "site_offset_m": round(s_off, 1), "n_kakao_snap_legs": n_snap,
+                    "n_osrm_fallback_legs": n_fb, "max_leg_snap_offset_m": round(max_leg, 1),
+                }, ensure_ascii=False))
+            except Exception as _e:
+                print(f"  ⚠️ route_adjustments 기록 실패(무시): {_e}")
+
         elapsed = round(time.time() - start_time, 2)
         print(f"  ⏱️ 시나리오 생성 완료 ({elapsed}초)")
         print(f"API_CALL_COUNT:{self.api_call_count}")

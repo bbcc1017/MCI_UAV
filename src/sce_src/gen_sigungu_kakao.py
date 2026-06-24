@@ -102,41 +102,63 @@ def is_quota_error(text: str) -> bool:
     return any(s in t for s in signals)
 
 
+def _norm_name(name):
+    """폴더명 정규화 — make_csv 의 experiment_id 정규화(공백→밑줄)와 반드시 일치시킨다.
+
+    make_csv 가 experiment_id 의 공백을 '_'로 치환(make_csv_yaml_dynamic.py:104)하므로
+    '용인시 처인구' 같은 공백 이름은 디스크에 '용인시_처인구_kakao_dep_...' 로 생성된다.
+    여기서 공백 이름 그대로 경로를 만들면 raw_dir/final_cfg 가 불일치해 postprocess 실패 +
+    skip-check 미스 → 공백 이름 시군구(경기 다구 시 등)가 영영 성공하지 못한다.
+    """
+    return re.sub(r"\s+", "_", str(name)).strip("_")
+
+
 def final_config_path(base, name, lat, lon):
     """후처리(_kakao) 후 최종 config 경로."""
     folder = f"({lat},{lon})"
     return os.path.join(base, "scenarios", "exp_시군구", "kakao",
-                        f"{name}_kakao", folder, f"config_{folder}.yaml")
+                        f"{_norm_name(name)}_kakao", folder, f"config_{folder}.yaml")
 
 
 def raw_exp_dir(base, name, dep):
     """make_csv 가 만드는 원본 폴더(_dep_ 접미사) 경로."""
     return os.path.join(base, "scenarios", "exp_시군구", "kakao",
-                        f"{name}_kakao_dep_{dep}")
+                        f"{_norm_name(name)}_kakao_dep_{dep}")
 
 
 def postprocess_rename(base, name, dep, lat, lon, log):
-    """원본 <name>_kakao_dep_<ts> → <name>_kakao 로 rename + config 내부 문자열 치환.
+    """원본 <name>_kakao_dep_<ts>/(lat,lon) → <name>_kakao/(lat,lon) 좌표폴더 단위 병합.
 
     config 안의 모든 경로/output_path 가 '<name>_kakao_dep_<ts>' 를 포함하므로
     '<name>_kakao' 로 전역 치환한다(experiment_id 고유 문자열이라 안전).
+    동명 구(중구/서구/동구/남구 등 — 서울·부산·대구·인천에 모두 존재)는 같은
+    <name>_kakao 아래 서로 다른 (lat,lon) 폴더로 공존해야 한다(OSRM 과 동일 구조).
+    따라서 final_dir 전체를 지우면 안 되고 '해당 좌표 폴더'만 교체한다.
     Returns: 최종 config 경로.
     """
+    nm = _norm_name(name)
     raw_dir = raw_exp_dir(base, name, dep)
-    final_dir = os.path.join(base, "scenarios", "exp_시군구", "kakao", f"{name}_kakao")
-    old_token = f"{name}_kakao_dep_{dep}"
-    new_token = f"{name}_kakao"
+    final_dir = os.path.join(base, "scenarios", "exp_시군구", "kakao", f"{nm}_kakao")
+    old_token = f"{nm}_kakao_dep_{dep}"
+    new_token = f"{nm}_kakao"
+    folder = f"({lat},{lon})"
 
     if not os.path.isdir(raw_dir):
         raise FileNotFoundError(f"원본 생성 폴더 없음: {raw_dir}")
+    raw_sub = os.path.join(raw_dir, folder)
+    if not os.path.isdir(raw_sub):
+        raise FileNotFoundError(f"원본 좌표 폴더 없음: {raw_sub}")
 
-    # rename (이미 최종 폴더가 있으면 원본을 그 안으로 병합하지 않고 교체 — 재시도 안전)
-    if os.path.isdir(final_dir):
-        shutil.rmtree(final_dir)
-    shutil.move(raw_dir, final_dir)
+    # 좌표 폴더 단위 병합 — 부모 final_dir 은 보존(동명 구 공존), 같은 좌표만 교체(재시도 안전)
+    os.makedirs(final_dir, exist_ok=True)
+    final_sub = os.path.join(final_dir, folder)
+    if os.path.isdir(final_sub):
+        shutil.rmtree(final_sub)
+    shutil.move(raw_sub, final_sub)
+    # 비워진 원본 _dep_ 부모 폴더 정리
+    shutil.rmtree(raw_dir, ignore_errors=True)
 
     # config 내부 문자열 치환
-    folder = f"({lat},{lon})"
     cfg = os.path.join(final_dir, folder, f"config_{folder}.yaml")
     with open(cfg, encoding="utf-8") as f:
         text = f.read()
@@ -161,6 +183,9 @@ def gen_one(base, name, lat, lon, dep, api_key, args, log):
         env[v] = "1"
     # 키는 ENV 로 전달 (argv 노출 회피)
     env["KAKAO_API_KEY"] = api_key
+    # 로컬 OSRM(한국 도로+페리 데이터) — make_csv 가 도로 미스냅 좌표(산간/오지 대표점)를
+    # /nearest 로 스냅 재시도하고, 해상/페리 구간은 OSRM 라우팅으로 폴백할 때 사용한다.
+    env["MCI_OSRM_URL"] = args.osrm_url
 
     cmd = [
         args.python, MAKE_SCRIPT,
@@ -204,7 +229,30 @@ def gen_one(base, name, lat, lon, dep, api_key, args, log):
     mcall = re.search(r"API_CALL_COUNT:(\d+)", out)
     if mcall:
         n_calls = int(mcall.group(1))
-    return ("ok", (final_cfg, n_calls))
+    # 라우팅 스냅/폴백 요약 추출(대표점 도로 이격거리 등 — make_csv 가 ROUTE_ADJUST 로 출력)
+    radj = None
+    madj = re.search(r"ROUTE_ADJUST:(\{.*\})", out)
+    if madj:
+        try:
+            radj = json.loads(madj.group(1))
+        except Exception:
+            radj = None
+    return ("ok", (final_cfg, n_calls, radj))
+
+
+def write_route_adjust_row(csv_path, mkey, name, lat, lon, radj):
+    """대표점 도로 이격거리·스냅/폴백 레그 수를 누적 CSV에 1행 기록(없으면 헤더 생성).
+
+    대표점(시군구 중심점)이 실제 도로에서 얼마나 떨어졌는지 추적용 — 산간/오지일수록 크다.
+    """
+    new = not os.path.exists(csv_path)
+    with open(csv_path, "a", encoding="utf-8") as f:
+        if new:
+            f.write("manifest_key,name,lat,lon,site_offset_m,"
+                    "n_kakao_snap_legs,n_osrm_fallback_legs,max_leg_snap_offset_m\n")
+        f.write(f"{mkey},{name},{lat},{lon},{radj.get('site_offset_m', 0)},"
+                f"{radj.get('n_kakao_snap_legs', 0)},{radj.get('n_osrm_fallback_legs', 0)},"
+                f"{radj.get('max_leg_snap_offset_m', 0)}\n")
 
 
 def main():
@@ -216,6 +264,8 @@ def main():
     ap.add_argument("--out_manifest",
                     default="scenarios/manifests/sigungu_kakao_manifest.json")
     ap.add_argument("--keys_file", required=True, help="Kakao 키 파일(비주석 줄=키, 첫 줄=주키)")
+    ap.add_argument("--osrm_url", default="http://127.0.0.1:5000",
+                    help="로컬 OSRM(한국+페리) — 산간/오지 대표점 스냅 재시도 + 해상 구간 폴백용")
     ap.add_argument("--departure_time", default="202607301400")
     ap.add_argument("--incident_size", type=int, default=100)
     ap.add_argument("--amb_count", type=int, default=30)
@@ -241,6 +291,7 @@ def main():
     os.makedirs(os.path.join(base, args.log_dir), exist_ok=True)
     log_path = os.path.join(base, args.log_dir, "gen_sigungu_kakao.log")
     state_path = os.path.join(base, args.log_dir, "gen_sigungu_kakao_state.json")
+    adjust_csv = os.path.join(base, args.log_dir, "sigungu_kakao_route_adjustments.csv")
 
     def log(msg):
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -295,10 +346,18 @@ def main():
             status, payload = gen_one(base, name, lat, lon,
                                       args.departure_time, cur_key, args, log)
             if status == "ok":
-                cfg, ncalls = payload
+                cfg, ncalls, radj = payload
                 manifest[mkey] = cfg
                 done += 1
-                log(f"[{i}/{len(targets)}] ✅ {mkey} 완료 (API≈{ncalls}) {cfg}")
+                radj_s = ""
+                if radj:
+                    write_route_adjust_row(adjust_csv, mkey, name, lat, lon, radj)
+                    off = radj.get("site_offset_m", 0)
+                    nfb = radj.get("n_osrm_fallback_legs", 0)
+                    nsnap = radj.get("n_kakao_snap_legs", 0)
+                    if off or nfb or nsnap:
+                        radj_s = f" [대표점 {off:.0f}m, snap {nsnap}레그, osrm폴백 {nfb}레그]"
+                log(f"[{i}/{len(targets)}] ✅ {mkey} 완료 (API≈{ncalls}) {cfg}{radj_s}")
                 result = "ok"
                 break
             elif status == "quota":
