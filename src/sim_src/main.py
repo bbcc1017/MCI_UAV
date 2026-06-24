@@ -104,8 +104,10 @@ class RunManager():
 
         # 5. 시뮬레이션 실행
         output, output_stat = self.run(self.env, self.rules, totalSamples)
-        np.savetxt(os.path.join(output_path, "results_{0}.txt".format(exp_indicator)), output, fmt='%s', delimiter="  ")
-        np.savetxt(os.path.join(output_path, "results_{0}_stat.txt".format(exp_indicator)), output_stat, fmt='%s', delimiter="  ")
+        # MCI_CAP_GATE=psent 일 때 occ 결과를 덮어쓰지 않도록 파일명에 _psent 접미사.
+        _cap_sfx = "" if os.environ.get("MCI_CAP_GATE", "occ").strip().lower() != "psent" else "_psent"
+        np.savetxt(os.path.join(output_path, "results_{0}{1}.txt".format(exp_indicator, _cap_sfx)), output, fmt='%s', delimiter="  ")
+        np.savetxt(os.path.join(output_path, "results_{0}{1}_stat.txt".format(exp_indicator, _cap_sfx)), output_stat, fmt='%s', delimiter="  ")
 
         # Save trace data if enabled
         if self.enable_trace and hasattr(self, '_all_traces') and self._all_traces:

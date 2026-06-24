@@ -1,4 +1,16 @@
+import os
 import numpy as np
+
+
+def _cap_gate_is_occ():
+    """발송(현장→병원) 용량 게이트 신호 선택. occ(기본)=병원 실시간 점유를 통신으로 앎,
+    psent=현장이 보낸 누적 수만 앎(통신 단절·보수적). MCI_CAP_GATE 로 토글하며
+    RL(MCIEnvironment_gymnasium._cap_gate_is_occ)·휴리스틱(여기)이 같은 env 변수를 공유한다.
+    ⚠️ 이건 '발송 결정' 게이트일 뿐 — 병원의 실제 입원/diversion 은 sim 이 항상 occ
+    (n_occupied<max_capa, 퇴원 시 occ-=1, 꽉 차면 diversion)로 처리한다(불변)."""
+    return os.environ.get("MCI_CAP_GATE", "occ").strip().lower() != "psent"
+
+
 class RuleManager():
     def __init__(self, configs, scenario, rng=None):
         if rng is not None:
@@ -238,13 +250,15 @@ class Universal_Rule(Rule):
                 else: print("Error in Transition", action, self.obs)
         # 2. Hospital selection
         if not isSTAY:
+            # 발송 게이트 신호: occ(실시간 점유, 기본) | psent(누적 발송). MCI_CAP_GATE 로 토글.
+            cap_used = self.obs['h_states'][:, -1] if _cap_gate_is_occ() else self.obs['p_sent']
             if self.hos_select == "RedOnly":
                 if action[0] == 0: # Red selected
                     for i in self.tier3_idx:
                         # ★ 헬기장 체크 추가 (UAV 선택 시)
                         if action[2] == 1 and i not in self.helipad_idx:
                             continue
-                        if self.hos_max_send[i] > self.obs['h_states'][i,-1]: # max_send > n_occupied
+                        if self.hos_max_send[i] > cap_used[i]: # max_send > n_occupied
                             action[1] = i + 1
                             break
                 elif action[0] == 1: # Yellow selected
@@ -254,7 +268,7 @@ class Universal_Rule(Rule):
                         # ★ 헬기장 체크 추가 (UAV 선택 시)
                         if action[2] == 1 and i not in self.helipad_idx:
                             continue
-                        if self.hos_max_send[i] > self.obs['h_states'][i,-1]: # max_send > n_occupied
+                        if self.hos_max_send[i] > cap_used[i]: # max_send > n_occupied
                             action[1] = i + 1
                             break
             # elif self.hos_select == "YellowHalf":
@@ -263,7 +277,7 @@ class Universal_Rule(Rule):
             #             # ★ 헬기장 체크 추가 (UAV 선택 시)
             #             if action[2] == 1 and i not in self.helipad_idx:
             #                 continue
-            #             if self.hos_max_send[i] > self.obs['h_states'][i,-1]: # max_send > n_occupied
+            #             if self.hos_max_send[i] > cap_used[i]: # max_send > n_occupied
             #                 action[1] = i + 1
             #                 break
             #     elif action[0] == 1: # Yellow selected
@@ -276,7 +290,7 @@ class Universal_Rule(Rule):
             #                 # ★ 헬기장 체크 추가 (UAV 선택 시)
             #                 if action[2] == 1 and i not in self.helipad_idx:
             #                     continue
-            #                 if self.hos_max_send[i] > self.obs['h_states'][i,-1]: # max_send > n_occupied
+            #                 if self.hos_max_send[i] > cap_used[i]: # max_send > n_occupied
             #                     action[1] = i + 1
             #                     break
             #         else: # Send to tier3
@@ -284,7 +298,7 @@ class Universal_Rule(Rule):
             #                 # ★ 헬기장 체크 추가 (UAV 선택 시)
             #                 if action[2] == 1 and i not in self.helipad_idx:
             #                     continue
-            #                 if self.hos_max_send[i] > self.obs['h_states'][i,-1]: # max_send > n_occupied
+            #                 if self.hos_max_send[i] > cap_used[i]: # max_send > n_occupied
             #                     action[1] = i + 1
             #                     break
             elif self.hos_select == "YellowNearest":
@@ -293,7 +307,7 @@ class Universal_Rule(Rule):
                         # ★ 헬기장 체크 추가 (UAV 선택 시)
                         if action[2] == 1 and i not in self.helipad_idx:
                             continue
-                        if self.hos_max_send[i] > self.obs['h_states'][i,-1]: # max_send > n_occupied
+                        if self.hos_max_send[i] > cap_used[i]: # max_send > n_occupied
                             action[1] = i + 1
                             break
                 elif action[0] == 1: # Yellow selected - 거리순으로 tier 구분 없이 선택
@@ -301,7 +315,7 @@ class Universal_Rule(Rule):
                         # ★ 헬기장 체크 추가 (UAV 선택 시)
                         if action[2] == 1 and i not in self.helipad_idx:
                             continue
-                        if self.hos_max_send[i] > self.obs['h_states'][i,-1]: # max_send > n_occupied
+                        if self.hos_max_send[i] > cap_used[i]: # max_send > n_occupied
                             action[1] = i + 1
                             break
             
