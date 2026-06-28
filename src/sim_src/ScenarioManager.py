@@ -1,4 +1,5 @@
 import math
+import os
 import pandas as pd
 import numpy as np
 import json
@@ -48,6 +49,11 @@ class ScenarioManager():
     def setup_patient(self, cfg_patient):
         reg_prop ={}
         reg_prop['incident_size'] = cfg_patient['incident_size']
+        # 사고규모(부하) 트레이드오프 실험용 런타임 오버라이드. MCI_INCIDENT_SIZE 설정 시
+        # 환자 총원을 그 값으로 교체(obs aggregation 은 H 기반이라 차원 불변 → 모델 호환).
+        _isz = os.environ.get("MCI_INCIDENT_SIZE", "")
+        if _isz.strip():
+            reg_prop['incident_size'] = int(_isz)
         incident_loc = (cfg_patient['latitude'], cfg_patient['longitude'])
         incident_type = cfg_patient['incident_type']
         try:
@@ -123,6 +129,16 @@ class ScenarioManager():
                 reg_prop['hos_tier'] = hos_info['종별코드'].to_numpy(dtype='int32')
                 reg_prop['hos_max_send'] = cfg_hospital['max_send_coeff'][0]*reg_prop['hos_max_capa'] \
                                            + cfg_hospital['max_send_coeff'][1]*reg_prop['hos_max_queue']
+                # 자원이용률(용량 바인딩) 트레이드오프 실험용 런타임 용량 스케일.
+                # MCI_CAPA_SCALE=s (기본 1.0) → 수술실수·병상수·max_send 를 s 배(병원당 최소 1 보장).
+                # s<1 이면 병원용량을 부하 쪽으로 조여 입원(max_capa+max_queue)·발송(max_send) 게이트가
+                # 실제로 바인딩됨 → 목적지 분산(부하균형/RL)의 가치가 드러난다. s=1 이면 영향 없음.
+                _capa_scale = float(os.environ.get("MCI_CAPA_SCALE", "1.0"))
+                if _capa_scale != 1.0:
+                    reg_prop['hos_max_capa'] = np.maximum(1, np.round(reg_prop['hos_max_capa']*_capa_scale)).astype('int32')
+                    reg_prop['hos_max_queue'] = np.maximum(1, np.round(reg_prop['hos_max_queue']*_capa_scale)).astype('int32')
+                    reg_prop['hos_max_send'] = cfg_hospital['max_send_coeff'][0]*reg_prop['hos_max_capa'] \
+                                               + cfg_hospital['max_send_coeff'][1]*reg_prop['hos_max_queue']
                 # Hos2Hos 거리 행렬 — 별도 파일 유지(diversion 용). road 부재/불일치 시 euc 폴백.
                 d_HtoH_euc = pd.read_csv(cfg_hospital['dist_Hos2Hos_euc_info'])
                 reg_prop['d_HtoH_euc'] = self._extract_matrix(d_HtoH_euc)
