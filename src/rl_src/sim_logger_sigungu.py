@@ -22,6 +22,10 @@ REGIONS=sorted(json.load(open(MANIFEST)).keys())          # 종로구_11110 등 
 SEED=11000; H=46; ND=H+1; NM=2
 OUT=os.path.join(REPO,"results/viper/simlog_sigungu")
 NAT="results/rl/sigungu_nat"                              # 전국 단일정책 (지역무관)
+# 휴리스틱 best CSV (gate별). Kakao 등 다른 시나리오축은 main()에서 --manifest/--out/--heur* 로 오버라이드.
+# (RL·트리는 OSRM 학습본 그대로 — Kakao 평가 시 라우팅축 OOD지만 동일정책 비교로 유효.)
+HEUR_OCC="results/sigungu_heuristic_best.csv"
+HEUR_PSENT="results/sigungu_heuristic_psent_best.csv"
 
 def setgate(g):
     os.environ.update(MCI_OBS_VARIANT="essential",MCI_GREEN_MASK="1",MCI_REWARD_MODE="woG")
@@ -50,7 +54,7 @@ def worker(job):
             model=MaskablePPO.load(os.path.join(md,"final_model.zip"),device="cpu")
             def act(ro,mask,env): return int(model.predict(np.clip((np.asarray(ro,np.float32)-mean)/std,-clip,clip),action_masks=mask,deterministic=True)[0])
         elif policy=="heur":
-            hc="results/sigungu_heuristic_best.csv" if gate=="occ" else "results/sigungu_heuristic_psent_best.csv"
+            hc=HEUR_OCC if gate=="occ" else HEUR_PSENT
             df=pd.read_csv(os.path.join(REPO,hc),dtype={"sigcd":str},encoding="utf-8-sig").set_index("sigcd")
             hp=make_heuristic_policy(df.loc[sig,"best_rule"])
             def act(ro,mask,env): return hp(ro,mask,env)
@@ -114,7 +118,18 @@ def main():
     ap.add_argument("--workers",type=int,default=32); ap.add_argument("--n_ep",type=int,default=1000)
     ap.add_argument("--gates",default="occ,site"); ap.add_argument("--policies",default="rl,heur,tree_d6")
     ap.add_argument("--limit",type=int,default=0,help="디버그용 지역 N개만")
+    ap.add_argument("--manifest",default="",help="시나리오 매니페스트(미지정=시군구 OSRM). Kakao=sigungu_kakao_manifest.json")
+    ap.add_argument("--out",default="",help="출력 디렉터리(미지정=simlog_sigungu). Kakao=simlog_sigungu_kakao")
+    ap.add_argument("--heur_occ",default="",help="occ 휴리best CSV(미지정=OSRM)")
+    ap.add_argument("--heur_psent",default="",help="psent 휴리best CSV(미지정=OSRM)")
     A=ap.parse_args()
+    # 시나리오축 오버라이드 (fork 로 워커에 전파). RL·트리 모델 경로(NAT/zoo)는 OSRM 학습본 고정.
+    global MANIFEST, REGIONS, OUT, HEUR_OCC, HEUR_PSENT
+    if A.manifest: MANIFEST=os.path.join(REPO,"scenarios/manifests",A.manifest) if not os.path.isabs(A.manifest) else A.manifest
+    REGIONS=sorted(json.load(open(MANIFEST)).keys())
+    if A.out: OUT=os.path.join(REPO,"results/viper",A.out) if not os.path.isabs(A.out) else A.out
+    if A.heur_occ: HEUR_OCC=A.heur_occ
+    if A.heur_psent: HEUR_PSENT=A.heur_psent
     os.makedirs(OUT,exist_ok=True)
     ep_csv=os.path.join(OUT,"episodes.csv"); hl_csv=os.path.join(OUT,"hospital_loads.csv")
     done=set()
