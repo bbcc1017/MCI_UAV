@@ -170,7 +170,9 @@ def rollout_states(env_factory, policy_fn, n_episodes, seed_base):
 
 # ---------- VIPER 메인 루프 ----------
 def viper(env_factory, model, n_iter, rollout_eps, eval_eps, max_depth,
-          min_samples_leaf, crit, seed_base):
+          min_samples_leaf, crit, seed_base, select_metric="woG"):
+    """select_metric: best 트리 선택 기준. 'woG'(=info['r_woG'] 합, 배치 지표·기본) 또는
+    'raw'(Green 고정생존 지배 → 둔감). 학습목표가 woG 이므로 woG 로 고르는 게 정합적."""
     oracle = ppo_policy(model)
     weight_fn = make_weight_fn(model, crit)
     D_obs, D_act, D_w = [], [], []
@@ -192,17 +194,18 @@ def viper(env_factory, model, n_iter, rollout_eps, eval_eps, max_depth,
         best_iter_tree = tree
         with _suppress_stdout():
             m = eval_policy(env_factory, make_tree_policy(tree), eval_eps, seed_base + 9000)
-        rew = m["mean_R"]
+        rew_raw = m["mean_R"]; rew_wog = m["mean_R_woG"]
+        sel = rew_wog if select_metric == "woG" else rew_raw  # best 선택 기준
         # 충실도: 누적 D 에서 오라클 라벨 재현율
         fidelity = float((tree.predict(X) == y).mean())
-        history.append({"iter": i, "reward": rew, "fidelity": fidelity,
+        history.append({"iter": i, "reward": rew_raw, "reward_woG": rew_wog, "fidelity": fidelity,
                         "leaves": int(tree.get_n_leaves()), "depth": int(tree.get_depth()),
                         "n_data": len(D_obs)})
-        sys.stderr.write(f"[VIPER it{i}] reward={rew:.2f} fidelity={fidelity:.3f} "
+        sys.stderr.write(f"[VIPER it{i}] woG={rew_wog:.2f} raw={rew_raw:.2f} fidelity={fidelity:.3f} "
                          f"leaves={tree.get_n_leaves()} depth={tree.get_depth()} n={len(D_obs)}\n")
         sys.stderr.flush()
-        if rew > best["reward"]:
-            best = {"tree": tree, "reward": rew, "iter": i}
+        if sel > best["reward"]:
+            best = {"tree": tree, "reward": sel, "iter": i}
     return best, history
 
 
@@ -217,6 +220,8 @@ def main():
     ap.add_argument("--max_depth", type=int, default=8)
     ap.add_argument("--min_samples_leaf", type=int, default=20)
     ap.add_argument("--crit", choices=["loggap", "probmargin", "uniform"], default="loggap")
+    ap.add_argument("--select_metric", choices=["woG", "raw"], default="woG",
+                    help="best 트리 선택 기준(기본 woG=배치지표). raw 는 Green 지배라 둔감.")
     ap.add_argument("--seed_base", type=int, default=2000)
     ap.add_argument("--heur_csv", default=None, help="지역별 best 휴리스틱 룰 CSV(있으면 비교)")
     ap.add_argument("--out_dir", default="results/viper")
@@ -251,9 +256,10 @@ def main():
     print(f"[VIPER] crit={args.crit} n_iter={args.n_iter} rollout_eps={args.rollout_eps} "
           f"max_depth={args.max_depth} variant={os.environ.get('MCI_OBS_VARIANT','(full)')}")
     best, history = viper(train_factory, model, args.n_iter, args.rollout_eps, args.eval_eps,
-                          args.max_depth, args.min_samples_leaf, args.crit, args.seed_base)
+                          args.max_depth, args.min_samples_leaf, args.crit, args.seed_base,
+                          args.select_metric)
     tree = best["tree"]
-    print(f"\n[VIPER] best iter={best['iter']} reward={best['reward']:.2f} "
+    print(f"\n[VIPER] best iter={best['iter']} {args.select_metric}={best['reward']:.2f} "
           f"leaves={tree.get_n_leaves()} depth={tree.get_depth()}")
 
     # 저장 (pkl + 규칙 텍스트)

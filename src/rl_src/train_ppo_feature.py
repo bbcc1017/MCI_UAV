@@ -159,6 +159,10 @@ def parse_args():
                    help="보상 변환(RewardRedesignWrapper). 기본 woG(Green 제외).")
     p.add_argument("--norm_reward", action="store_true", default=False,
                    help="VecNormalize 보상 정규화(기본 off — woG 스케일 해석/휴리스틱 비교 유지).")
+    p.add_argument("--resume_from", default=None,
+                   help="기존 모델 디렉터리(또는 final_model.zip 경로). 주면 정책·옵티마이저·"
+                        "num_timesteps·vecnormalize 통계를 복원해 이어학습(reset_num_timesteps=False). "
+                        "이때 total_timesteps 는 '추가' 스텝 수(예: 5M→10M 이면 5_000_000).")
     return p.parse_args()
 
 
@@ -173,31 +177,50 @@ def main():
     env_fns = [make_env_fn(args.config_path, seed=args.seed + i) for i in range(args.n_envs)]
     vec_cls = SubprocVecEnv if args.vec == "subproc" else DummyVecEnv
     venv = vec_cls(env_fns)
-    # obs 정규화 필수(ETA·cap_remain 스케일) / reward 정규화는 옵션. eval·VIPER 는 통계 동결 로드.
-    venv = VecNormalize(venv, norm_obs=True, norm_reward=args.norm_reward, clip_obs=10.0)
 
-    policy_kwargs = dict(net_arch=[256, 256])
+    # deepsets 추출기 클래스는 (신규 정책생성 / resume 시 역직렬화) 양쪽에 import 되어 있어야 함.
     if args.extractor == "deepsets":
-        from hospital_set_extractor import HospitalSetExtractor  # 3c
-        H, F, gdim = _entity_dims(args.config_path, args.seed)
-        policy_kwargs = dict(
-            features_extractor_class=HospitalSetExtractor,
-            features_extractor_kwargs=dict(n_hospitals=H, entity_f=F, global_dim=gdim),
-            net_arch=[256, 256],
-        )
-        print(f"[feature] deepsets 추출기: H={H} F={F} global={gdim}")
+        from hospital_set_extractor import HospitalSetExtractor  # noqa: F401
 
-    model = MaskablePPO(
-        "MlpPolicy", venv,
-        learning_rate=args.learning_rate,
-        n_steps=args.n_steps,
-        batch_size=args.batch_size,
-        ent_coef=args.ent_coef,
-        policy_kwargs=policy_kwargs,
-        verbose=1,
-        seed=args.seed,
-        tensorboard_log=os.path.join(args.log_dir, "tb"),
-    )
+    if args.resume_from:
+        # ---- 이어학습: vecnorm 통계 + 정책/옵티마이저/num_timesteps 복원 ----
+        model_zip = args.resume_from
+        if os.path.isdir(model_zip):
+            model_zip = os.path.join(model_zip, "final_model.zip")
+        vn_path = os.path.join(os.path.dirname(model_zip), "vecnormalize.pkl")
+        venv = VecNormalize.load(vn_path, venv)  # 동결 아님: training=True 로 obs 통계 계속 갱신
+        venv.training = True
+        venv.norm_reward = args.norm_reward
+        model = MaskablePPO.load(model_zip, env=venv,
+                                 tensorboard_log=os.path.join(args.log_dir, "tb"))
+        print(f"[feature] resume from {model_zip}: num_timesteps={model.num_timesteps} "
+              f"(+{args.total_timesteps} → {model.num_timesteps + args.total_timesteps})")
+    else:
+        # ---- 신규 학습 ----
+        # obs 정규화 필수(ETA·cap_remain 스케일) / reward 정규화는 옵션. eval·VIPER 는 통계 동결 로드.
+        venv = VecNormalize(venv, norm_obs=True, norm_reward=args.norm_reward, clip_obs=10.0)
+
+        policy_kwargs = dict(net_arch=[256, 256])
+        if args.extractor == "deepsets":
+            H, F, gdim = _entity_dims(args.config_path, args.seed)
+            policy_kwargs = dict(
+                features_extractor_class=HospitalSetExtractor,
+                features_extractor_kwargs=dict(n_hospitals=H, entity_f=F, global_dim=gdim),
+                net_arch=[256, 256],
+            )
+            print(f"[feature] deepsets 추출기: H={H} F={F} global={gdim}")
+
+        model = MaskablePPO(
+            "MlpPolicy", venv,
+            learning_rate=args.learning_rate,
+            n_steps=args.n_steps,
+            batch_size=args.batch_size,
+            ent_coef=args.ent_coef,
+            policy_kwargs=policy_kwargs,
+            verbose=1,
+            seed=args.seed,
+            tensorboard_log=os.path.join(args.log_dir, "tb"),
+        )
 
     ckpt_cb = CheckpointCallback(
         save_freq=max(args.checkpoint_freq // args.n_envs, 1),
@@ -205,8 +228,10 @@ def main():
         name_prefix="ppo_feature",
     )
 
+    # resume 시 reset_num_timesteps=False → total_timesteps 는 '추가' 스텝(이어서 카운트·체크포인트 번호 연속).
     model.learn(total_timesteps=args.total_timesteps, callback=ckpt_cb,
-                tb_log_name="ppo_feature", progress_bar=False)
+                tb_log_name="ppo_feature", progress_bar=False,
+                reset_num_timesteps=(args.resume_from is None))
     final_path = os.path.join(args.log_dir, "final_model.zip")
     model.save(final_path)
     vecnorm_path = os.path.join(args.log_dir, "vecnormalize.pkl")
