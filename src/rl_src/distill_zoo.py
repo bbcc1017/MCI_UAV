@@ -89,11 +89,12 @@ def worker(job):
 
 
 def heur_lookup(nat_occ="results/sigungu_heuristic_best.csv",
-                nat_psent="results/sigungu_heuristic_psent_best.csv"):
+                nat_psent="results/sigungu_heuristic_psent_best.csv",
+                sido_occ="results/sido_osrm_heuristic_best.csv",
+                sido_psent="results/sido_osrm_heuristic_psent_best.csv"):
     import pandas as pd
     h = {"occ": {}, "site": {}}
-    for g, f in [("occ", "results/sido_osrm_heuristic_best.csv"),
-                 ("site", "results/sido_osrm_heuristic_psent_best.csv")]:
+    for g, f in [("occ", sido_occ), ("site", sido_psent)]:
         df = pd.read_csv(os.path.join(REPO, f)); h[g] = dict(zip(df.region, df.reward_wog))
     sg = {"occ": float(pd.read_csv(os.path.join(REPO, nat_occ)).reward_wog.mean()),
           "site": float(pd.read_csv(os.path.join(REPO, nat_psent)).reward_wog.mean())}
@@ -103,11 +104,14 @@ def heur_lookup(nat_occ="results/sigungu_heuristic_best.csv",
 def build_jobs(scopes, gates, eval_eps, depths, nat_base="results/rl/sigungu_nat",
                nat_manifest="scenarios/manifests/sigungu_osrm_manifest.json", nat_tag="A전국",
                nat_heur_occ="results/sigungu_heuristic_best.csv",
-               nat_heur_psent="results/sigungu_heuristic_psent_best.csv"):
-    # 전국(A) 스코프는 nat_* 로 시나리오축 오버라이드(Kakao 등). 기본값=시군구 OSRM(하위호환).
-    sido_m = json.load(open(os.path.join(REPO, "scenarios/manifests/sido_osrm_manifest.json")))
+               nat_heur_psent="results/sigungu_heuristic_psent_best.csv",
+               sido_base="results/rl/sido", sido_manifest="scenarios/manifests/sido_osrm_manifest.json",
+               sido_tag="B시도", sido_heur_occ="results/sido_osrm_heuristic_best.csv",
+               sido_heur_psent="results/sido_osrm_heuristic_psent_best.csv"):
+    # 전국(A)·시도(B) 스코프 모두 시나리오축 오버라이드(Kakao 등). 기본값=OSRM(하위호환).
+    sido_m = json.load(open(os.path.join(REPO, sido_manifest)))
     sg_m = os.path.join(REPO, nat_manifest)
-    h, sg = heur_lookup(nat_heur_occ, nat_heur_psent)
+    h, sg = heur_lookup(nat_heur_occ, nat_heur_psent, sido_heur_occ, sido_heur_psent)
     jobs = []
     for gate in gates:
         suf = "occ" if gate == "occ" else "siteonly"
@@ -116,8 +120,8 @@ def build_jobs(scopes, gates, eval_eps, depths, nat_base="results/rl/sigungu_nat
             jobs.append((nat_tag, "전국", gate, md, sg_m, sg[gate], eval_eps, depths))
         if "B" in scopes:
             for rg in REGIONS:
-                md = os.path.join(REPO, "results/rl/sido", f"{rg}_ds_ess_woG_{suf}_s0")
-                jobs.append(("B시도", rg, gate, md, sido_m[rg], h[gate][rg], eval_eps, depths))
+                md = os.path.join(REPO, sido_base, f"{rg}_ds_ess_woG_{suf}_s0")
+                jobs.append((sido_tag, rg, gate, md, sido_m[rg], h[gate][rg], eval_eps, depths))
     return jobs
 
 
@@ -135,10 +139,17 @@ def main():
     ap.add_argument("--nat_tag", default="A전국")
     ap.add_argument("--nat_heur_occ", default="results/sigungu_heuristic_best.csv")
     ap.add_argument("--nat_heur_psent", default="results/sigungu_heuristic_psent_best.csv")
+    # 시도(B) 스코프 시나리오축 오버라이드 (Kakao 등; 기본=시도 OSRM)
+    ap.add_argument("--sido_base", default="results/rl/sido")
+    ap.add_argument("--sido_manifest", default="scenarios/manifests/sido_osrm_manifest.json")
+    ap.add_argument("--sido_tag", default="B시도")
+    ap.add_argument("--sido_heur_occ", default="results/sido_osrm_heuristic_best.csv")
+    ap.add_argument("--sido_heur_psent", default="results/sido_osrm_heuristic_psent_best.csv")
     args = ap.parse_args()
     depths = [int(x) for x in args.depths.split(",")]
     jobs = build_jobs(args.scopes.split(","), args.gates.split(","), args.eval_eps, depths,
-                      args.nat_base, args.nat_manifest, args.nat_tag, args.nat_heur_occ, args.nat_heur_psent)
+                      args.nat_base, args.nat_manifest, args.nat_tag, args.nat_heur_occ, args.nat_heur_psent,
+                      args.sido_base, args.sido_manifest, args.sido_tag, args.sido_heur_occ, args.sido_heur_psent)
     done = set()
     if os.path.exists(args.out):
         for r in csv.DictReader(open(args.out, encoding="utf-8")):
