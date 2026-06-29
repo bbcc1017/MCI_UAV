@@ -26,6 +26,7 @@ NAT="results/rl/sigungu_nat"                              # 전국 단일정책 
 # (RL·트리는 OSRM 학습본 그대로 — Kakao 평가 시 라우팅축 OOD지만 동일정책 비교로 유효.)
 HEUR_OCC="results/sigungu_heuristic_best.csv"
 HEUR_PSENT="results/sigungu_heuristic_psent_best.csv"
+TREE_TAG="A전국"   # 전국 트리 zoo 태그(Kakao=A전국kakao). 경로=zoo/<TREE_TAG>_전국_<gate>.
 
 def setgate(g):
     os.environ.update(MCI_OBS_VARIANT="essential",MCI_GREEN_MASK="1",MCI_REWARD_MODE="woG")
@@ -60,7 +61,7 @@ def worker(job):
             def act(ro,mask,env): return hp(ro,mask,env)
         else:  # tree_dN — 전국 트리(A전국)
             dN=policy.split("_d")[1]
-            tr=pickle.load(open(os.path.join(REPO,f"results/viper/zoo/A전국_전국_{gate}/tree_d{dN}.pkl"),"rb"))["tree"]
+            tr=pickle.load(open(os.path.join(REPO,f"results/viper/zoo/{TREE_TAG}_전국_{gate}/tree_d{dN}.pkl"),"rb"))["tree"]
             tp=make_tree_policy(tr)
             def act(ro,mask,env): return tp(np.clip((np.asarray(ro,np.float32)-mean)/std,-clip,clip),mask,env)
         with _suppress_stdout():
@@ -122,14 +123,18 @@ def main():
     ap.add_argument("--out",default="",help="출력 디렉터리(미지정=simlog_sigungu). Kakao=simlog_sigungu_kakao")
     ap.add_argument("--heur_occ",default="",help="occ 휴리best CSV(미지정=OSRM)")
     ap.add_argument("--heur_psent",default="",help="psent 휴리best CSV(미지정=OSRM)")
+    ap.add_argument("--nat_base",default="",help="전국 RL 모델 base(미지정=results/rl/sigungu_nat). Kakao=results/rl/sigungu_nat_kakao")
+    ap.add_argument("--tree_tag",default="",help="전국 트리 zoo 태그(미지정=A전국). Kakao=A전국kakao")
     A=ap.parse_args()
-    # 시나리오축 오버라이드 (fork 로 워커에 전파). RL·트리 모델 경로(NAT/zoo)는 OSRM 학습본 고정.
-    global MANIFEST, REGIONS, OUT, HEUR_OCC, HEUR_PSENT
+    # 시나리오축 오버라이드 (fork 로 워커에 전파). 기본=시군구 OSRM(하위호환).
+    global MANIFEST, REGIONS, OUT, HEUR_OCC, HEUR_PSENT, NAT, TREE_TAG
     if A.manifest: MANIFEST=os.path.join(REPO,"scenarios/manifests",A.manifest) if not os.path.isabs(A.manifest) else A.manifest
     REGIONS=sorted(json.load(open(MANIFEST)).keys())
     if A.out: OUT=os.path.join(REPO,"results/viper",A.out) if not os.path.isabs(A.out) else A.out
     if A.heur_occ: HEUR_OCC=A.heur_occ
     if A.heur_psent: HEUR_PSENT=A.heur_psent
+    if A.nat_base: NAT=A.nat_base
+    if A.tree_tag: TREE_TAG=A.tree_tag
     os.makedirs(OUT,exist_ok=True)
     ep_csv=os.path.join(OUT,"episodes.csv"); hl_csv=os.path.join(OUT,"hospital_loads.csv")
     done=set()

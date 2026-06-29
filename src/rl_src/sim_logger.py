@@ -19,6 +19,9 @@ REPO=os.path.abspath(os.path.join(os.path.dirname(__file__),os.pardir,os.pardir)
 REGIONS="서울 부산 대구 인천 광주 대전 울산 세종 경기 강원 충북 충남 전북 전남 경북 경남 제주".split()
 SEED=11000; H=46; ND=H+1; NM=2
 OUT=os.path.join(REPO,"results/viper/simlog")
+# 시나리오축 오버라이드(Kakao 등). main()에서 인자로 교체, fork 로 워커에 전파. 기본=시도 OSRM.
+MODEL_BASE="results/rl/sido"; CFG_MANIFEST="scenarios/manifests/sido_osrm_manifest.json"; TREE_TAG="B시도"
+HEUR_OCC="results/sido_osrm_heuristic_best.csv"; HEUR_PSENT="results/sido_osrm_heuristic_psent_best.csv"
 
 def setgate(g):
     os.environ.update(MCI_OBS_VARIANT="essential",MCI_GREEN_MASK="1",MCI_REWARD_MODE="woG")
@@ -39,8 +42,8 @@ def worker(job):
     import pandas as pd
     try:
         suf="occ" if gate=="occ" else "siteonly"
-        md=os.path.join(REPO,f"results/rl/sido/{region}_ds_ess_woG_{suf}_s0")
-        cfg=json.load(open(os.path.join(REPO,"scenarios/manifests/sido_osrm_manifest.json")))[region]
+        md=os.path.join(REPO,f"{MODEL_BASE}/{region}_ds_ess_woG_{suf}_s0")
+        cfg=json.load(open(os.path.join(REPO,CFG_MANIFEST)))[region]
         mean,std,clip=load_vecnorm(os.path.join(md,"vecnormalize.pkl"))
         fac=make_feature_env(cfg,None)  # raw feature obs
         # 정책 빌드
@@ -48,12 +51,12 @@ def worker(job):
             model=MaskablePPO.load(os.path.join(md,"final_model.zip"),device="cpu")
             def act(ro,mask,env): return int(model.predict(np.clip((np.asarray(ro,np.float32)-mean)/std,-clip,clip),action_masks=mask,deterministic=True)[0])
         elif policy=="heur":
-            br=pd.read_csv(os.path.join(REPO,"results/sido_osrm_heuristic_best.csv" if gate=="occ" else "results/sido_osrm_heuristic_psent_best.csv")).set_index("region").loc[region,"best_rule"]
+            br=pd.read_csv(os.path.join(REPO,HEUR_OCC if gate=="occ" else HEUR_PSENT)).set_index("region").loc[region,"best_rule"]
             hp=make_heuristic_policy(br)
             def act(ro,mask,env): return hp(ro,mask,env)
         else:  # tree_dN
             dN=policy.split("_d")[1]
-            tr=pickle.load(open(os.path.join(REPO,f"results/viper/zoo/B시도_{region}_{gate}/tree_d{dN}.pkl"),"rb"))["tree"]
+            tr=pickle.load(open(os.path.join(REPO,f"results/viper/zoo/{TREE_TAG}_{region}_{gate}/tree_d{dN}.pkl"),"rb"))["tree"]
             tp=make_tree_policy(tr)
             def act(ro,mask,env): return tp(np.clip((np.asarray(ro,np.float32)-mean)/std,-clip,clip),mask,env)
         # 병원 정적속성
@@ -113,7 +116,18 @@ def main():
     ap=argparse.ArgumentParser()
     ap.add_argument("--workers",type=int,default=24); ap.add_argument("--n_ep",type=int,default=1000)
     ap.add_argument("--gates",default="occ,site"); ap.add_argument("--policies",default="rl,heur,tree_d6")
+    # 시나리오축 오버라이드(Kakao 등; 기본=시도 OSRM). RL모델base·증류config·휴리·트리태그·출력.
+    ap.add_argument("--model_base",default=""); ap.add_argument("--manifest",default="")
+    ap.add_argument("--heur_occ",default=""); ap.add_argument("--heur_psent",default="")
+    ap.add_argument("--tree_tag",default=""); ap.add_argument("--out",default="")
     A=ap.parse_args()
+    global MODEL_BASE, CFG_MANIFEST, HEUR_OCC, HEUR_PSENT, TREE_TAG, OUT
+    if A.model_base: MODEL_BASE=A.model_base
+    if A.manifest: CFG_MANIFEST=A.manifest if A.manifest.endswith(".json") else os.path.join("scenarios/manifests",A.manifest)
+    if A.heur_occ: HEUR_OCC=A.heur_occ
+    if A.heur_psent: HEUR_PSENT=A.heur_psent
+    if A.tree_tag: TREE_TAG=A.tree_tag
+    if A.out: OUT=os.path.join(REPO,"results/viper",A.out) if not os.path.isabs(A.out) else A.out
     os.makedirs(OUT,exist_ok=True)
     ep_csv=os.path.join(OUT,"episodes.csv"); hl_csv=os.path.join(OUT,"hospital_loads.csv")
     done=set()
