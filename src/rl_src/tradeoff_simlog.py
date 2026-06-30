@@ -124,8 +124,13 @@ def worker(job):
                     wd.writerow([ep, step, round(float(info.get('time', 0)), 2), int(c), int(dst), int(m), int(hosp),
                                  round(capr, 3), round(eta_a, 3), round(eta_u, 3), erk, navail, round(rw, 4)])
                 used = int((ep_arr > 0).sum())
+                # PDR_woG = 1 - woG/preventable_woG (예방가능 총합 정규화 → 사고규모 무관 비교).
+                pv = float(getattr(env.unwrapped, "preventable", 0.0)); pvw = float(getattr(env.unwrapped, "preventable_woG", 0.0))
+                pdr = round(1 - raw / pv, 4) if pv > 0 else 0.0
+                pdr_woG = round(1 - wog / pvw, 4) if pvw > 0 else 0.0
                 ep_rows.append(dict(region=region, gate=gate, axis=axis, value=value, policy=policy, ep=ep,
-                    woG=round(wog, 3), raw=round(raw, 2), time_end=round(float(info.get('time', 0)), 2),
+                    woG=round(wog, 3), raw=round(raw, 2), PDR_woG=pdr_woG, PDR=pdr, preventable_woG=round(pvw, 2),
+                    time_end=round(float(info.get('time', 0)), 2),
                     n_transport=ntr, n_used_hosp=used, gini=round(gini(ep_arr), 3),
                     max_share=round(float(ep_arr.max() / max(ep_arr.sum(), 1)), 3),
                     mean_eta_rank=round(float(np.mean(eta_ranks)) if eta_ranks else 0, 2), n_uav=nuav, n_amb=namb))
