@@ -223,6 +223,8 @@ class ScenarioManager():
                 # 전개 결과는 구 복제방식 amb_info_road.csv 와 동일한 개별-ambulance 표현.
                 # (구 포맷: amb_num 키 없음 → 행이 곧 ambulance, 전개 생략.)
                 amb_num_cfg = cfg_amb.get('amb_num', None)
+                _amb_env = os.environ.get("MCI_AMB_NUM", "")   # 트레이드오프 실험용 런타임 오버라이드(AMB 대수)
+                if _amb_env.strip(): amb_num_cfg = int(_amb_env)
                 if amb_num_cfg is not None and len(amb_info) > 0 and '보유대수' in amb_info.columns:
                     counts = pd.to_numeric(amb_info['보유대수'], errors='coerce').fillna(1).astype(int).clip(lower=1)
                     amb_info = amb_info.loc[amb_info.index.repeat(counts.values)].reset_index(drop=True)
@@ -312,6 +314,8 @@ class ScenarioManager():
                 # 병원은 슬라이스 안 하므로 hospital_idx 재매핑 불필요. (구 포맷: uav_num 키
                 # 없음 → 행이 곧 UAV, 슬라이스 생략.)
                 uav_num_cfg = cfg_uav.get('uav_num', None)
+                _uav_env = os.environ.get("MCI_UAV_NUM", "")   # 트레이드오프 실험용 런타임 오버라이드(UAV 대수; 병원집합 불변)
+                if _uav_env.strip(): uav_num_cfg = int(_uav_env)
                 if uav_num_cfg is not None and len(uav_info) > 0:
                     target = int(uav_num_cfg)
                     if target > len(uav_info):
