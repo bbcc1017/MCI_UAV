@@ -6,7 +6,7 @@
   incident : MCI_INCIDENT_SIZE  사고규모(부하)        기본 100
   capa     : MCI_CAPA_SCALE      병원 용량 스케일       기본 1.0  (수술실수·병상수·max_send ×s)
   amb      : MCI_AMB_NUM         구급차 대수            기본 30
-  uav      : MCI_UAV_NUM         의료헬기 대수(≤헬기장수) 기본 25
+  uav      : MCI_UAV_NUM         UAV 대수(≤착륙 가능 병원수) 기본 25
 
 T=1e9 ≈ 휴리스틱(최근접). 부하균형은 'p_sent<T 최근접'(병원당 정원제).
 배경: docs/MCI_종합보고서_최종.md §3.5. 정책=loadbalance_heuristic.make_cap_policy.
