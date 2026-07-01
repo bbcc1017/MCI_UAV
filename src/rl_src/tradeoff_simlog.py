@@ -152,7 +152,18 @@ def main():
     ap.add_argument("--axes", default="incident:200,350,500 capa:0.5,0.3 amb:10,20 uav:5,15")
     ap.add_argument("--n_ep", type=int, default=1000)
     ap.add_argument("--workers", type=int, default=14)
+    # 시나리오축 오버라이드(Kakao 등; 기본=시도 OSRM). fork 로 워커 전파.
+    ap.add_argument("--model_base", default=""); ap.add_argument("--manifest", default="")
+    ap.add_argument("--tree_tag", default=""); ap.add_argument("--heur_occ", default=""); ap.add_argument("--heur_psent", default="")
+    ap.add_argument("--out", default="")
     A = ap.parse_args()
+    global OUT, MANIFEST, MODEL_BASE, TREE_TAG, HEUR
+    if A.model_base: MODEL_BASE = A.model_base
+    if A.manifest: MANIFEST = os.path.join(REPO, "scenarios/manifests", A.manifest) if not os.path.isabs(A.manifest) else A.manifest
+    if A.tree_tag: TREE_TAG = A.tree_tag
+    if A.heur_occ: HEUR = dict(HEUR); HEUR["occ"] = A.heur_occ
+    if A.heur_psent: HEUR = dict(HEUR); HEUR["site"] = A.heur_psent
+    if A.out: OUT = os.path.join(REPO, "results/viper", A.out) if not os.path.isabs(A.out) else A.out
     os.makedirs(OUT, exist_ok=True)
     ep_csv = os.path.join(OUT, "episodes.csv"); hl_csv = os.path.join(OUT, "hospital_loads.csv")
     done = set()
