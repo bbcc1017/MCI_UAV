@@ -80,14 +80,20 @@ def _count_hospitals(cfg):
 
 
 def worker(task):
-    sigcd, name, sido, rings, bbox, seed, pidx = task
+    sigcd, name, sido, rings, bbox, seed, pidx, fixed = task
     from cross_location_eval import gen_scenario_for_region
-    tr = Transformer.from_crs(5179, 4326, always_xy=True)
-    rng = np.random.default_rng(seed)
-    lat, lon = _sample(rings, bbox, rng, tr)
+    if fixed is not None:
+        # 좌표 고정 재생성 모드(--points_from): 재샘플 금지, 같은 좌표로만 재시도
+        lat, lon = fixed
+        max_attempts, resample = 3, False
+    else:
+        tr = Transformer.from_crs(5179, 4326, always_xy=True)
+        rng = np.random.default_rng(seed)
+        lat, lon = _sample(rings, bbox, rng, tr)
+        max_attempts, resample = 10, True
     short = f"{name}_{sigcd}"  # 같은 시군구 4점은 (lat,lon) 하위폴더로 분리
     last_err = None
-    for attempt in range(10):
+    for attempt in range(max_attempts):
         try:
             buf = io.StringIO()
             with redirect_stdout(buf):
@@ -102,10 +108,11 @@ def worker(task):
                         cfg=cfg, ok=True, attempts=attempt + 1)
         except Exception as e:
             last_err = str(e)[:160]
-            try:
-                lat, lon = _sample(rings, bbox, rng, tr)  # 재추출
-            except Exception as e2:
-                last_err = f"resample fail: {e2}"; break
+            if resample:
+                try:
+                    lat, lon = _sample(rings, bbox, rng, tr)  # 재추출
+                except Exception as e2:
+                    last_err = f"resample fail: {e2}"; break
     return dict(sigcd=sigcd, name=name, sido=sido, pidx=pidx, lat=lat, lon=lon,
                 cfg=None, ok=False, err=last_err)
 
@@ -117,26 +124,62 @@ def main():
     ap.add_argument("--points_per_sigungu", type=int, default=4,
                     help="시군구당 무작위 점 수(4=총1000). 단위균등·구역수비례 동시충족.")
     ap.add_argument("--limit", type=int, default=0, help="테스트용 시군구 N개만(0=전체250)")
+    ap.add_argument("--points_from", default=None,
+                    help="기존 eval_holdout_points.json 경로 — 좌표 고정 재생성(재샘플 없음). "
+                         "병원 풀 정정 등으로 시나리오만 다시 구울 때 사용.")
+    ap.add_argument("--skip_done", action="store_true",
+                    help="(points_from 전용) 최종 config 존재+병원수 일치 좌표 skip(재개)")
     args = ap.parse_args()
 
-    sf = shapefile.Reader(os.path.join(REPO, "scenarios", "sig.shp"), encoding="cp949")
-    fields = [f[0] for f in sf.fields[1:]]
-    ci_cd, ci_nm = fields.index("SIG_CD"), fields.index("SIG_KOR_NM")
-    sido_of = {r["sigcd"]: r["sido"] for r in
-               csv.DictReader(open(os.path.join(REPO, "results", "sigungu_by_sido.csv"), encoding="utf-8-sig"))}
+    if args.points_from:
+        # 좌표 고정 재생성: 키='<name>_<sigcd>_p<idx>', ok=True 항목만.
+        # --skip_done 이면 최종 config 존재+병원수 일치 좌표는 건너뜀(재개).
+        # 이 모드에서는 실행 말미 manifest 를 '이번 run 결과'가 아니라 skip 포함
+        # 전체 태스크의 디스크 상태로 재구성한다(부분 실패/재개 시 manifest 잘림 방지).
+        with open(args.points_from, encoding="utf-8") as f:
+            pts = json.load(f)
+        tasks, skipped = [], []
+        for key, v in pts.items():
+            if not v.get("ok"):
+                continue
+            stem, pstr = key.rsplit("_p", 1)
+            name, sigcd = stem.rsplit("_", 1)
+            t = (sigcd, name, v["sido"], None, None, 0, int(pstr),
+                 (v["lat"], v["lon"]))
+            if args.skip_done and v.get("cfg") and os.path.exists(v["cfg"]):
+                try:
+                    if _count_hospitals(v["cfg"]) == PARAMS["fixed_hos_num"]:
+                        skipped.append(dict(sigcd=sigcd, name=name, sido=v["sido"],
+                                            pidx=int(pstr), lat=v["lat"], lon=v["lon"],
+                                            cfg=v["cfg"], ok=True))
+                        continue
+                except Exception:
+                    pass
+            tasks.append(t)
+        if args.limit:
+            tasks = tasks[:args.limit]
+        print(f"[gen_eval] 좌표 고정 재생성 {len(tasks)}점 + skip {len(skipped)}점 "
+              f"(from {args.points_from}), workers={args.workers}, OSRM={OSRM_URL}", flush=True)
+    else:
+        skipped = []
+        sf = shapefile.Reader(os.path.join(REPO, "scenarios", "sig.shp"), encoding="cp949")
+        fields = [f[0] for f in sf.fields[1:]]
+        ci_cd, ci_nm = fields.index("SIG_CD"), fields.index("SIG_KOR_NM")
+        sido_of = {r["sigcd"]: r["sido"] for r in
+                   csv.DictReader(open(os.path.join(REPO, "results", "sigungu_by_sido.csv"), encoding="utf-8-sig"))}
 
-    recs = sf.shapeRecords()
-    if args.limit:
-        recs = recs[:args.limit]
-    tasks = []
-    for i, sr in enumerate(recs):
-        sigcd = str(sr.record[ci_cd]).strip(); name = str(sr.record[ci_nm]).strip()
-        sido = sido_of.get(sigcd, "미상")
-        rings, bbox = _rings(sr.shape), tuple(sr.shape.bbox)
-        for pidx in range(args.points_per_sigungu):
-            tasks.append((sigcd, name, sido, rings, bbox, args.seed + i * 1000 + pidx, pidx))
-    print(f"[gen_eval] 시군구 {len(recs)}개 × {args.points_per_sigungu}점 = {len(tasks)} 시나리오, "
-          f"workers={args.workers}, OSRM={OSRM_URL}", flush=True)
+        recs = sf.shapeRecords()
+        if args.limit:
+            recs = recs[:args.limit]
+        tasks = []
+        for i, sr in enumerate(recs):
+            sigcd = str(sr.record[ci_cd]).strip(); name = str(sr.record[ci_nm]).strip()
+            sido = sido_of.get(sigcd, "미상")
+            rings, bbox = _rings(sr.shape), tuple(sr.shape.bbox)
+            for pidx in range(args.points_per_sigungu):
+                tasks.append((sigcd, name, sido, rings, bbox, args.seed + i * 1000 + pidx, pidx, None))
+        print(f"[gen_eval] 시군구 {len(recs)}개 × {args.points_per_sigungu}점 = {len(tasks)} 시나리오, "
+              f"workers={args.workers}, OSRM={OSRM_URL}", flush=True)
 
     t0 = time.time(); results = []
     with Pool(args.workers) as pool:
@@ -147,6 +190,7 @@ def main():
                 print(f"  [{k}/{len(tasks)}] {res['name']}_{res['sigcd']} {tag} "
                       f"({time.time()-t0:.0f}s)", flush=True)
 
+    results.extend(skipped)  # 재개 모드: skip 좌표도 manifest/points 에 포함(잘림 방지)
     ok = [r for r in results if r["ok"]]
     key = lambda r: f"{r['name']}_{r['sigcd']}_p{r['pidx']}"
     # 매니페스트 A (전국)
@@ -167,8 +211,9 @@ def main():
         json.dump({key(r): {k: r[k] for k in ("name", "sido", "lat", "lon", "cfg", "ok")} for r in results},
                   f, ensure_ascii=False, indent=2)
 
-    print(f"\n[gen_eval] 완료: 성공 {len(ok)}/{len(tasks)}, 실패 {len(tasks)-len(ok)}, "
-          f"wall={time.time()-t0:.0f}s", flush=True)
+    n_total = len(tasks) + len(skipped)
+    print(f"\n[gen_eval] 완료: 성공 {len(ok)}/{n_total} (이번 run {len(tasks)}, skip {len(skipped)}), "
+          f"실패 {n_total-len(ok)}, wall={time.time()-t0:.0f}s", flush=True)
     print(f"  A(전국)={len(A)}, B 시도수={len(B)}", flush=True)
     fails = [r for r in results if not r["ok"]]
     if fails:
