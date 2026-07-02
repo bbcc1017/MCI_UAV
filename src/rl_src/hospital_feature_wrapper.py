@@ -183,17 +183,27 @@ class HospitalFeatureWrapper(gym.Wrapper):
         """병원당 특징 행렬 (H, F)."""
         h = np.asarray(obs['h_states'], dtype=np.float32)  # (H,3) = [idle, queue, occ]
         p_sent = np.asarray(obs['p_sent'], dtype=np.float32).reshape(-1)
-        # cap_remain 도 게이트 기준에 맞춤: occ(실시간 잔여) | psent(보낸 만큼 차감). 마스크와 동일 의미.
-        cap_used = h[:, 2] if os.environ.get("MCI_CAP_GATE", "occ").strip().lower() != "psent" else p_sent
+        # cap_remain 게이트 (2026-07-03 통신축 재정의, 마스크/RuleManager 와 동일 의미):
+        #   occ(통신)  = census(occ) + in_flight(이송중=도착 예상) 차감
+        #   psent(단절) = 보낸 만큼(p_sent) 차감 — 현장 지득 정보만
+        comms = os.environ.get("MCI_CAP_GATE", "occ").strip().lower() != "psent"
+        if comms:
+            from EntityManager import EntityManager
+            cap_used = h[:, 2] + EntityManager.in_flight_by_hospital(obs, self.H)
+        else:
+            cap_used = p_sent
         cap_remain = np.maximum(self._max_send - cap_used, 0.0)
+        # 통신단절(psent) 시 병원 실시간 컬럼(idle/queue/occ)은 지득 불가 → 0 마스킹
+        # (full/comms ablation 변형에서만 해당 열 존재; essential 은 cap_remain 만 노출)
+        z = np.zeros_like(h[:, 0])
         col_map = {
             "is_tier3": self._is_tier3,
             "helipad": self._helipad,
             "eta_amb": self._eta_amb,
             "eta_uav": self._eta_uav,
-            "idle": h[:, 0],
-            "queue": h[:, 1],
-            "occ": h[:, 2],
+            "idle": h[:, 0] if comms else z,
+            "queue": h[:, 1] if comms else z,
+            "occ": h[:, 2] if comms else z,
             "cap_remain": cap_remain,
         }
         return np.stack([col_map[c] for c in self._cols], axis=1).astype(np.float32)  # (H, F)
@@ -232,11 +242,12 @@ class HospitalFeatureWrapper(gym.Wrapper):
             pinfo = ep['patient']['patient_info']
             t3 = np.asarray(pinfo['treat_tier3']).astype(bool)
             t2 = np.asarray(pinfo['treat_tier2']).astype(bool)
-            ct = np.zeros((3, self.H), dtype=bool)
+            n_class = int(self._orig_nvec[0])  # 2 (R/Y — Green 은 action 차원서 제외)
+            ct = np.zeros((n_class, self.H), dtype=bool)
             for h in range(self.H):
                 ht = int(hos_tier[h])
                 col = t3 if ht == 3 else (t2 if ht == 2 else np.zeros(4, dtype=bool))
-                ct[:, h] = col[:3]
+                ct[:, h] = col[:n_class]
             self._ct_cache = ct
         return self._ct_cache
 
@@ -244,12 +255,10 @@ class HospitalFeatureWrapper(gym.Wrapper):
         full = self.env.unwrapped.action_masks_joint()
         full = full.reshape(self._orig_nvec[0], self._orig_nvec[1], self._orig_nvec[2]).copy()
         if os.environ.get("MCI_TIER_MASK", "1") != "0":
-            ct = self._can_treat_mask()           # (3, H) bool
+            ct = self._can_treat_mask()           # (2, H) bool
             full[:, 1:, :] &= ct[:, :, None]      # dest 1..H 만 차단, stay(0) 유지
-        # Green(class=2) 이송 차단 → 자동일괄(start_GB_transport)에 위임. R/Y 만 행동대상.
-        # (Black 은 행동공간(class dim=3)에 애초에 없음. stay(dest=0)는 유지해 합법행동 보장.)
-        if os.environ.get("MCI_GREEN_MASK", "1") != "0":
-            full[2, 1:, :] = False
+        # Green/Black 은 action 차원(class dim=2)에서 제외됨(2026-07-03) — 코어의
+        # start_GB_transport 일괄이송에 위임. 구 MCI_GREEN_MASK 마스킹은 폐기.
         if self._fixed_mode is not None:
             return full[:, :, self._fixed_mode].reshape(-1)
         return full.reshape(-1)

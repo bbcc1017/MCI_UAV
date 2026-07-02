@@ -44,6 +44,13 @@ def _parse_variant():
     return set(t for t in raw.replace(",", "+").split("+") if t)
 
 
+def _comms_available():
+    """통신 가용 여부 = MCI_CAP_GATE(occ=가용/psent=단절). 2026-07-03 통신축 재정의:
+    단절 시 원격 차량의 실시간 잔여시간(텔레메트리)은 지득 불가 → _fleet_agg 서 0 처리.
+    (가용수·운행수·수송 중증도는 현장에서 셀 수 있는 정보라 유지 — 출발은 현장이 시켰음.)"""
+    return os.environ.get("MCI_CAP_GATE", "occ").strip().lower() != "psent"
+
+
 def _cared_visible():
     """환자 '입원완료'(cared, 생애단계 4)를 obs 에서 보이게 둘지 — 통신 단절 실험 토글.
 
@@ -154,9 +161,13 @@ class AggregateObsWrapper(gym.ObservationWrapper):
         sev = states[:, 2].astype(np.float32)
         busy = tr > 1e-6
         n_busy = float(busy.sum())
-        min_t = float(tr[busy].min()) if n_busy > 0 else 0.0
-        mean_t = float(tr[busy].mean()) if n_busy > 0 else 0.0
-        n_crit = float(np.sum((sev == 1) | (sev == 2)))  # Red/Yellow 수송 중
+        if _comms_available():
+            min_t = float(tr[busy].min()) if n_busy > 0 else 0.0
+            mean_t = float(tr[busy].mean()) if n_busy > 0 else 0.0
+        else:
+            # 통신단절: 운행중 차량의 실시간 잔여시간은 원격 텔레메트리 → 지득 불가(0)
+            min_t = mean_t = 0.0
+        n_crit = float(np.sum((sev == 1) | (sev == 2)))  # Red/Yellow 수송 중(현장이 태움=지득)
         return np.array([float((~busy).sum()), n_busy, min_t, mean_t, n_crit],
                         dtype=np.float32)
 
@@ -191,6 +202,9 @@ class AggregateObsWrapper(gym.ObservationWrapper):
             self._fleet_agg(np.asarray(obs["uav_states"])),
         ])
         h = np.asarray(obs["h_states"], dtype=np.float32)
+        if not _comms_available():
+            # 통신단절: 병원 실시간 상태(idle/queue/occ)는 지득 불가 → 0 (차원 유지)
+            h = np.zeros_like(h)
         h_out = h if len(self._h_keep) == 3 else h[:, self._h_keep]
         pa = self._patient_agg(np.asarray(obs["p_states"]))
         if self._drop_black:  # Black 등급(class 3) 제거 → (3,5)

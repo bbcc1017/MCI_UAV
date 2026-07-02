@@ -74,3 +74,24 @@ class EntityManager():
         for v in self.en_status.values():
             full_obs |= v  # dict 병합 연산 (3.9 이상)
         return full_obs
+
+    @staticmethod
+    def in_flight_by_hospital(obs, hos_num):
+        """병원별 이송중(발송 후 미도착) 환자 수 — 통신가용(occ) 게이트의 '도착 예상' 신호.
+
+        amb/uav_states = (dest, time, severity): dest 1..H(1-based 병원행), severity>0
+        = 환자 탑승. 복귀 leg 는 dest=0/severity=0 으로 재설정되므로 자동 제외.
+        occ(입원 census, 수술완료 시 감소)에 아직 안 잡힌 예약 부하를 나타낸다.
+        (2026-07-03 통신축 재정의: occ 게이트 = n_occupied + in_flight < max_send)
+        """
+        inflight = np.zeros(hos_num, dtype=np.int32)
+        for key in ('amb_states', 'uav_states'):
+            st = obs.get(key)
+            if st is None or len(st) == 0:
+                continue
+            st = np.asarray(st)
+            carrying = (st[:, 0] >= 1) & (st[:, 2] > 0)
+            for d in st[carrying, 0].astype(int):
+                if 1 <= d <= hos_num:
+                    inflight[d - 1] += 1
+        return inflight

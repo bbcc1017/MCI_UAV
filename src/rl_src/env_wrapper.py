@@ -134,11 +134,12 @@ class FlattenAndDiscreteWrapper(gym.Wrapper):
             pinfo = ep['patient']['patient_info']
             t3 = np.asarray(pinfo['treat_tier3']).astype(bool)
             t2 = np.asarray(pinfo['treat_tier2']).astype(bool)
-            ct = np.zeros((3, self.H), dtype=bool)
+            n_class = int(self._orig_nvec[0])  # 2 (R/Y — Green 은 action 차원서 제외)
+            ct = np.zeros((n_class, self.H), dtype=bool)
             for h in range(self.H):
                 ht = int(hos_tier[h])
                 col = t3 if ht == 3 else (t2 if ht == 2 else np.zeros(4, dtype=bool))
-                ct[:, h] = col[:3]
+                ct[:, h] = col[:n_class]
             self._ct_cache = ct
         return self._ct_cache
 

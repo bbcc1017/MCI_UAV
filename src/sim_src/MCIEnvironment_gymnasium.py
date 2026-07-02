@@ -27,8 +27,11 @@ class MCIEnvironment_gym(gym.Env):
         - n_uav_at_site:   (1,) int32
         - time:            (1,) float32
 
-    action: MultiDiscrete([3, H+1, 2])
-        - [0] p_class: 0=Red, 1=Yellow, 2=Green
+    action: MultiDiscrete([2, H+1, 2])
+        - [0] p_class: 0=Red, 1=Yellow
+          (Green/Black 은 action 차원에서 제외 — 재난 대응 원칙상 R/Y 소진 후
+           sim 코어(EventManager.start_GB_transport)가 일괄 자동이송. 2026-07-03
+           기존 MCI_GREEN_MASK 마스킹을 차원 자체 제거로 대체.)
         - [1] destination: 0=stay, 1..H=hospital
         - [2] mode: 0=AMB, 1=UAV
     """
@@ -66,7 +69,7 @@ class MCIEnvironment_gym(gym.Env):
             "n_uav_at_site": spaces.Box(0, big, shape=(1,),                    dtype=np.int32),
             "time":          spaces.Box(0.0, np.inf, shape=(1,),               dtype=np.float32),
         })
-        self.action_space = spaces.MultiDiscrete([3, self.H + 1, 2])
+        self.action_space = spaces.MultiDiscrete([2, self.H + 1, 2])
 
         # gym 표준: 사용자가 첫 step 전에 reset()을 호출하도록 강제.
         # 생성자에서 시뮬을 자동 시작하면 main.py가 첫 reset을 무시하면서
@@ -226,9 +229,9 @@ class MCIEnvironment_gym(gym.Env):
         full = self.en_manager.get_full_obs()
         H = self.H
 
-        # dim 0: p_class
-        m_class = np.zeros(3, dtype=bool)
-        for c in range(3):
+        # dim 0: p_class (R/Y 만 — Green 은 action 차원에서 제외, 코어 일괄이송)
+        m_class = np.zeros(2, dtype=bool)
+        for c in range(2):
             m_class[c] = len(full['p_wait'][c][0]) > 0
 
         # dim 1: destination (0=stay 항상 허용, 1..H = 가용 모드 + 모드별 가능여부)
@@ -237,7 +240,12 @@ class MCIEnvironment_gym(gym.Env):
         any_amb = len(full['amb_wait'][0]) > 0
         any_uav = len(full['uav_wait'][0]) > 0
         if any_amb or any_uav:
-            cap_used_arr = full['h_states'][:, -1] if _cap_gate_is_occ() else full['p_sent']
+            # occ(통신)=입원 census+이송중 in-flight(도착 예상) / psent(단절)=누적 발송
+            if _cap_gate_is_occ():
+                cap_used_arr = (full['h_states'][:, -1]
+                                + self.en_manager.in_flight_by_hospital(full, H))
+            else:
+                cap_used_arr = full['p_sent']
             for h in range(H):
                 # 보낼 곳 capa 여유 있으면 허용 (occ 기본 / psent 토글)
                 max_send = self.en_manager.en_properties['hospital']['hos_max_send'][h]
@@ -261,7 +269,7 @@ class MCIEnvironment_gym(gym.Env):
 
     def action_masks_joint(self):
         """
-        Discrete(3*(H+1)*2) 형식의 결합 mask. env_wrapper.SB3DiscreteWrapper 가 사용.
+        Discrete(2*(H+1)*2) 형식의 결합 mask. env_wrapper.SB3DiscreteWrapper 가 사용.
         - stay (dest=0)는 항상 허용
         - dest!=0 은 (해당 class 환자 존재) AND (해당 mode 자원 존재) AND (해당 병원 capa 여유)
         - mode=1 (UAV) 은 helipad 보유 병원에만 허용 (도메인 기본 제약)
@@ -272,15 +280,21 @@ class MCIEnvironment_gym(gym.Env):
         any_uav = len(full['uav_wait'][0]) > 0
         hos_props = self.en_manager.en_properties['hospital']
         max_send = hos_props['hos_max_send']
-        # 용량 게이트: occ(실시간 점유, 기본) | psent(누적 발송, 현장중심). _cap_gate_is_occ 참고.
-        cap_used = full['h_states'][:, -1] if _cap_gate_is_occ() else full['p_sent']
+        # 용량 게이트 (2026-07-03 통신축 재정의): occ(통신 가용)=입원 census+이송중
+        # in-flight(도착 예상, 수술완료 시 census 감소=완료 확인) | psent(통신 단절)=
+        # 현장이 보낸 누적 발송. _cap_gate_is_occ/RuleManager:253 과 동일 정의(쌍비교 불변식).
+        if _cap_gate_is_occ():
+            cap_used = (full['h_states'][:, -1]
+                        + self.en_manager.in_flight_by_hospital(full, H))
+        else:
+            cap_used = full['p_sent']
 
         # UAV → helipad 보유 병원만. helipad_idx 가 비어있으면 UAV는 어떤 병원도 못 감.
         helipad_idx = np.asarray(hos_props.get('hos_helipad_idx', np.array([]))).reshape(-1)
         helipad_set = {int(i) for i in helipad_idx.tolist()}
 
-        mask = np.zeros((3, H + 1, 2), dtype=bool)
-        for c in range(3):
+        mask = np.zeros((2, H + 1, 2), dtype=bool)
+        for c in range(2):
             class_avail = len(full['p_wait'][c][0]) > 0
             for m, mode_avail in enumerate([any_amb, any_uav]):
                 # stay 는 항상 허용

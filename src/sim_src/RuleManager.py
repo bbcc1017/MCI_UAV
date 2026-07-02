@@ -1,11 +1,15 @@
 import os
 import numpy as np
 
+from EntityManager import EntityManager
+
 
 def _cap_gate_is_occ():
-    """발송(현장→병원) 용량 게이트 신호 선택. occ(기본)=병원 실시간 점유를 통신으로 앎,
-    psent=현장이 보낸 누적 수만 앎(통신 단절·보수적). MCI_CAP_GATE 로 토글하며
-    RL(MCIEnvironment_gymnasium._cap_gate_is_occ)·휴리스틱(여기)이 같은 env 변수를 공유한다.
+    """발송(현장→병원) 용량 게이트 신호 선택 (2026-07-03 통신축 재정의).
+    occ(기본)=통신 가용: 병원 입원 census(수술완료 시 감소=완료 확인) + 이송중
+    in-flight(도착 예상)를 앎. psent=통신 단절: 현장이 보낸 누적(p_sent)만 앎.
+    MCI_CAP_GATE 로 토글하며 RL(MCIEnvironment_gymnasium._cap_gate_is_occ)·
+    휴리스틱(여기)·obs(hospital_feature_wrapper cap_remain)가 같은 env 변수를 공유한다.
     ⚠️ 이건 '발송 결정' 게이트일 뿐 — 병원의 실제 입원/diversion 은 sim 이 항상 occ
     (n_occupied<max_capa, 퇴원 시 occ-=1, 꽉 차면 diversion)로 처리한다(불변)."""
     return os.environ.get("MCI_CAP_GATE", "occ").strip().lower() != "psent"
@@ -250,8 +254,15 @@ class Universal_Rule(Rule):
                 else: print("Error in Transition", action, self.obs)
         # 2. Hospital selection
         if not isSTAY:
-            # 발송 게이트 신호: occ(실시간 점유, 기본) | psent(누적 발송). MCI_CAP_GATE 로 토글.
-            cap_used = self.obs['h_states'][:, -1] if _cap_gate_is_occ() else self.obs['p_sent']
+            # 발송 게이트 신호 (2026-07-03 통신축 재정의):
+            #   occ(통신 가용)  = n_occupied(입원 census, 수술완료 시 감소=완료 정보)
+            #                    + in_flight(그 병원으로 이송중=도착 예상 정보)
+            #   psent(통신 단절) = p_sent(현장이 보낸 누적) — 현장 지득 정보만
+            if _cap_gate_is_occ():
+                cap_used = (self.obs['h_states'][:, -1]
+                            + EntityManager.in_flight_by_hospital(self.obs, self.hos_num))
+            else:
+                cap_used = self.obs['p_sent']
             if self.hos_select == "RedOnly":
                 if action[0] == 0: # Red selected
                     for i in self.tier3_idx:
