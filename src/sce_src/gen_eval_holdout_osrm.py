@@ -3,8 +3,9 @@
 학습 좌표(시군구 representative_point)와 분리된 **새 좌표**에서 모델 일반화를 평가하기 위함.
 - 샘플링: sig.shp 250 시군구 각각 폴리곤 내부 **무작위 점 1개**(단위균등 stratified).
   → 전체 250점 = (A)전국 평가셋, 시도별 부분집합(=구역수비례) = (B)시도 평가셋. 동일좌표라 A vs B 직접비교 가능.
-- 파라미터는 학습(시군구 OSRM)과 **완전 일치**: incident100/amb30/uav_count25/**uav_num25**/
-  **fixed_hos_num46**/vel50·200/handover5·10/total1000, OSRM(is_use_time=False). 좌표만 새것.
+- 파라미터는 학습(시군구 OSRM)과 **완전 일치**: incident100/amb30/uav_count26/**uav_num26**/
+  **fixed_hos_num47**/vel50·200/handover5·10/total1000, OSRM(is_use_time=False). 좌표만 새것.
+  (2026-07-02 성남시의료원 헬기장 정정: 자원 추가 원칙으로 46→47병원·헬기장 26 보장.)
 - 실패(OSRM 경로 실패·병원수≠46) 시 같은 시군구 폴리곤서 재추출 재시도.
 - 출력: scenarios/exp_eval_holdout/osrm_<name>_<sigcd>/(lat,lon)/config_*.yaml (학습과 분리)
         + 매니페스트 A: scenarios/manifests/eval_holdout_A_manifest.json (250)
@@ -30,9 +31,9 @@ import numpy as np
 
 OSRM_URL = os.environ.get("MCI_OSRM_URL", "http://127.0.0.1:5000")
 EXP_PREFIX = "eval_holdout/osrm"
-PARAMS = dict(incident_size=100, amb_count=30, uav_count=25, amb_velocity=50,
+PARAMS = dict(incident_size=100, amb_count=30, uav_count=26, amb_velocity=50,
               uav_velocity=200, amb_handover_time=5.0, uav_handover_time=10.0,
-              total_samples=1000, fixed_hos_num=46, uav_num=25)
+              total_samples=1000, fixed_hos_num=47, uav_num=26)
 
 
 def _rings(shape):

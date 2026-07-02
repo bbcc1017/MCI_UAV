@@ -19,7 +19,7 @@ import numpy as np
 REPO=os.path.abspath(os.path.join(os.path.dirname(__file__),os.pardir,os.pardir))
 MANIFEST=os.path.join(REPO,"scenarios/manifests/sigungu_osrm_manifest.json")
 REGIONS=sorted(json.load(open(MANIFEST)).keys())          # 종로구_11110 등 250
-SEED=11000; H=46; ND=H+1; NM=2
+SEED=11000; H=47; ND=H+1; NM=2  # 2026-07-02 성남 정정: H 46→47
 OUT=os.path.join(REPO,"results/viper/simlog_sigungu")
 NAT="results/rl/sigungu_nat"                              # 전국 단일정책 (지역무관)
 # 휴리스틱 best CSV (gate별). Kakao 등 다른 시나리오축은 main()에서 --manifest/--out/--heur* 로 오버라이드.

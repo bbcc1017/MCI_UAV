@@ -13,7 +13,7 @@ make_cap_policy(rule_name, T): 정책 인터페이스 fn(ro, mask, env)->action.
 import numpy as np
 from distill_policy import make_heuristic_policy, parse_rule, make_codec
 
-H_DEFAULT = 46
+H_DEFAULT = 47  # 2026-07-02 성남 헬기장 정정: 46→47
 
 
 def make_cap_policy(rule_name, T, H=H_DEFAULT):

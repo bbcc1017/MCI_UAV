@@ -1,15 +1,18 @@
 # -*- coding: utf-8 -*-
 """Kakao 시나리오 외과 패치 — 성남시의료원 헬기장 정정(0→1) 반영 (2026-07-02).
 
-병원 풀 정정으로 전 좌표의 병원집합이 바뀌지만(헬기장 25→26곳 → 최근접 25 선택),
-Kakao 전량 재생성은 quota 부담이 크다. 대신 **구 백업 시나리오의 도로 결과를
+병원 풀 정정을 **자원 추가 원칙**으로 반영: fixed_hos_num 46→47·헬기장 보장 26
+(기존 46곳 집합 보존 + 성남시의료원 추가, 신규 47집합 ⊇ 구 46집합).
+Kakao 전량 재생성은 quota 부담이 크다. 대신 **백업/현행 시나리오의 도로 결과를
 캐시로 서빙하며 정식 생성 코드경로를 그대로 재실행**한다:
 
 - CachedKakaoGenerator 가 get_road_distance_kakao 를 캐시 우선으로 오버라이드.
-  캐시 = 구 routes/{center2site,hos2site}/*.json(payload 보존·이름 키)
-       + 구 hospital_info/amb_station_info CSV(정밀 거리값 오버레이).
+  캐시 = {백업(kakao_pre20260702) + 현행 live 디렉터리}의 routes/*.json(payload
+  보존·이름 키) + hospital_info/amb_station_info CSV(정밀 거리값 오버레이).
+  (현행 live 에 이전 패치가 받아둔 성남시의료원 경로가 있으면 재호출 없이 재사용.)
 - 안전센터 후보·유지 병원 = 구본과 동일 → 전부 캐시 히트(호출 0회).
-  **신규 진입 병원(대부분 성남시의료원 1곳)만 실제 Kakao 호출**(좌표당 ~1회).
+  **캐시에 없는 신규 진입 병원만 실제 Kakao 호출**(departure_time=202607301400 로
+  기존 호출과 동일).
 - 스냅/OSRM폴백 이력 레그도 이름 키로 히트(구 결과값 그대로) → 재실패 안 함.
 - 출력물(hospital_info/uav_info/H2H/routes/config)은 생성기가 정식 재작성
   → 인덱스 재정렬·포맷 일치 자동 보장. OSRM 세트와 병원집합 동일(선정은 API 무관).
@@ -46,49 +49,60 @@ from gen_sigungu_kakao import load_keys, is_quota_error, postprocess_rename, _no
 
 OSRM_URL = os.environ.get("MCI_OSRM_URL", "http://127.0.0.1:5000")
 DEP = "202607301400"  # 두 Kakao 세트 공통 departure_time (구 config 실측)
-PARAMS = dict(incident_size=100, amb_count=30, uav_count=25, amb_velocity=50,
+PARAMS = dict(incident_size=100, amb_count=30, uav_count=26, amb_velocity=50,
               uav_velocity=200, amb_handover_time=5.0, uav_handover_time=10.0,
-              total_samples=1000, random_seed=0, uav_num=25)
-FIXED_HOS_NUM = 46
+              total_samples=1000, random_seed=0, uav_num=26)
+FIXED_HOS_NUM = 47
 STATE_PATH = os.path.join(REPO, "experiment_logs", "patch_helipad_kakao_state.json")
 
 
 # ---------------------------------------------------------------- 캐시
 class RouteCache:
-    """구 좌표 디렉터리의 도로 결과를 (route_type, name) 키로 서빙.
+    """좌표 디렉터리(들)의 도로 결과를 (route_type, name) 키로 서빙.
 
-    값 우선순위: 구 CSV 정밀값(road_dist/duration) > routes json meta(반올림값).
+    dirs 는 우선순위 순(앞이 우선) — 보통 [백업(원본), 현행 live]. 이름이 이미
+    캐시에 있으면 뒤 디렉터리는 건너뛴다(원본 값 우선, live 는 신규분 보충).
+    값 우선순위: CSV 정밀값(road_dist/duration) > routes json meta(반올림값).
     payload(카카오/OSRM 원응답)는 json에서 보존해 신규 routes 재저장에 사용.
     """
 
-    def __init__(self, old_coord_dir):
+    def __init__(self, dirs):
+        if isinstance(dirs, str):
+            dirs = [dirs]
         self.entries = {"center2site": {}, "hos2site": {}}
+        self.exact = {"center2site": {}, "hos2site": {}}
         self.hits = 0
+        for d in dirs:
+            self._load_dir(d)
+
+    def _load_dir(self, coord_dir):
+        if not coord_dir or not os.path.isdir(coord_dir):
+            return
         for rt in ("center2site", "hos2site"):
-            for fp in glob.glob(os.path.join(old_coord_dir, "routes", rt, "*.json")):
+            for fp in glob.glob(os.path.join(coord_dir, "routes", rt, "*.json")):
                 try:
                     with open(fp, encoding="utf-8") as f:
                         j = json.load(f)
                     name = str(j["meta"].get("name"))
-                    self.entries[rt].setdefault(name, []).append(j)
+                    if name not in self.entries[rt]:
+                        self.entries[rt].setdefault(name, []).append(j)
                 except Exception:
                     continue
-        # CSV 정밀값 오버레이 (이름 → (dist_km, dur_min))
-        self.exact = {"center2site": {}, "hos2site": {}}
-        hp = os.path.join(old_coord_dir, "hospital_info.csv")
+        # CSV 정밀값 오버레이 (이름 → (dist_km, dur_min)) — 앞 디렉터리 우선
+        hp = os.path.join(coord_dir, "hospital_info.csv")
         if os.path.exists(hp):
             df = pd.read_csv(hp, encoding="utf-8-sig")
             for _, r in df.iterrows():
-                self.exact["hos2site"][str(r["요양기관명"])] = (
-                    float(r["road_dist"]), float(r["road_duration"]))
-        ap = os.path.join(old_coord_dir, "amb_station_info.csv")
+                self.exact["hos2site"].setdefault(str(r["요양기관명"]), (
+                    float(r["road_dist"]), float(r["road_duration"])))
+        ap = os.path.join(coord_dir, "amb_station_info.csv")
         if os.path.exists(ap):
             df = pd.read_csv(ap, encoding="utf-8-sig")
             names = df["안전센터/소방서이름"].astype(str)
             if names.is_unique:  # 동명 센터가 있으면 오버레이 생략(json 값 사용)
                 for _, r in df.iterrows():
-                    self.exact["center2site"][str(r["안전센터/소방서이름"])] = (
-                        float(r["init_distance"]), float(r["duration"]))
+                    self.exact["center2site"].setdefault(str(r["안전센터/소방서이름"]), (
+                        float(r["init_distance"]), float(r["duration"])))
 
     def lookup(self, route_type, name):
         """(dist_km, dur_min, old_json|None) 또는 None."""
@@ -207,7 +221,8 @@ def patch_one(job, api_key):
     set_name, key, exp_id, lat, lon, old_dir, final_cfg, pp_name = job
     if not os.path.isdir(old_dir):
         return dict(key=key, ok=False, err=f"백업 없음: {old_dir}")
-    cache = RouteCache(old_dir)
+    # 캐시 원천: 백업(원본, 우선) + 현행 live(이전 패치가 받아둔 성남 경로 재사용)
+    cache = RouteCache([old_dir, os.path.dirname(final_cfg)])
     gen = CachedKakaoGenerator(
         base_path=REPO, experiment_id=exp_id, kakao_api_key=api_key,
         departure_time=DEP, osrm_url=OSRM_URL, is_use_time=True,
@@ -221,13 +236,15 @@ def patch_one(job, api_key):
             cfg = postprocess_rename(REPO, pp_name, DEP, lat, lon, None)
     n_hos, n_heli, n_uav, has_sn, sn_uav = check_outputs(cfg)
     entrants, leavers = diff_sets(old_dir, cfg)
+    # 자원 추가 원칙: 신규 47집합 ⊇ 구 46집합 (기존 병원 퇴출 금지)
     ok = (n_hos == FIXED_HOS_NUM and n_heli == PARAMS["uav_num"]
           and n_uav == PARAMS["uav_num"] and has_sn and sn_uav
+          and not leavers
           and os.path.abspath(cfg) == os.path.abspath(final_cfg))
     return dict(key=key, ok=ok, cfg=cfg, cache_hits=cache.hits,
                 real_calls=gen.real_calls, entrants=entrants, leavers=leavers,
                 err=None if ok else f"검증실패 hos{n_hos}/heli{n_heli}/uav{n_uav}/"
-                                    f"성남{has_sn}/{sn_uav}/경로{cfg}")
+                                    f"성남{has_sn}/{sn_uav}/퇴출{leavers}/경로{cfg}")
 
 
 def _pool_worker(arg):

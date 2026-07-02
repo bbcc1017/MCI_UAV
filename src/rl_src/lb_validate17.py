@@ -8,7 +8,7 @@ sys.path.insert(0,"src/rl_src")
 from multiprocessing import Pool
 import numpy as np
 REGIONS="서울 부산 대구 인천 광주 대전 울산 세종 경기 강원 충북 충남 전북 전남 경북 경남 제주".split()
-H=46; SEED=11000
+H=47; SEED=11000  # 2026-07-02 성남 정정: H 46→47
 
 def setgate(g):
     os.environ.update(MCI_OBS_VARIANT="essential",MCI_GREEN_MASK="1",MCI_REWARD_MODE="woG")

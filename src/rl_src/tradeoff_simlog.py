@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from multiprocessing import Pool
 import numpy as np
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
-SEED = 11000; H = 46; ND = H + 1; NM = 2
+SEED = 11000; H = 47; ND = H + 1; NM = 2  # 2026-07-02 성남 정정: H 46→47
 OUT = os.path.join(REPO, "results/viper/simlog_tradeoff")
 MANIFEST = os.path.join(REPO, "scenarios/manifests/sido_osrm_manifest.json")
 MODEL_BASE = "results/rl/sido"; TREE_TAG = "B시도"

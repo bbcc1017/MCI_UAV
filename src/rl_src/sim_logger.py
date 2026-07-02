@@ -17,7 +17,7 @@ from multiprocessing import Pool
 import numpy as np
 REPO=os.path.abspath(os.path.join(os.path.dirname(__file__),os.pardir,os.pardir))
 REGIONS="서울 부산 대구 인천 광주 대전 울산 세종 경기 강원 충북 충남 전북 전남 경북 경남 제주".split()
-SEED=11000; H=46; ND=H+1; NM=2
+SEED=11000; H=47; ND=H+1; NM=2  # 2026-07-02 성남 정정: H 46→47
 OUT=os.path.join(REPO,"results/viper/simlog")
 # 시나리오축 오버라이드(Kakao 등). main()에서 인자로 교체, fork 로 워커에 전파. 기본=시도 OSRM.
 MODEL_BASE="results/rl/sido"; CFG_MANIFEST="scenarios/manifests/sido_osrm_manifest.json"; TREE_TAG="B시도"

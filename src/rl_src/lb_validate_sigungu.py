@@ -9,7 +9,7 @@ from multiprocessing import Pool
 import numpy as np
 MANIFEST="scenarios/manifests/sigungu_osrm_manifest.json"
 REGIONS=sorted(json.load(open(MANIFEST)).keys())
-H=46; SEED=11000
+H=47; SEED=11000  # 2026-07-02 성남 정정: H 46→47
 EP_CSV="results/viper/simlog_sigungu/episodes.csv"
 
 def setgate(g):

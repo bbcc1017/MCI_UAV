@@ -2,14 +2,14 @@
 """시군구 250 OSRM 시나리오 재생성 (좌표 고정, 헬기장 정정 대응).
 
 2026-07-02 병원 풀(엑셀 결합 데이터.xlsx) 성남시의료원 헬기장여부 0→1 정정으로
-헬기장 병원이 25→26곳이 되어, uav_num=25 보장 로직이 "전부 강제 포함"에서
-"최근접 25곳 선택"으로 바뀜 → 전 좌표의 병원집합·인덱스·거리행렬·uav_info 변경.
-기존 시나리오(osrm_pre20260702 백업)와 **동일 좌표·동일 파라미터**로 전량 재생성한다.
+헬기장 병원이 25→26곳. **자원 추가 원칙**(기존 병원 삭제 금지): fixed_hos_num 46→47,
+헬기장 보장 uav_num 25→26 으로 올려 기존 46곳 집합을 그대로 보존하고 성남시의료원을
+추가한다(신규 47집합 ⊇ 구 46집합). 기존 좌표(osrm_pre20260702 백업과 동일)로 전량 재생성.
 
 - 좌표·키: scenarios/manifests/sigungu_osrm_manifest.json 재사용(경로 불변 → manifest 무수정).
-- 파라미터: 기존과 동일(incident100/amb30/uav_count25/uav_num25/fixed_hos46/
-  vel50·200/handover5·10/total1000/seed0, is_use_time=False).
-- 검증: 병원 46행·헬기장 25행·uav_info 25행, 성남시의료원 포함 여부 리포트.
+- 파라미터: incident100/amb30/**uav_count26/uav_num26/fixed_hos47**/
+  vel50·200/handover5·10/total1000/seed0, is_use_time=False.
+- 검증: 병원 47행·헬기장 26행·uav_info 26행, 성남시의료원 포함 여부 리포트.
 - 로컬 OSRM(MCI_OSRM_URL, 기본 127.0.0.1:5000) 필요. 재개 가능(--skip_done).
 
 예: PYTHONIOENCODING=utf-8 python src/sce_src/regen_sigungu_osrm.py --workers 32
@@ -32,10 +32,10 @@ for d in (THIS_DIR, os.path.join(REPO, "src", "rl_src")):
         sys.path.insert(0, d)
 
 OSRM_URL = os.environ.get("MCI_OSRM_URL", "http://127.0.0.1:5000")
-PARAMS = dict(incident_size=100, amb_count=30, uav_count=25, amb_velocity=50,
+PARAMS = dict(incident_size=100, amb_count=30, uav_count=26, amb_velocity=50,
               uav_velocity=200, amb_handover_time=5.0, uav_handover_time=10.0,
-              total_samples=1000, random_seed=0, uav_num=25)
-FIXED_HOS_NUM = 46
+              total_samples=1000, random_seed=0, uav_num=26)
+FIXED_HOS_NUM = 47
 
 
 def parse_manifest(path):
