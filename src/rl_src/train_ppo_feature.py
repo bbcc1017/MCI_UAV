@@ -153,8 +153,16 @@ def parse_args():
     p.add_argument("--ent_coef", type=float, default=0.01)
     p.add_argument("--checkpoint_freq", type=int, default=20_000)
     p.add_argument("--vec", choices=["dummy", "subproc"], default="dummy")
-    p.add_argument("--extractor", choices=["mlp", "deepsets"], default="mlp",
-                   help="mlp(기본): 평탄 obs+MlpPolicy / deepsets: 순열불변 인코더(3c, hospital_set_extractor)")
+    p.add_argument("--extractor", choices=["mlp", "deepsets", "pointer"], default="mlp",
+                   help="mlp(기본): 평탄 obs+MlpPolicy / deepsets: 순열불변 인코더(3c) / "
+                        "pointer: per-hospital 스코어링 head(pointer_policy, 랭킹 구조)")
+    # ---- PPO 위생(플랜 v2 L1, 근거: docs/RL_재설계_설계노트_2026-07-04.md) ----
+    p.add_argument("--lr_anneal", action="store_true", default=False,
+                   help="learning_rate 를 진행률에 따라 →0 linear anneal(기본 off=고정 lr).")
+    p.add_argument("--target_kl", type=float, default=None,
+                   help="epoch 조기중단 KL 상한(권장 0.03). 미지정=SB3 기본(무제동).")
+    p.add_argument("--n_epochs", type=int, default=None,
+                   help="롤아웃 재사용 epoch 수(권장 4~6). 미지정=SB3 기본(10).")
     p.add_argument("--reward_mode", choices=["raw", "woG", "pdrwog", "rywt"], default="woG",
                    help="보상 변환(RewardRedesignWrapper). 기본 woG(Green 제외). "
                         "pdrwog=r_woG/preventable_woG(0~1 규모불변, --norm_reward 병용 권장).")
@@ -173,15 +181,18 @@ def main():
     # RewardRedesignWrapper 는 MCI_REWARD_MODE 를 읽음 — CLI 값으로 강제(Subproc 자식에도 전파).
     os.environ["MCI_REWARD_MODE"] = args.reward_mode
     print(f"[feature] MCI_OBS_VARIANT={os.environ.get('MCI_OBS_VARIANT','(essential)')} "
-          f"reward={args.reward_mode} norm_reward={args.norm_reward} extractor={args.extractor}")
+          f"reward={args.reward_mode} norm_reward={args.norm_reward} extractor={args.extractor} "
+          f"lr_anneal={args.lr_anneal} target_kl={args.target_kl} n_epochs={args.n_epochs}")
 
     env_fns = [make_env_fn(args.config_path, seed=args.seed + i) for i in range(args.n_envs)]
     vec_cls = SubprocVecEnv if args.vec == "subproc" else DummyVecEnv
     venv = vec_cls(env_fns)
 
-    # deepsets 추출기 클래스는 (신규 정책생성 / resume 시 역직렬화) 양쪽에 import 되어 있어야 함.
+    # 추출기/정책 클래스는 (신규 정책생성 / resume 시 역직렬화) 양쪽에 import 되어 있어야 함.
     if args.extractor == "deepsets":
         from hospital_set_extractor import HospitalSetExtractor  # noqa: F401
+    elif args.extractor == "pointer":
+        from pointer_policy import HospitalTokenExtractor, PointerMaskablePolicy  # noqa: F401
 
     if args.resume_from:
         # ---- 이어학습: vecnorm 통계 + 정책/옵티마이저/num_timesteps 복원 ----
@@ -201,6 +212,7 @@ def main():
         # obs 정규화 필수(ETA·cap_remain 스케일) / reward 정규화는 옵션. eval·VIPER 는 통계 동결 로드.
         venv = VecNormalize(venv, norm_obs=True, norm_reward=args.norm_reward, clip_obs=10.0)
 
+        policy_cls = "MlpPolicy"
         policy_kwargs = dict(net_arch=[256, 256])
         if args.extractor == "deepsets":
             H, F, gdim = _entity_dims(args.config_path, args.seed)
@@ -210,10 +222,26 @@ def main():
                 net_arch=[256, 256],
             )
             print(f"[feature] deepsets 추출기: H={H} F={F} global={gdim}")
+        elif args.extractor == "pointer":
+            H, F, gdim = _entity_dims(args.config_path, args.seed)
+            policy_cls = PointerMaskablePolicy  # net_arch 는 정책이 강제(pi=[], vf=[256,256])
+            policy_kwargs = dict(
+                features_extractor_class=HospitalTokenExtractor,
+                features_extractor_kwargs=dict(n_hospitals=H, entity_f=F, global_dim=gdim),
+            )
+            print(f"[feature] pointer 추출기+head: H={H} F={F} global={gdim}")
+
+        # PPO 위생: lr anneal(진행률 p: 1→0 에 선형) / target_kl / n_epochs (미지정=SB3 기본)
+        lr = (lambda p: args.learning_rate * p) if args.lr_anneal else args.learning_rate
+        hygiene = {}
+        if args.target_kl is not None:
+            hygiene["target_kl"] = args.target_kl
+        if args.n_epochs is not None:
+            hygiene["n_epochs"] = args.n_epochs
 
         model = MaskablePPO(
-            "MlpPolicy", venv,
-            learning_rate=args.learning_rate,
+            policy_cls, venv,
+            learning_rate=lr,
             n_steps=args.n_steps,
             batch_size=args.batch_size,
             ent_coef=args.ent_coef,
@@ -221,6 +249,7 @@ def main():
             verbose=1,
             seed=args.seed,
             tensorboard_log=os.path.join(args.log_dir, "tb"),
+            **hygiene,
         )
 
     ckpt_cb = CheckpointCallback(

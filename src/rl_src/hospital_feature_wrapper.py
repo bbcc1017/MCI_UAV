@@ -45,11 +45,23 @@ from aggregate_obs import AggregateObsWrapper  # _patient_agg / _fleet_agg 재�
 _ESSENTIAL_COLS = ["is_tier3", "cap_remain", "eta_amb", "eta_uav"]
 _LOCAL_COLS = ["is_tier3", "helipad", "eta_amb", "eta_uav"]   # 정적 사전지식 (ablation)
 _COMMS_COLS = ["idle", "queue", "occ", "cap_remain"]          # 실시간 동적 (ablation)
+# essential+load (플랜 v2 L2, 2026-07-04): "LB 가 쓰는 신호를 RL 에게" — 승리한 발송상한
+# 규칙의 결정 신호(p_sent 0~수십 스케일)와 in-flight·부하비를 결정 스케일 그대로 노출.
+#   p_sent_c  = min(p_sent, MCI_PSENT_CLIP=32)           내가 보낸 누적(현장 지득 — psent 게이트에도 유지)
+#   in_flight = 그 병원행 이송중 차량 수(출발은 현장이 시킴 = 지득)
+#   occ_ratio = clip((census+in_flight)/max_send, 0, MCI_OCC_RATIO_CLIP=4)  실시간 부하비(통신 필요)
+# + cap_remain 을 클립본(min(·, MCI_CAPREMAIN_CLIP=32))으로 교체 — max_send(≈670) 앵커로
+#   VecNorm 분산이 압살되던 스케일 결함 해소(신규 학습 전용, 구 모델 비호환).
+_LOAD_COLS = ["p_sent_c", "in_flight", "occ_ratio"]
 # 글로벌: patient_agg(R/Y 2등급×5단계=10) + vehicle_agg(10) + time(1).
 #   p_at_site·n_amb_at_site·n_uav_at_site 는 각각 patient_agg stage1·vehicle_agg n_avail 의
 #   정확한 부분집합이라 제거(0손실). Green/Black 은 행동대상 아님(자동일괄 start_GB_transport)이라
 #   patient_agg 에서 제거 — R/Y 만 유지.
 _GLOBAL_DIM = 10 + 10 + 1
+# load 글로벌 확장(+5): ρ(잔여 긴급부하/잔여 유효용량, 클립 MCI_RHO_CLIP=8) — 적응 T=f(ρ) 의
+# 표현 근거 / 가용 AMB·UAV 비율 / uav_frac(=uav_num/MCI_UAV_MAX=26, UAV 대수축 신호) /
+# t_norm(=min(time/MCI_TIME_NORM=240, 2)).
+_LOAD_GLOBAL_EXTRA = 5
 
 
 def _parse_variant():
@@ -124,8 +136,9 @@ class HospitalFeatureWrapper(gym.Wrapper):
         self._eta_amb = np.minimum(self._norm_by_min(eta_amb), eta_clip).astype(np.float32)
         self._eta_uav = np.minimum(self._norm_by_min(eta_uav), eta_clip).astype(np.float32)
 
-        # ---------- 3) MCI_OBS_VARIANT → 특징 열 선택 (local/comms/full) ----------
+        # ---------- 3) MCI_OBS_VARIANT → 특징 열 선택 (local/comms/full/essential[+load]) ----------
         toks = _parse_variant()
+        self._load = "load" in toks
         if "full" in toks:
             self._cols = _LOCAL_COLS + _COMMS_COLS
             var_label = "full(ablation)"
@@ -135,20 +148,36 @@ class HospitalFeatureWrapper(gym.Wrapper):
         elif "comms" in toks and "local" not in toks:
             self._cols = list(_COMMS_COLS)
             var_label = "comms(ablation)"
-        else:  # 기본 = essential (essential 토큰 또는 미설정)
+        else:  # 기본 = essential (essential 토큰 또는 미설정) [+load 확장]
             self._cols = list(_ESSENTIAL_COLS)
             var_label = "essential"
+        if self._load:
+            if var_label != "essential":
+                raise ValueError(f"load 토큰은 essential 기반만 지원 (got MCI_OBS_VARIANT={toks})")
+            # cap_remain → 클립본 교체 + 부하 신호 3열 추가 (F 4→7)
+            self._cols = ["is_tier3", "cap_remain_c", "eta_amb", "eta_uav"] + list(_LOAD_COLS)
+            var_label = "essential+load"
         self._F = len(self._cols)
+        # load 스케일 노브(전 신규열 사전 유계 → VecNorm 러닝 std 유의미)
+        self._ps_clip = float(os.environ.get("MCI_PSENT_CLIP", "32"))
+        self._cr_clip = float(os.environ.get("MCI_CAPREMAIN_CLIP", "32"))
+        self._or_clip = float(os.environ.get("MCI_OCC_RATIO_CLIP", "4"))
+        self._rho_clip = float(os.environ.get("MCI_RHO_CLIP", "8"))
+        self._t_norm_div = float(os.environ.get("MCI_TIME_NORM", "240"))
+        self._uav_max = float(os.environ.get("MCI_UAV_MAX", "26"))
+        self._amb_num = amb_num
+        self._uav_num = uav_num
 
         # ---------- 4) obs space ----------
-        self._flat_dim = self.H * self._F + _GLOBAL_DIM
+        self._gdim = _GLOBAL_DIM + (_LOAD_GLOBAL_EXTRA if self._load else 0)
+        self._flat_dim = self.H * self._F + self._gdim
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(self._flat_dim,), dtype=np.float32,
         )
         self._ct_cache = None  # 등급-tier 치료가능 마스크 (3, H)
 
         print(f"[HospitalFeatureWrapper] {mode_label}, action=Discrete({self._n_actions}), "
-              f"obs={self._flat_dim} (entity {self.H}x{self._F} + global {_GLOBAL_DIM}), "
+              f"obs={self._flat_dim} (entity {self.H}x{self._F} + global {self._gdim}), "
               f"variant={var_label}, helipad={int(self._helipad.sum())}/{self.H}")
 
     @staticmethod
@@ -179,22 +208,26 @@ class HospitalFeatureWrapper(gym.Wrapper):
     encode_action = _encode
 
     # ---------- obs 구성 ----------
-    def _entity(self, obs: dict) -> np.ndarray:
-        """병원당 특징 행렬 (H, F)."""
+    def _dyn(self, obs: dict) -> dict:
+        """동적 병원 신호 1회 계산 — _entity/_globals 공유 (중복 계산 방지)."""
         h = np.asarray(obs['h_states'], dtype=np.float32)  # (H,3) = [idle, queue, occ]
         p_sent = np.asarray(obs['p_sent'], dtype=np.float32).reshape(-1)
+        from EntityManager import EntityManager
+        in_flight = EntityManager.in_flight_by_hospital(obs, self.H)  # 현장 지득(내가 보낸 이송중)
         # cap_remain 게이트 (2026-07-03 통신축 재정의, 마스크/RuleManager 와 동일 의미):
         #   occ(통신)  = census(occ) + in_flight(이송중=도착 예상) 차감
         #   psent(단절) = 보낸 만큼(p_sent) 차감 — 현장 지득 정보만
         comms = os.environ.get("MCI_CAP_GATE", "occ").strip().lower() != "psent"
-        if comms:
-            from EntityManager import EntityManager
-            cap_used = h[:, 2] + EntityManager.in_flight_by_hospital(obs, self.H)
-        else:
-            cap_used = p_sent
+        cap_used = (h[:, 2] + in_flight) if comms else p_sent
         cap_remain = np.maximum(self._max_send - cap_used, 0.0)
-        # 통신단절(psent) 시 병원 실시간 컬럼(idle/queue/occ)은 지득 불가 → 0 마스킹
-        # (full/comms ablation 변형에서만 해당 열 존재; essential 은 cap_remain 만 노출)
+        return {"h": h, "p_sent": p_sent, "in_flight": in_flight,
+                "cap_remain": cap_remain, "comms": comms}
+
+    def _entity(self, obs: dict, dyn: dict) -> np.ndarray:
+        """병원당 특징 행렬 (H, F)."""
+        h, comms = dyn["h"], dyn["comms"]
+        # 통신단절(psent) 시 병원 실시간 컬럼(idle/queue/occ·occ_ratio)은 지득 불가 → 0 마스킹
+        # (p_sent_c·in_flight 는 현장 발송 기록 = 지득 정보라 유지)
         z = np.zeros_like(h[:, 0])
         col_map = {
             "is_tier3": self._is_tier3,
@@ -204,11 +237,16 @@ class HospitalFeatureWrapper(gym.Wrapper):
             "idle": h[:, 0] if comms else z,
             "queue": h[:, 1] if comms else z,
             "occ": h[:, 2] if comms else z,
-            "cap_remain": cap_remain,
+            "cap_remain": dyn["cap_remain"],
+            "cap_remain_c": np.minimum(dyn["cap_remain"], self._cr_clip),
+            "p_sent_c": np.minimum(dyn["p_sent"], self._ps_clip),
+            "in_flight": dyn["in_flight"].astype(np.float32),
+            "occ_ratio": (np.clip((h[:, 2] + dyn["in_flight"]) / np.maximum(self._max_send, 1.0),
+                                  0.0, self._or_clip) if comms else z),
         }
         return np.stack([col_map[c] for c in self._cols], axis=1).astype(np.float32)  # (H, F)
 
-    def _globals(self, obs: dict) -> np.ndarray:
+    def _globals(self, obs: dict, dyn: dict) -> np.ndarray:
         # patient_agg 4등급×5단계(20) 중 R/Y(앞 2등급=10)만 — Green/Black 은 행동대상 아님(자동일괄).
         pa = AggregateObsWrapper._patient_agg(np.asarray(obs['p_states']))[:10]       # (10,) R/Y
         va = np.concatenate([
@@ -216,13 +254,25 @@ class HospitalFeatureWrapper(gym.Wrapper):
             AggregateObsWrapper._fleet_agg(np.asarray(obs['uav_states'])),
         ])                                                                            # (10,)
         # p_at_site/n_amb_at_site/n_uav_at_site 는 pa·va 의 부분집합이라 제거(중복 0손실).
-        return np.concatenate([
-            pa, va,
-            np.asarray(obs['time'], dtype=np.float32).reshape(-1),                    # (1,)
-        ]).astype(np.float32)
+        parts = [pa, va, np.asarray(obs['time'], dtype=np.float32).reshape(-1)]       # (1,)
+        if self._load:
+            # ρ = 잔여 긴급부하(R/Y 생애단계 0~2: 미구조+현장대기+이송중) / 잔여 유효용량(게이트 추종)
+            urgent = float(pa[0] + pa[1] + pa[2] + pa[5] + pa[6] + pa[7])
+            rho = min(urgent / (float(dyn["cap_remain"].sum()) + 1.0), self._rho_clip)
+            t_norm = min(float(np.asarray(obs['time']).reshape(-1)[0]) / self._t_norm_div, 2.0)
+            parts.append(np.array([
+                rho,
+                va[0] / max(self._amb_num, 1),          # 가용 AMB 비율
+                va[5] / max(self._uav_num, 1),          # 가용 UAV 비율 (uav=0 이면 0/1=0)
+                self._uav_num / self._uav_max,          # 함대 규모 신호(UAV 대수축)
+                t_norm,
+            ], dtype=np.float32))
+        return np.concatenate(parts).astype(np.float32)
 
     def _flat_obs(self, obs: dict) -> np.ndarray:
-        return np.concatenate([self._entity(obs).reshape(-1), self._globals(obs)]).astype(np.float32)
+        dyn = self._dyn(obs)
+        return np.concatenate([self._entity(obs, dyn).reshape(-1),
+                               self._globals(obs, dyn)]).astype(np.float32)
 
     # ---------- gym API ----------
     def step(self, action):
