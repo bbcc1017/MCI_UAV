@@ -226,47 +226,75 @@ class EventManager():
 
         return log
 
+    def _in_flight(self):
+        """병원별 이송중(발송·미도착) 환자 수 — 코어 내부용(진실 상태).
+        GB 배차·diversion 의 물리용량 판단에 사용(도착 시 만원 회피)."""
+        return self.en_manager.in_flight_by_hospital(
+            {'amb_states': self.status['ambulance']['amb_states'],
+             'uav_states': self.status['uav']['uav_states']},
+            self.properties['hospital']['hos_num'])
+
     def default_transportation_GB(self, mode):
-        # Rule1: Ver250724
-        # 1. Tier3(상급종합) 병원은 제외
+        # Rule1: Ver250724 (2026-07-03 정합성 수정)
+        # 1. Tier3(상급종합) 병원은 제외 (tier2 우선)
         # 2. 가까운 순서대로 이송 (현장에서부터 거리순으로 hospital index 지정됨을 가정)
-        # 3. max_send - p_sent > 0 인 경우에만 이송 (최대 보내겠다고 생각했던 환자 수 - 실제 보낸 환자 수)
+        # 3. 물리 입원용량(occ+in_flight < max_capa+max_queue) 여유 있는 곳만 후보
+        #    ★구현이 p_sent(단조 누적 발송) 게이트였던 것을 물리용량으로 교체 —
+        #    p_sent 는 퇴원에도 감소하지 않아 장기/과부하 에피소드서 전 병원 소진
+        #    → RuntimeError 크래시(잠복 결함). sim 코어는 진실 상태를 알므로 물리용량이 정답.
         # 4. 만족하는 병원 없으면 등급 상관 없이 가장 가까운 병원으로 이송
+        #    (주석에만 있고 미구현이었던 폴백을 구현 — 도착 시 만원이면 diversion 이 처리)
         # 5. UAV(mode=1)이면 헬기장 있는 병원에만 이송
 
         destination = None
-        idle_capa = self.properties['hospital']['hos_max_send'] - self.status['patient']['p_sent']
+        room = ((self.properties['hospital']['hos_max_capa']
+                 + self.properties['hospital']['hos_max_queue'])
+                - self.status['hospital']['h_states'][:, -1]
+                - self._in_flight())
         helipad_idx = self.properties['hospital'].get('hos_helipad_idx', np.array([]))
         for h_idx in self.properties['hospital']['hos_tier2_idx']:
             if mode == 1 and h_idx not in helipad_idx:
                 continue
-            if idle_capa[h_idx] > 0:
+            if room[h_idx] > 0:
                 destination = h_idx + 1
                 break
         if destination is None:
             for h_idx in self.properties['hospital']['hos_tier3_idx']:
                 if mode == 1 and h_idx not in helipad_idx:
                     continue
-                if idle_capa[h_idx] > 0:
+                if room[h_idx] > 0:
                     destination = h_idx + 1
                     break
         if destination is None:
-            raise RuntimeError("No hospital with remaining send capacity for Green/Black transport.")
+            # 규칙 4 폴백: 용량 무시, 등급 무관 가장 가까운(index=거리순) 병원.
+            for h_idx in range(self.properties['hospital']['hos_num']):
+                if mode == 1 and h_idx not in helipad_idx:
+                    continue
+                destination = h_idx + 1
+                break
         return destination
 
     def diversion_rule(self, c_hos, pass_to_tier3, pass_to_tier2, mode):
-        # Rule1: Ver250724
+        # Rule1: Ver250724 (2026-07-03 정합성 수정)
         # 1. 보낼 수 있는 병원 등급 중 가까운 순서대로 이송
-        # 2. max_send - p_sent > 0 인 경우에만 이송 (최대 보내겠다고 생각했던 환자 수 - 실제 보낸 환자 수)
-        # 3. 만족하는 병원 없으면 에러 메시지 발생
+        # 2. 물리 입원용량(occ+in_flight < max_capa+max_queue) 여유 있는 곳만 후보
+        #    ★기존 p_sent 기반 게이트(max_send-p_sent>0) 제거 — p_sent 는 퇴원에도
+        #    감소하지 않는 누적 발송량이라 용량 신호로 부적합(장기/과부하서 전 병원
+        #    소진 → "Impossible to divert" 크래시). "입원/diversion 은 항상 물리용량"
+        #    불변식(RuleManager._cap_gate_is_occ docstring)에 코드를 정합.
+        # 3. 여유 병원이 없으면 가장 가까운 치료가능 병원으로 강행(뺑뺑이) —
+        #    도착 시 만원이면 재차 diversion 되고, 그 사이 퇴원으로 용량이 풀리면
+        #    수용된다(크래시 대신 자연 해소). 치료가능 병원 자체가 없을 때만 예외.
         # 4. UAV(mode=1)이면 헬기장 있는 병원에만 이송
 
         d_to_H = self.properties['hospital']['d_HtoH_road'][c_hos] if mode==0 else self.properties['hospital']['d_HtoH_euc'][c_hos]
         destination = None
-        idle_capa = self.properties['hospital']['hos_max_send'] - self.status['patient']['p_sent']
+        fallback = None
         helipad_idx = self.properties['hospital'].get('hos_helipad_idx', np.array([]))
-        max_capa_arr = self.properties['hospital']['hos_max_capa'] + self.properties['hospital']['hos_max_queue']
-        n_occupied_arr = self.status['hospital']['h_states'][:, -1]
+        room = ((self.properties['hospital']['hos_max_capa']
+                 + self.properties['hospital']['hos_max_queue'])
+                - self.status['hospital']['h_states'][:, -1]
+                - self._in_flight())
 
         sorted_h = np.argsort(d_to_H)
         for h_idx in sorted_h:
@@ -274,11 +302,17 @@ class EventManager():
                 continue
             h_tier = self.properties['hospital']['hos_tier'][h_idx]
             can_admit = (pass_to_tier3 and h_tier==3) or (pass_to_tier2 and h_tier==2)
-            if can_admit and idle_capa[h_idx] > 0 and n_occupied_arr[h_idx] < max_capa_arr[h_idx]:
+            if not can_admit:
+                continue
+            if fallback is None:
+                fallback = h_idx + 1  # 가장 가까운 치료가능 병원(용량 무시 폴백)
+            if room[h_idx] > 0:
                 destination = h_idx + 1
                 break
-        if destination is None: # 전원 가능 병원 없음
-            raise Exception("Impossible to divert")
+        if destination is None:
+            destination = fallback
+        if destination is None:  # 치료가능(등급·헬기장) 병원 자체가 없음 — 시나리오 구성 오류
+            raise Exception("Impossible to divert: no tier/helipad-compatible hospital")
 
         return destination
 

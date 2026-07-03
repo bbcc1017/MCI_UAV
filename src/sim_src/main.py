@@ -151,9 +151,9 @@ class RunManager():
                 print(rules[r_idx].rule_name)
                 self.set_random_seed(iter)
                 obs, _ = env.reset()
-                total_Green = (obs['p_states'][:, 0] == 2).sum()
                 done = False
                 cumul_reward = 0
+                cumul_r_woG = 0.0  # 정확 woG — env info['r_woG'] 누적 (2026-07-03 수정)
                 count = 0
                 while not done:
                     action = rules[r_idx].select(obs)
@@ -180,8 +180,10 @@ class RunManager():
                             action_log['green'] += 1
                     # action = env.action_space.sample()
                     obs, reward, done, truncated, info = env.step(action)
+                    done = done or truncated  # OVERTIME 은 truncated 로 옴 (2026-07-03)
 
                     cumul_reward += reward
+                    cumul_r_woG += info.get('r_woG', 0.0)
                     if (r_idx == 0) & (reward < 0.0):
                         print('지금')
                     # print(obs['num_amb'],obs['num_uav'])
@@ -194,9 +196,11 @@ class RunManager():
                 results_rew[r_idx, iter - 1] = cumul_reward
                 results_time[r_idx, iter - 1] = info['time']
                 results_pdr[r_idx, iter - 1] = safe_pdr(cumul_reward, env.preventable)
-                results_rewWOG[r_idx, iter - 1] = cumul_reward - total_Green
-                results_pdrWOG[r_idx, iter - 1] = safe_pdr(cumul_reward - total_Green,
-                                                           env.preventable - total_Green)
+                # 정확 woG(info['r_woG'] 누적)·preventable_woG 사용 — 기존 근사식
+                # (cumul-total_Green)은 미처치 Green 이 있으면(절단·과부하) 과소산출.
+                # 정상 종료(전원 처치)에선 값이 동일해 기존 결과와 정합. (2026-07-03)
+                results_rewWOG[r_idx, iter - 1] = cumul_r_woG
+                results_pdrWOG[r_idx, iter - 1] = safe_pdr(cumul_r_woG, env.preventable_woG)
                 # results_preventable[r_idx, iter - 1] = env.preventable
 
         stat_rew = np.zeros((len(rules), 3), dtype=float)

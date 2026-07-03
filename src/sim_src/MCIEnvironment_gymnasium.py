@@ -139,7 +139,9 @@ class MCIEnvironment_gym(gym.Env):
             print("OVERTIME")
             info['time'] = self.ev_manager.time
             info['r_woG'] = -self.pen_size
-            return self._make_obs(), -self.pen_size, True, True, info
+            # 시간초과는 truncation(테르미널 아님) — terminated=True 로 주면 SB3 가
+            # 종단으로 취급해 가치 부트스트랩을 생략(편향). 2026-07-03 정합성 수정.
+            return self._make_obs(), -self.pen_size, False, True, info
 
         action_list = self._to_action_list(action)
         log, terminated = self.ev_manager.run_next(action_list)
@@ -152,7 +154,12 @@ class MCIEnvironment_gym(gym.Env):
 
     def reset(self, seed=None, options=None):
         if seed is not None:
+            # sim 동역학 rng(EventManager — 환자 multinomial·이송 lognormal 등)까지
+            # 재시드해야 reset(seed) 재현성 계약이 성립. 기존엔 self.rng(미사용 dead
+            # 변수)만 갈아끼워 env 재사용 시 same-seed 페어드 비교가 조용히 깨졌다.
+            # (2026-07-03 정합성 수정. fresh-env 패턴은 생성 시 시드라 결과 불변.)
             self.rng = np.random.default_rng(seed)
+            self.ev_manager.set_seed(self.rng)
         self.pending_terminal_reward = 0.0
         self.pending_terminal_reward_woG = 0.0
         self.n_step = 0
