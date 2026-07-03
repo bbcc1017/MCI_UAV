@@ -9,6 +9,12 @@ mode 에 따라 재정의한다.
 지원 모드 (mode 인자 또는 ENV `MCI_REWARD_MODE`):
   - "raw"   : 원본 보상 그대로 (no-op, sanity 용).
   - "woG"   : step reward 를 info['r_woG'] 로 치환 (Green 제외).
+  - "pdrwog": step r_woG 를 에피소드 시작 시 확정되는 preventable_woG 로 정규화
+             (r = r_woG / preventable_woG). 에피소드 누적합 = woG/preventable
+             = 1 − PDR_woG 라 **사고규모가 달라도 스케일 불변**(0~1) — 규모 혼재
+             학습(교수 지시 2026-07-04)의 표준 보상. preventable_woG 는 reset 의
+             init_log(환자 실현)로 1회 확정·step 중 불변(MCIEnvironment reset 참조).
+             스케일이 작으므로 학습 시 VecNormalize(norm_reward=True) 병용 권장.
   - "rywt"  : Red·Yellow 가중. logToReward(log) 가 호출되는 시점의
              log['p_admit']=[(time, p_class), ...] 를 가로채 가중합으로 재계산:
                  r = Σ over p_admit:
@@ -39,7 +45,7 @@ import os
 import gymnasium as gym
 
 
-_VALID_MODES = ("raw", "woG", "rywt")
+_VALID_MODES = ("raw", "woG", "pdrwog", "rywt")
 
 
 def _resolve_mode(mode):
@@ -72,6 +78,7 @@ class RewardRedesignWrapper(gym.Wrapper):
         self._unwrapped = env.unwrapped  # MCIEnvironment_gym
         self._last_log = None
         self._orig_logToReward = None
+        self._pdr_denom = 1.0  # pdrwog: preventable_woG 캐시 (reset 시 갱신)
         if self.mode == "rywt":
             self._install_log_hook()
 
@@ -130,6 +137,8 @@ class RewardRedesignWrapper(gym.Wrapper):
             r_new = r_raw
         elif self.mode == "woG":
             r_new = float(info.get("r_woG", 0.0))
+        elif self.mode == "pdrwog":
+            r_new = float(info.get("r_woG", 0.0)) / self._pdr_denom
         elif self.mode == "rywt":
             r_new = self._rywt_reward()
             # 다음 step 전 초기화 (terminal 후 leftover 방지)
@@ -143,4 +152,10 @@ class RewardRedesignWrapper(gym.Wrapper):
         self._last_log = None
         # reset 도중 logToReward 가 호출될 수 있음 (init_log → pending_terminal_reward).
         # hook 는 그대로 유지 — pending 처리에는 우리가 관여하지 않으므로 OK.
-        return self.env.reset(**kwargs)
+        out = self.env.reset(**kwargs)
+        if self.mode == "pdrwog":
+            # preventable_woG 는 reset 의 init_log(환자 실현)로 확정 — 이 시점 캐시가 정확.
+            # R/Y 가 0명인 극단 실현(preventable=0) 가드: 분모 1.0(그 에피소드 r_woG 도 전부 0).
+            denom = float(getattr(self._unwrapped, "preventable_woG", 0.0))
+            self._pdr_denom = denom if denom > 0.0 else 1.0
+        return out

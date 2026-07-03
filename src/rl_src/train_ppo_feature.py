@@ -155,8 +155,9 @@ def parse_args():
     p.add_argument("--vec", choices=["dummy", "subproc"], default="dummy")
     p.add_argument("--extractor", choices=["mlp", "deepsets"], default="mlp",
                    help="mlp(기본): 평탄 obs+MlpPolicy / deepsets: 순열불변 인코더(3c, hospital_set_extractor)")
-    p.add_argument("--reward_mode", choices=["raw", "woG", "rywt"], default="woG",
-                   help="보상 변환(RewardRedesignWrapper). 기본 woG(Green 제외).")
+    p.add_argument("--reward_mode", choices=["raw", "woG", "pdrwog", "rywt"], default="woG",
+                   help="보상 변환(RewardRedesignWrapper). 기본 woG(Green 제외). "
+                        "pdrwog=r_woG/preventable_woG(0~1 규모불변, --norm_reward 병용 권장).")
     p.add_argument("--norm_reward", action="store_true", default=False,
                    help="VecNormalize 보상 정규화(기본 off — woG 스케일 해석/휴리스틱 비교 유지).")
     p.add_argument("--resume_from", default=None,
