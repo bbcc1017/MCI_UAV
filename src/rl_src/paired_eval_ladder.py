@@ -144,7 +144,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--manifest", default=os.path.join(REPO, "scenarios/manifests/sido_osrm_manifest.json"))
     ap.add_argument("--heur_csv", default=os.path.join(REPO, "results/sido_osrm_heuristic_best.csv"))
-    ap.add_argument("--regions", default="", help="쉼표구분(기본 시도17 전체)")
+    ap.add_argument("--regions", default="", help="쉼표구분 키 서브셋(기본 시도17 전체 또는 매니페스트 전 키)")
+    ap.add_argument("--match", choices=["name", "sigcd"], default="name",
+                    help="best_rule 매칭: name(시도) / sigcd(시군구·holdout, 키의 숫자토큰→best CSV sigcd)")
+    ap.add_argument("--key_filter", default="", help="매니페스트 키 부분문자열 필터(예: _p0 = 시군구당 1점)")
     ap.add_argument("--model_root", default=os.path.join(REPO, "results/rl/redesign"))
     ap.add_argument("--models", default="L0_base,L1_hygiene,L2_loadobs,L3_pointer")
     ap.add_argument("--n_eps", type=int, default=1000)
@@ -155,17 +158,34 @@ def main():
 
     import numpy as np  # noqa
     manifest = json.load(open(A.manifest, encoding="utf-8"))
-    # 휴리 best_rule (BOM 대응)
-    best = {}
+    models = A.models.split(",")
+
+    # 휴리 best_rule 룩업 (BOM 대응). match=name→region 키, sigcd→sigcd 키.
+    best_by = {}
     with open(A.heur_csv, encoding="utf-8-sig") as f:
         for r in csv.DictReader(f):
-            best[r["region"]] = r["best_rule"]
-    regions = A.regions.split(",") if A.regions else [r for r in SIDO17 if r in manifest]
-    models = A.models.split(",")
-    jobs = [(rg, manifest[rg], best[rg], A.model_root, models, A.n_eps, A.use_ckpt)
-            for rg in regions if rg in manifest and rg in best]
-    print(f"[paired] regions={len(jobs)} models={models} n_eps={A.n_eps} "
-          f"use_ckpt={A.use_ckpt} workers={A.workers}", flush=True)
+            best_by[r["region"] if A.match == "name" else r["sigcd"]] = r["best_rule"]
+
+    def _lookup(key):
+        if A.match == "name":
+            return best_by.get(key)
+        digits = [t for t in key.split("_") if t.isdigit()]  # 키의 sigcd 토큰
+        return best_by.get(digits[0]) if digits else None
+
+    # 대상 키 목록
+    if A.regions:
+        keys = [k for k in A.regions.split(",") if k in manifest]
+    elif A.match == "name":
+        keys = [k for k in SIDO17 if k in manifest]
+    else:
+        keys = list(manifest.keys())
+    if A.key_filter:
+        keys = [k for k in keys if A.key_filter in k]
+
+    jobs = [(k, manifest[k], _lookup(k), A.model_root, models, A.n_eps, A.use_ckpt)
+            for k in keys if _lookup(k) is not None]
+    print(f"[paired] jobs={len(jobs)} match={A.match} filter={A.key_filter!r} models={models} "
+          f"n_eps={A.n_eps} use_ckpt={A.use_ckpt} workers={A.workers}", flush=True)
 
     res, t0 = [], time.time()
     with Pool(min(A.workers, len(jobs)), maxtasksperchild=1) as pool:
