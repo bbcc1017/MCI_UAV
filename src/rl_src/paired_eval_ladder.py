@@ -33,11 +33,39 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.par
 SEED = 11000
 SIDO17 = "서울 부산 대구 인천 광주 대전 울산 세종 경기 강원 충북 충남 전북 전남 경북 경남 제주".split()
 
-# 모델 → obs variant (학습 시와 동일해야 로드/forward 정합)
+# 모델 → obs variant (학습 시와 동일해야 로드/forward 정합) — 레거시 단축명용
 MODEL_VARIANT = {
     "L0_base": "essential", "L1_hygiene": "essential",
     "L2_loadobs": "essential+load", "L3_pointer": "essential+load",
 }
+
+
+def parse_model_specs(spec: str, model_root: str):
+    """--models 파싱 → [(name, mdir, variant)].
+
+    항목 2형식(쉼표구분 혼용 가능):
+      * 레거시 단축명 "L3_pointer"        → (model_root/L3_pointer_s0, MODEL_VARIANT 참조)
+      * 일반형 "이름=디렉터리=obs_variant" → 임의 모델 디렉터리(상대경로는 REPO 기준)
+    기본값(L0~L3)은 전부 레거시 형식 → 기존 동작 불변.
+    """
+    entries = []
+    for tok in spec.split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        if "=" in tok:
+            parts = tok.split("=")
+            if len(parts) != 3:
+                raise ValueError(f"--models 항목 형식 오류(이름=디렉터리=obs_variant): {tok!r}")
+            name, mdir, variant = parts
+            if not os.path.isabs(mdir):
+                mdir = os.path.join(REPO, mdir)
+        else:
+            if tok not in MODEL_VARIANT:
+                raise ValueError(f"미지 단축명 {tok!r} — 일반형 '이름=디렉터리=obs_variant' 사용")
+            name, mdir, variant = tok, os.path.join(model_root, f"{tok}_s0"), MODEL_VARIANT[tok]
+        entries.append((name, mdir, variant))
+    return entries
 
 
 def _rollout_woG(factory, policy_fn, seed):
@@ -58,7 +86,7 @@ def _rollout_woG(factory, policy_fn, seed):
 
 
 def worker(job):
-    region, cfg, best_rule, model_root, models, n_eps, use_ckpt = job
+    region, cfg, best_rule, model_entries, n_eps, use_ckpt = job
     import numpy as np
     import torch as th
     th.set_num_threads(1)
@@ -81,8 +109,7 @@ def worker(job):
         with _suppress_stdout():
             # ---- 정책별 (factory, policy_fn) 구성 ----
             entries = []  # (name, factory, policy_fn)
-            for m in models:
-                mdir = os.path.join(model_root, f"{m}_s0")
+            for m, mdir, variant in model_entries:
                 if use_ckpt:
                     cks = sorted([f for f in os.listdir(os.path.join(mdir, "checkpoints"))
                                   if f.endswith(".zip")],
@@ -98,7 +125,7 @@ def worker(job):
                     vn = os.path.join(mdir, "vecnormalize.pkl")
                     norm = load_vecnorm(vn) if os.path.exists(vn) else None
                 model = MaskablePPO.load(zip_path, device="cpu")
-                fac = build_factory(MODEL_VARIANT[m], norm)
+                fac = build_factory(variant, norm)
                 entries.append((m, fac, ppo_policy(model)))
 
             # 규칙 3종: norm 없는 essential env(obs 비의존이나 형상 유지)
@@ -149,7 +176,9 @@ def main():
                     help="best_rule 매칭: name(시도) / sigcd(시군구·holdout, 키의 숫자토큰→best CSV sigcd)")
     ap.add_argument("--key_filter", default="", help="매니페스트 키 부분문자열 필터(예: _p0 = 시군구당 1점)")
     ap.add_argument("--model_root", default=os.path.join(REPO, "results/rl/redesign"))
-    ap.add_argument("--models", default="L0_base,L1_hygiene,L2_loadobs,L3_pointer")
+    ap.add_argument("--models", default="L0_base,L1_hygiene,L2_loadobs,L3_pointer",
+                    help="쉼표구분. 레거시 단축명(L0_base 등, model_root/<명>_s0) 또는 "
+                         "일반형 '이름=디렉터리=obs_variant'(신규 모델 평가용) 혼용 가능.")
     ap.add_argument("--n_eps", type=int, default=1000)
     ap.add_argument("--workers", type=int, default=17)
     ap.add_argument("--use_ckpt", action="store_true", help="스모크: 최신 ckpt+norm없음")
@@ -158,7 +187,8 @@ def main():
 
     import numpy as np  # noqa
     manifest = json.load(open(A.manifest, encoding="utf-8"))
-    models = A.models.split(",")
+    model_entries = parse_model_specs(A.models, A.model_root)
+    models = [e[0] for e in model_entries]  # 이하 요약/사다리 로직은 이름 기준(기존 유지)
 
     # 휴리 best_rule 룩업 (BOM 대응). match=name→region 키, sigcd→sigcd 키.
     best_by = {}
@@ -182,7 +212,7 @@ def main():
     if A.key_filter:
         keys = [k for k in keys if A.key_filter in k]
 
-    jobs = [(k, manifest[k], _lookup(k), A.model_root, models, A.n_eps, A.use_ckpt)
+    jobs = [(k, manifest[k], _lookup(k), model_entries, A.n_eps, A.use_ckpt)
             for k in keys if _lookup(k) is not None]
     print(f"[paired] jobs={len(jobs)} match={A.match} filter={A.key_filter!r} models={models} "
           f"n_eps={A.n_eps} use_ckpt={A.use_ckpt} workers={A.workers}", flush=True)

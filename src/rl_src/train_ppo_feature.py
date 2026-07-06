@@ -19,6 +19,7 @@ train/eval 시 MCI_OBS_VARIANT 를 동일하게 둘 것(obs 차원 일치).
     --n_envs 4 --log_dir results/rl/ppo_feature
 """
 import argparse
+import csv
 import json
 import os
 import sys
@@ -48,13 +49,25 @@ class FeatureMultiRegionEnv(gym.Env):
     """
     metadata = {"render_modes": []}
 
-    def __init__(self, manifest_path: str, seed: int = 0, eval_mode: bool = False):
+    def __init__(self, manifest_path: str, seed: int = 0, eval_mode: bool = False,
+                 shard: "tuple[int, int] | None" = None,
+                 weights_csv: "str | None" = None):
         super().__init__()
         with open(manifest_path, encoding="utf-8") as f:
             manifest = json.load(f)
-        self.regions = list(manifest.keys())
-        if not self.regions:
+        all_regions = list(manifest.keys())
+        if not all_regions:
             raise ValueError(f"빈 manifest: {manifest_path}")
+
+        # shard=(i,n): 워커 i 는 regions[i::n] 만 로드 — 대형(1000지역) 매니페스트의
+        # 워커당 RSS 를 1/n 로 절감. None(기본)=전 지역 로드(기존 동작 불변).
+        if shard is not None:
+            si, sn = shard
+            self.regions = all_regions[si::sn]
+            if not self.regions:
+                raise ValueError(f"shard {shard} 가 빈 지역 목록: 지역수 {len(all_regions)}")
+        else:
+            self.regions = all_regions
 
         self._envs = []
         for i, region in enumerate(self.regions):
@@ -78,6 +91,25 @@ class FeatureMultiRegionEnv(gym.Env):
         self.n_hospitals = self._envs[0].H
         self.entity_f = self._envs[0]._F
         self.global_dim = self._envs[0]._flat_dim - self._envs[0].H * self._envs[0]._F
+        # weights_csv(컬럼 region,weight): reset() 지역 샘플링을 균등 → 가중으로.
+        # CSV 에 있는데 매니페스트에 없는 키는 에러(오타 침묵 방지). shard 시 shard 내 재정규화.
+        self._p = None
+        if weights_csv:
+            w_by = {}
+            with open(weights_csv, encoding="utf-8-sig") as f:  # 시군구 CSV 관례상 BOM 대응
+                for row in csv.DictReader(f):
+                    w_by[row["region"]] = float(row["weight"])
+            unknown = sorted(set(w_by) - set(all_regions))
+            if unknown:
+                raise ValueError(f"weights_csv 에 매니페스트 밖 지역 키 {len(unknown)}개: "
+                                 f"{unknown[:5]} ...")
+            w = np.array([w_by.get(r, 0.0) for r in self.regions], dtype=np.float64)
+            if (w < 0).any():
+                raise ValueError("weights_csv 에 음수 가중치 존재")
+            if w.sum() <= 0:
+                raise ValueError(f"shard {shard} 내 가중치 합이 0 — CSV 커버리지 확인 필요")
+            self._p = w / w.sum()
+
         self._rng = np.random.default_rng(seed)
         self._idx = 0
         self._cur = self._envs[0]
@@ -89,7 +121,10 @@ class FeatureMultiRegionEnv(gym.Env):
     def reset(self, *, seed=None, options=None):
         if seed is not None:
             self._rng = np.random.default_rng(seed)
-        self._idx = int(self._rng.integers(len(self._envs)))
+        if self._p is not None:
+            self._idx = int(self._rng.choice(len(self._envs), p=self._p))  # 가중 샘플링
+        else:
+            self._idx = int(self._rng.integers(len(self._envs)))
         self._cur = self._envs[self._idx]
         return self._cur.reset(seed=seed, options=options)
 
@@ -115,10 +150,17 @@ def mask_fn(env):
     return env.action_masks()
 
 
-def make_env_fn(config_path: str, seed: int = 0):
+def make_env_fn(config_path: str, seed: int = 0, rank: int = 0, n_envs: int = 1,
+                region_weights: "str | None" = None):
+    """rank/n_envs: 매니페스트 지역수 > 500 일 때만 워커별 shard=(rank, n_envs) 활성
+    (RSS 절감 훅). 기존 250 지역 매니페스트·단일 yaml 은 동작 완전 불변."""
     def _f():
         if config_path.endswith(".json"):
-            env = FeatureMultiRegionEnv(config_path, seed=seed)
+            with open(config_path, encoding="utf-8") as f:
+                n_regions = len(json.load(f))
+            shard = (rank, n_envs) if n_regions > 500 else None
+            env = FeatureMultiRegionEnv(config_path, seed=seed, shard=shard,
+                                        weights_csv=region_weights)
         else:
             base = make_base_env(config_path, seed=seed, rule_test=False, eval_mode=False)
             env = HospitalFeatureWrapper(RewardRedesignWrapper(base))
@@ -172,6 +214,20 @@ def parse_args():
                    help="기존 모델 디렉터리(또는 final_model.zip 경로). 주면 정책·옵티마이저·"
                         "num_timesteps·vecnormalize 통계를 복원해 이어학습(reset_num_timesteps=False). "
                         "이때 total_timesteps 는 '추가' 스텝 수(예: 5M→10M 이면 5_000_000).")
+    # ---- 하이퍼 v3 (S1a): 할인/아키텍처 폭 스윕 ----
+    p.add_argument("--gamma", type=float, default=0.99,
+                   help="할인율(기본 0.99=SB3 기본). ⚠️VecNormalize 리턴 정규화에도 동기 전달됨.")
+    p.add_argument("--gae_lambda", type=float, default=0.95,
+                   help="GAE λ(기본 0.95=SB3 기본).")
+    p.add_argument("--embed_dim", type=int, default=32,
+                   help="병원 토큰 임베딩 폭(deepsets/pointer 추출기, 기본 32=구 아키텍처).")
+    p.add_argument("--ctx_dim", type=int, default=64,
+                   help="전역 ctx 폭(pointer 추출기 전용, 기본 64=구 아키텍처).")
+    p.add_argument("--head_hidden", type=int, default=64,
+                   help="PointerActionNet scorer 은닉폭(pointer 전용, 기본 64=구 아키텍처).")
+    p.add_argument("--region_weights", default=None,
+                   help="지역 샘플링 가중 CSV(컬럼 region,weight) — 매니페스트 학습 전용. "
+                        "미지정(기본)=균등 샘플링(기존 동작).")
     return p.parse_args()
 
 
@@ -182,9 +238,13 @@ def main():
     os.environ["MCI_REWARD_MODE"] = args.reward_mode
     print(f"[feature] MCI_OBS_VARIANT={os.environ.get('MCI_OBS_VARIANT','(essential)')} "
           f"reward={args.reward_mode} norm_reward={args.norm_reward} extractor={args.extractor} "
-          f"lr_anneal={args.lr_anneal} target_kl={args.target_kl} n_epochs={args.n_epochs}")
+          f"lr_anneal={args.lr_anneal} target_kl={args.target_kl} n_epochs={args.n_epochs} "
+          f"gamma={args.gamma} gae_lambda={args.gae_lambda} "
+          f"embed={args.embed_dim} ctx={args.ctx_dim} head_hidden={args.head_hidden}")
 
-    env_fns = [make_env_fn(args.config_path, seed=args.seed + i) for i in range(args.n_envs)]
+    env_fns = [make_env_fn(args.config_path, seed=args.seed + i, rank=i, n_envs=args.n_envs,
+                           region_weights=args.region_weights)
+               for i in range(args.n_envs)]
     vec_cls = SubprocVecEnv if args.vec == "subproc" else DummyVecEnv
     venv = vec_cls(env_fns)
 
@@ -210,7 +270,10 @@ def main():
     else:
         # ---- 신규 학습 ----
         # obs 정규화 필수(ETA·cap_remain 스케일) / reward 정규화는 옵션. eval·VIPER 는 통계 동결 로드.
-        venv = VecNormalize(venv, norm_obs=True, norm_reward=args.norm_reward, clip_obs=10.0)
+        # ⚠️gamma 동기화 필수: VecNormalize 의 리턴 추적(discounted return 분산)과 PPO 의
+        # gamma 가 불일치하면 보상 정규화 스케일이 왜곡됨.
+        venv = VecNormalize(venv, norm_obs=True, norm_reward=args.norm_reward, clip_obs=10.0,
+                            gamma=args.gamma)
 
         policy_cls = "MlpPolicy"
         policy_kwargs = dict(net_arch=[256, 256])
@@ -218,18 +281,22 @@ def main():
             H, F, gdim = _entity_dims(args.config_path, args.seed)
             policy_kwargs = dict(
                 features_extractor_class=HospitalSetExtractor,
-                features_extractor_kwargs=dict(n_hospitals=H, entity_f=F, global_dim=gdim),
+                features_extractor_kwargs=dict(n_hospitals=H, entity_f=F, global_dim=gdim,
+                                               embed_dim=args.embed_dim),
                 net_arch=[256, 256],
             )
-            print(f"[feature] deepsets 추출기: H={H} F={F} global={gdim}")
+            print(f"[feature] deepsets 추출기: H={H} F={F} global={gdim} embed={args.embed_dim}")
         elif args.extractor == "pointer":
             H, F, gdim = _entity_dims(args.config_path, args.seed)
             policy_cls = PointerMaskablePolicy  # net_arch 는 정책이 강제(pi=[], vf=[256,256])
             policy_kwargs = dict(
                 features_extractor_class=HospitalTokenExtractor,
-                features_extractor_kwargs=dict(n_hospitals=H, entity_f=F, global_dim=gdim),
+                features_extractor_kwargs=dict(n_hospitals=H, entity_f=F, global_dim=gdim,
+                                               embed_dim=args.embed_dim, ctx_dim=args.ctx_dim),
+                head_hidden=args.head_hidden,  # PointerMaskablePolicy.__init__ 로 전달
             )
-            print(f"[feature] pointer 추출기+head: H={H} F={F} global={gdim}")
+            print(f"[feature] pointer 추출기+head: H={H} F={F} global={gdim} "
+                  f"embed={args.embed_dim} ctx={args.ctx_dim} head_hidden={args.head_hidden}")
 
         # PPO 위생: lr anneal(진행률 p: 1→0 에 선형) / target_kl / n_epochs (미지정=SB3 기본)
         lr = (lambda p: args.learning_rate * p) if args.lr_anneal else args.learning_rate
@@ -245,6 +312,8 @@ def main():
             n_steps=args.n_steps,
             batch_size=args.batch_size,
             ent_coef=args.ent_coef,
+            gamma=args.gamma,
+            gae_lambda=args.gae_lambda,
             policy_kwargs=policy_kwargs,
             verbose=1,
             seed=args.seed,

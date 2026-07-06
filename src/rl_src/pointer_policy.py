@@ -103,7 +103,11 @@ class PointerActionNet(nn.Module):
 class PointerMaskablePolicy(MaskableActorCriticPolicy):
     """MaskableActorCriticPolicy 의 action_net 만 PointerActionNet 으로 교체한 정책."""
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, head_hidden: int = 64, **kwargs):
+        # head_hidden: PointerActionNet scorer 은닉폭(기본 64 = 구 L3 아키텍처). _build 전에
+        # 저장(super().__init__ 이 _build 를 호출하므로). 구 저장 zip 은 이 인자 없이 로드되어
+        # 기본 64 로 복원 → 기존 모델 호환 유지.
+        self._head_hidden = int(head_hidden)
         # latent_pi = features 그대로 통과(pi=[]) — head 가 토큰 레이아웃을 온전히 받도록.
         # value 브랜치는 flat features 를 [256,256] MLP 로 처리.
         kwargs["net_arch"] = dict(pi=[], vf=[256, 256])
@@ -121,7 +125,8 @@ class PointerMaskablePolicy(MaskableActorCriticPolicy):
             (f"action {self.action_space.n} != {n_class}x{fx.H + 1}x{n_mode} — "
              f"mode 자동축소(uav=0) 구성은 pointer 미지원")
         self.action_net = PointerActionNet(fx.H, fx.embed_dim, fx.ctx_dim,
-                                           n_class=n_class, n_mode=n_mode)
+                                           n_class=n_class, n_mode=n_mode,
+                                           hidden=getattr(self, "_head_hidden", 64))
         # 초기화: trunk gain √2, 최종 logit 층 gain 0.01(초기 정책 near-uniform — PPO 위생)
         for m in self.action_net.modules():
             if isinstance(m, nn.Linear):
