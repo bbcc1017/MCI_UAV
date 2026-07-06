@@ -290,6 +290,15 @@ tools/nationwide/roads2/
 tools/nationwide/roads/
 tools/nationwide/infra/
 tools/nationwide/footways/
+# HD맵(정밀도로지도)·NGII 도로중심선·roads2 백업 — 대용량 재생성물(hdmap_fetch.py 등 스크립트만 버전관리)
+tools/nationwide/hdmap/
+tools/nationwide/ngiiroads/
+tools/nationwide/roads2_old/
+# v2 디지털트윈 대용량 산출물 (정사 z19 / DEM 5m — 재생성 가능; qa 리포트는 추적)
+tools/nationwide_v2/ortho19/
+tools/nationwide_v2/dem5/
+# 참고 논문 원문 (저작물 — 버전관리 제외)
+/scratch_paper.txt
 # 지형 DEM(.bin/.json)·정사 모자이크 — 대용량 재생성물(terrain_fetch.py / vworld_fetch.py)
 tools/nationwide/terrain/
 tools/nationwide/ortho_fill/
