@@ -180,6 +180,9 @@ def main():
     ap.add_argument("--n_eps", type=int, default=1000)
     ap.add_argument("--workers", type=int, default=17)
     ap.add_argument("--out", default=os.path.join(REPO, "results/rl/redesign/score_eval.csv"))
+    ap.add_argument("--dump_pe", default="",
+                    help="설정 시 지역별 per-ep PDR 배열을 npz(regions,names,pdr[R,P,eps])로 덤프"
+                         " — paired(변형 vs 임의 baseline) 오프라인 분석용, 기본 off(기존 동작 불변)")
     # 격차회수율 앵커
     ap.add_argument("--lb_ref", type=float, default=0.1199)
     ap.add_argument("--rl_ref", type=float, default=0.0923)
@@ -255,6 +258,12 @@ def main():
         for r in ok:
             w.writerow({c: r.get(c) for c in ["region"] + [f"PDR_{n}" for n in names]})
     print(f"\n저장 {A.out} (지역 {len(ok)}) wall={time.time()-t0:.0f}s", flush=True)
+
+    if A.dump_pe:  # 추가 기능(default off): 지역별 per-ep PDR 을 npz 로 — 임의 baseline paired 분석용
+        regs = [r["region"] for r in ok]
+        pdr = np.array([[r["_P"][n] for n in names] for r in ok], dtype=float)  # (R, P, eps)
+        np.savez_compressed(A.dump_pe, regions=np.array(regs), names=np.array(names), pdr=pdr)
+        print(f"저장(per-ep) {A.dump_pe}  shape={pdr.shape} (지역×정책×ep)", flush=True)
 
     means = {n: float(np.mean([r[f"PDR_{n}"] for r in ok])) for n in names}
     print("\n=== 평균 PDR_woG (낮을수록 좋음) ===", flush=True)
