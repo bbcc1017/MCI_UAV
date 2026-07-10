@@ -61,6 +61,15 @@ Beyond single-coordinate training, there are two multi-region pipelines driven b
 - **sim_src debug-print spam**: the sim emits a `print` per event; trainers/workers therefore redirect **stdout → `/dev/null`** (monitor via TensorBoard) and capture only **stderr → `.err`** files. Don't "fix" this by editing `sim_src` — it's stable by decision.
 - The many other `rl_src/*` scripts are research variants on the same wrapper (`enriched_env_wrapper`/`reward_redesign_wrapper`/`advantage_wrapper` obs-reward ablations, `train_ppo_bc.py`+`bc_dataset.py`+`distill_policy.py` for BC/distillation, `eval_*`/`aggregate_*`/`plot_*` for analysis). Read the module docstring — each states its reuse deps and purpose.
 
+### 재설계 v3 자산 (2026-07) — 성능 극대화 + 추출 2.0
+
+전국 단일 정책 성능 최대화(S0~S5) + 해석가능 규칙 추출(B0~B7). 학습=시군구250 중심점, 판정=시도17 대표점, 일반화=홀드아웃 250 새 좌표(셋 다 좌표 무중복).
+
+- **train_ppo_feature.py 신규 플래그**: `--gamma/--gae_lambda/--embed_dim/--ctx_dim/--head_hidden`(폭 스윕), `--region_weights`(지역 가중샘플). ⚠️`--resume_from`은 저장된 lr 스케줄을 복원하고 SB3가 진행률을 `num_timesteps/(num_timesteps+추가)`로 재계산 → **lr_anneal로 0까지 내린 모델도 ~7e-5부터 재개**(0 아님, 파인튠 유효). `FeatureMultiRegionEnv`는 매니페스트 지역수>500일 때만 워커별 shard(그 이하는 워커마다 전 지역 빌드 → 1000점 매니페스트는 shard 필수, RSS).
+- **성능 트랙**: `rollout_oracle.py`(롤아웃 룩어헤드=도달상한 headroom, deepcopy 결정론 검증), `gen_train_pool_osrm.py`(시군구 폴리곤당 3점, holdout 1km 이격), `region_weights.py`(regret/headroom 가중 — ⚠️softmax가 이상치 1곳에 붕괴 → winsorize(p90)+β상한 유계화 필수), `exit_labels/exit_distill.py`(ExIt: 오라클 라벨→BC→PPO 파인튠, ⚠️DAgger switch율 높음=분포효과지 버그 아님). **결론**: 반응형 정책은 오라클 상한의 ~56% 도달, 나머지는 온라인 룩어헤드 전용(ExIt 증류 실패=구조적 천장).
+- **추출 2.0**: `score_features.py`(φ12 지역불변, dict obs·en_properties·get_static_eta 원천 — 평탄 obs 슬라이스 금지), `score_policy.py`(dest=argmax w·φ 선형 스코어, mode timesave/joint — ⚠️정원제 끄려면 `T_hard=9999`, `score_cma.py` CLI 기본이 `--T_hard 4.0`), `fit_score.py`(조건부로짓 MLE), `score_cma.py`(자작 CEM), `score_eval.py`(paired ablation, `--models 이름=디렉터리=variant`, `--dump_pe`). 최종 규칙 회수율 65.5%(prog11→T메타30→스코어65.5→RL100).
+- **paired 평가 관례(불변식)**: seed **11000**, **시도17=판정 전용(튜닝 절대 금지)**, 튜닝풀=시군구 **40점 CRN**, holdout=`eval_holdout_A` `_p0` 250점(match sigcd). 회수율=(PDR_LB−PDR)/(PDR_LB−PDR_RL). 챔피언 `results/rl/redesign/s3_plr_s{0,1,2}`(wide+농촌재가중), 보고서 `docs/{성능극대화_사다리,알고리즘_검토,스코어추출}_*.md`.
+
 ### Key env vars (RL/sim & scenario gen)
 
 - **`MCI_REDUCED_OBS=1`** aggregates the obs to summary stats (smaller obs dim). **Must match between train and eval** or the model won't load; batch scripts (`run_seed_repro.py`, grid launchers) force it on.
@@ -113,6 +122,7 @@ Full cheat-sheet is in the auto-memory `reference_unity_mcp_osm_techniques.md`. 
 Fetches/imports are launched detached (`nohup … &` in a `run_in_background` bash). Detached python isn't harness-tracked, so completion is detected with a **watcher** bash (also `run_in_background`) that polls a file count / completion marker / stall and exits — the harness then notifies on the watcher's exit.
 
 - **분석/스윕 스크립트 gotcha**(이번 세션 3건 다 적중): `viper_distill._suppress_stdout()`는 **너 자신의 `print`도 삼킨다** → 데이터를 리스트에 모아 `with` 블록 **밖에서** 출력. detached python의 stdout→파일은 **블록버퍼링** → 중간확인하려면 `print(..., flush=True)`. foreground Bash `sleep` 루프는 2분서 잘리거나 백그라운드화 → `pgrep -f <name>` 유한 폴링 루프 또는 nohup+poll로 완료 감지. ⚠️**`pkill -f "X.sh"`는 자기 명령줄도 매칭→실행 중인 셸 자살(exit144)**: detached 재launch는 pkill/foreground-sleep 없이 별도 nohup으로. `grep -c pat f || echo 0`은 no-match서 "0\n0"→`[: integer` 에러(`n=$(grep -c…||true); n=${n:-0}` 사용). `make_feature_env`는 env 프로세스당 1회 캐시 → **축 노브 env는 `fac()` 호출 전 설정**(Pool `maxtasksperchild=1`이 잡당 새 워커 보장). ⚠️NanumGothic에 circled digit(①②) 글리프 없음(→tofu) — 플롯 라벨은 "(1)/(2)".
+- **서브에이전트 오케스트레이션 gotcha**(v3 세션 다발): Opus 서브에이전트가 배경 워처를 걸고 자기 턴을 끝내면 **완료 통지를 못 받아 멈춘 것처럼 보임**(3회 적중) → 에이전트 프롬프트에 "배경 워처 대기 금지, 유한 폴링(`for i in $(seq N); do pgrep -f X||break; sleep 30; done`)으로 한 번에 완주" 명시. 서브에이전트는 **일/주간 사용량 한도로 중간 종료**됨(트랜스크립트 보존) → 재개 시 `git status`·`pgrep`·산출 CSV로 상태복원 후 `SendMessage`로 이어붙임; 한도 소진 시 메인이 직접 마무리. 오케스트레이터는 서브에이전트가 detach한 잡의 완료를 **자기 워처로** 감시(에이전트 종료 후엔 그 잡이 미추적).
 
 ## Training box capacity (`aigpu0617`, **shared node**) — sizing parallel runs
 
