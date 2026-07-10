@@ -14,7 +14,7 @@
   - has_osrm_fallback: kakao 모드에서 n_leg_osrm_fallback>0 이면 Y, osrm 모드는 N/A
 
 출력: results/map/routing_provenance.csv
-사용법: PYTHONIOENCODING=utf-8 python3 vis_src/routing_provenance.py
+사용법: PYTHONIOENCODING=utf-8 python3 src/vis_src/routing_provenance.py
 """
 from __future__ import annotations
 
