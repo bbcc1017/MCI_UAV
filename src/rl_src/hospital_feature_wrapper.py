@@ -53,6 +53,13 @@ _COMMS_COLS = ["idle", "queue", "occ", "cap_remain"]          # 실시간 동적
 # + cap_remain 을 클립본(min(·, MCI_CAPREMAIN_CLIP=32))으로 교체 — max_send(≈670) 앵커로
 #   VecNorm 분산이 압살되던 스케일 결함 해소(신규 학습 전용, 구 모델 비호환).
 _LOAD_COLS = ["p_sent_c", "in_flight", "occ_ratio"]
+# essential+load+ctx (v4 2026-07-10, 근거 docs/v4_알고리즘개선_설계_2026-07-10.md): 스코어 추출
+# 지배항(순위·raw 분 모드비교)과 ExIt 천장의 결정론적 타이밍 성분을 관측화.
+#   eta_rank_amb = argsort-rank/(H-1) ∈[0,1]          정적 — 절대 ETA 아닌 "순위"가 결정 신호
+#   uav_timesave = clip((eta_amb−eta_uav)/eta_amb,±1) 정적 — 모드 비교는 raw 분 비율만 유효
+#   arrive_min   = min(그 병원행 이송중 잔여시간)/MCI_ARRIVE_NORM(60), clip MCI_ARRIVE_CLIP(2);
+#                  없으면 클립값 — in_flight "대수"에 없던 도착 "타이밍"(현장 발송기록=지득)
+_CTX_COLS = ["eta_rank_amb", "uav_timesave", "arrive_min"]
 # 글로벌: patient_agg(R/Y 2등급×5단계=10) + vehicle_agg(10) + time(1).
 #   p_at_site·n_amb_at_site·n_uav_at_site 는 각각 patient_agg stage1·vehicle_agg n_avail 의
 #   정확한 부분집합이라 제거(0손실). Green/Black 은 행동대상 아님(자동일괄 start_GB_transport)이라
@@ -62,6 +69,11 @@ _GLOBAL_DIM = 10 + 10 + 1
 # 표현 근거 / 가용 AMB·UAV 비율 / uav_frac(=uav_num/MCI_UAV_MAX=26, UAV 대수축 신호) /
 # t_norm(=min(time/MCI_TIME_NORM=240, 2)).
 _LOAD_GLOBAL_EXTRA = 5
+# ctx 글로벌 확장(+6, 전부 정적 지역 컨텍스트 — 지역 ID 아님·계산가능 특징이라 holdout 안전):
+# [frac(eta≤2), frac(eta≤4)](근접권 밀도) + p90(eta)/clip(산포) + tier3_frac +
+# uav_adv_frac(raw 분 기준 UAV 가 빠른 병원 비율) + min(최근접 raw ETA/MCI_ETA_MIN_NORM(30), 2)
+# (정규화 eta 가 지운 절대 스케일=도농 신호 복원).
+_CTX_GLOBAL_EXTRA = 6
 
 
 def _parse_variant():
@@ -157,6 +169,28 @@ class HospitalFeatureWrapper(gym.Wrapper):
             # cap_remain → 클립본 교체 + 부하 신호 3열 추가 (F 4→7)
             self._cols = ["is_tier3", "cap_remain_c", "eta_amb", "eta_uav"] + list(_LOAD_COLS)
             var_label = "essential+load"
+        self._ctx = "ctx" in toks
+        if self._ctx:
+            if not self._load:
+                raise ValueError(f"ctx 토큰은 essential+load 기반만 지원 (got MCI_OBS_VARIANT={toks})")
+            # v4: 순위·모드 시간절감·도착타이밍 3열 추가 (F 7→10)
+            self._cols = self._cols + list(_CTX_COLS)
+            var_label = "essential+load+ctx"
+            self._eta_rank_amb = (np.argsort(np.argsort(eta_amb)).astype(np.float32)
+                                  / max(self.H - 1, 1))
+            self._uav_timesave = np.clip((eta_amb - eta_uav) / np.maximum(eta_amb, 1e-6),
+                                         -1.0, 1.0).astype(np.float32)
+            self._arrive_norm = float(os.environ.get("MCI_ARRIVE_NORM", "60"))
+            self._arrive_clip = float(os.environ.get("MCI_ARRIVE_CLIP", "2.0"))
+            ena, pos = self._eta_amb, eta_amb[eta_amb > 0]
+            self._ctx_static = np.array([
+                float((ena <= 2.0).mean()), float((ena <= 4.0).mean()),
+                float(np.percentile(ena, 90)) / eta_clip,
+                float(self._is_tier3.mean()),
+                float((eta_uav < eta_amb).mean()),
+                min((float(pos.min()) if pos.size else 0.0)
+                    / float(os.environ.get("MCI_ETA_MIN_NORM", "30")), 2.0),
+            ], dtype=np.float32)
         self._F = len(self._cols)
         # load 스케일 노브(전 신규열 사전 유계 → VecNorm 러닝 std 유의미)
         self._ps_clip = float(os.environ.get("MCI_PSENT_CLIP", "32"))
@@ -169,7 +203,8 @@ class HospitalFeatureWrapper(gym.Wrapper):
         self._uav_num = uav_num
 
         # ---------- 4) obs space ----------
-        self._gdim = _GLOBAL_DIM + (_LOAD_GLOBAL_EXTRA if self._load else 0)
+        self._gdim = (_GLOBAL_DIM + (_LOAD_GLOBAL_EXTRA if self._load else 0)
+                      + (_CTX_GLOBAL_EXTRA if self._ctx else 0))
         self._flat_dim = self.H * self._F + self._gdim
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(self._flat_dim,), dtype=np.float32,
@@ -220,8 +255,23 @@ class HospitalFeatureWrapper(gym.Wrapper):
         comms = os.environ.get("MCI_CAP_GATE", "occ").strip().lower() != "psent"
         cap_used = (h[:, 2] + in_flight) if comms else p_sent
         cap_remain = np.maximum(self._max_send - cap_used, 0.0)
-        return {"h": h, "p_sent": p_sent, "in_flight": in_flight,
-                "cap_remain": cap_remain, "comms": comms}
+        d = {"h": h, "p_sent": p_sent, "in_flight": in_flight,
+             "cap_remain": cap_remain, "comms": comms}
+        if self._ctx:
+            # 병원별 최근접 도착 타이밍 — dest 1..H(1-based)·severity>0 관례는
+            # EntityManager.in_flight_by_hospital 과 동일. 이송중 없음 = 클립값(2.0).
+            arr = np.full(self.H, self._arrive_clip, dtype=np.float32)
+            for key in ('amb_states', 'uav_states'):
+                st = np.asarray(obs.get(key, ()), dtype=np.float32)
+                if st.size == 0:
+                    continue
+                m = (st[:, 0] >= 1) & (st[:, 2] > 0)
+                dst = st[m, 0].astype(int) - 1
+                t = np.clip(st[m, 1] / self._arrive_norm, 0.0, self._arrive_clip)
+                ok = (dst >= 0) & (dst < self.H)
+                np.minimum.at(arr, dst[ok], t[ok].astype(np.float32))
+            d["arrive_min"] = arr
+        return d
 
     def _entity(self, obs: dict, dyn: dict) -> np.ndarray:
         """병원당 특징 행렬 (H, F)."""
@@ -244,6 +294,10 @@ class HospitalFeatureWrapper(gym.Wrapper):
             "occ_ratio": (np.clip((h[:, 2] + dyn["in_flight"]) / np.maximum(self._max_send, 1.0),
                                   0.0, self._or_clip) if comms else z),
         }
+        if self._ctx:
+            col_map.update({"eta_rank_amb": self._eta_rank_amb,
+                            "uav_timesave": self._uav_timesave,
+                            "arrive_min": dyn["arrive_min"]})
         return np.stack([col_map[c] for c in self._cols], axis=1).astype(np.float32)  # (H, F)
 
     def _globals(self, obs: dict, dyn: dict) -> np.ndarray:
@@ -255,6 +309,8 @@ class HospitalFeatureWrapper(gym.Wrapper):
         ])                                                                            # (10,)
         # p_at_site/n_amb_at_site/n_uav_at_site 는 pa·va 의 부분집합이라 제거(중복 0손실).
         parts = [pa, va, np.asarray(obs['time'], dtype=np.float32).reshape(-1)]       # (1,)
+        if self._ctx:
+            parts.append(self._ctx_static)  # 정적 지역 컨텍스트 (+6) — reset 간 불변
         if self._load:
             # ρ = 잔여 긴급부하(R/Y 생애단계 0~2: 미구조+현장대기+이송중) / 잔여 유효용량(게이트 추종)
             urgent = float(pa[0] + pa[1] + pa[2] + pa[5] + pa[6] + pa[7])

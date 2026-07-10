@@ -225,6 +225,9 @@ def parse_args():
                    help="전역 ctx 폭(pointer 추출기 전용, 기본 64=구 아키텍처).")
     p.add_argument("--head_hidden", type=int, default=64,
                    help="PointerActionNet scorer 은닉폭(pointer 전용, 기본 64=구 아키텍처).")
+    p.add_argument("--n_attn_blocks", type=int, default=1,
+                   help="pointer 추출기 attention 블록 수(기본 1=구 아키텍처, ≥2 부터 "
+                        "FFN 포함 블록 증축 — v4).")
     p.add_argument("--region_weights", default=None,
                    help="지역 샘플링 가중 CSV(컬럼 region,weight) — 매니페스트 학습 전용. "
                         "미지정(기본)=균등 샘플링(기존 동작).")
@@ -240,7 +243,8 @@ def main():
           f"reward={args.reward_mode} norm_reward={args.norm_reward} extractor={args.extractor} "
           f"lr_anneal={args.lr_anneal} target_kl={args.target_kl} n_epochs={args.n_epochs} "
           f"gamma={args.gamma} gae_lambda={args.gae_lambda} "
-          f"embed={args.embed_dim} ctx={args.ctx_dim} head_hidden={args.head_hidden}")
+          f"embed={args.embed_dim} ctx={args.ctx_dim} head_hidden={args.head_hidden} "
+          f"n_attn_blocks={args.n_attn_blocks}")
 
     env_fns = [make_env_fn(args.config_path, seed=args.seed + i, rank=i, n_envs=args.n_envs,
                            region_weights=args.region_weights)
@@ -292,11 +296,13 @@ def main():
             policy_kwargs = dict(
                 features_extractor_class=HospitalTokenExtractor,
                 features_extractor_kwargs=dict(n_hospitals=H, entity_f=F, global_dim=gdim,
-                                               embed_dim=args.embed_dim, ctx_dim=args.ctx_dim),
+                                               embed_dim=args.embed_dim, ctx_dim=args.ctx_dim,
+                                               n_attn_blocks=args.n_attn_blocks),
                 head_hidden=args.head_hidden,  # PointerMaskablePolicy.__init__ 로 전달
             )
             print(f"[feature] pointer 추출기+head: H={H} F={F} global={gdim} "
-                  f"embed={args.embed_dim} ctx={args.ctx_dim} head_hidden={args.head_hidden}")
+                  f"embed={args.embed_dim} ctx={args.ctx_dim} head_hidden={args.head_hidden} "
+                  f"n_attn_blocks={args.n_attn_blocks}")
 
         # PPO 위생: lr anneal(진행률 p: 1→0 에 선형) / target_kl / n_epochs (미지정=SB3 기본)
         lr = (lambda p: args.learning_rate * p) if args.lr_anneal else args.learning_rate

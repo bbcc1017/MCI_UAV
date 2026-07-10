@@ -41,7 +41,8 @@ class HospitalTokenExtractor(BaseFeaturesExtractor):
     """
 
     def __init__(self, observation_space, n_hospitals: int, entity_f: int, global_dim: int,
-                 embed_dim: int = 32, n_heads: int = 4, ctx_dim: int = 64):
+                 embed_dim: int = 32, n_heads: int = 4, ctx_dim: int = 64,
+                 n_attn_blocks: int = 1):
         super().__init__(observation_space, features_dim=n_hospitals * embed_dim + ctx_dim)
         assert observation_space.shape[0] == n_hospitals * entity_f + global_dim, \
             f"obs dim {observation_space.shape[0]} != H*F+g ({n_hospitals}*{entity_f}+{global_dim})"
@@ -50,6 +51,21 @@ class HospitalTokenExtractor(BaseFeaturesExtractor):
         self.embed = nn.Sequential(nn.Linear(entity_f, embed_dim), nn.ReLU())
         self.attn = nn.MultiheadAttention(embed_dim, n_heads, batch_first=True)
         self.ln = nn.LayerNorm(embed_dim)
+        # (v4) 추가 attention 블록: [self-attn+LN → FFN(2e)+LN] × (n_attn_blocks−1).
+        # 기본 1 = 구 아키텍처와 state_dict 완전 동일(구 zip 로드 호환) — 1블록째는 위
+        # 고정 경로(attn/ln)가 담당. 병원 간 혼잡 결합(포인터의 병원별 독립 스코어가
+        # ctx 로만 보던 상호작용)을 직접 표현하는 증축.
+        self.blocks = None
+        if int(n_attn_blocks) > 1:
+            def _blk():
+                return nn.ModuleDict({
+                    "attn": nn.MultiheadAttention(embed_dim, n_heads, batch_first=True),
+                    "ln1": nn.LayerNorm(embed_dim),
+                    "ffn": nn.Sequential(nn.Linear(embed_dim, 2 * embed_dim), nn.ReLU(),
+                                         nn.Linear(2 * embed_dim, embed_dim)),
+                    "ln2": nn.LayerNorm(embed_dim),
+                })
+            self.blocks = nn.ModuleList([_blk() for _ in range(int(n_attn_blocks) - 1)])
         self.ctx = nn.Sequential(nn.Linear(embed_dim + global_dim, ctx_dim), nn.ReLU())
 
     def forward(self, observations: th.Tensor) -> th.Tensor:
@@ -59,6 +75,11 @@ class HospitalTokenExtractor(BaseFeaturesExtractor):
         t = self.embed(ent)                                   # (B, H, e)
         a, _ = self.attn(t, t, t, need_weights=False)
         t = self.ln(t + a)                                    # (B, H, e) 순열등변
+        if self.blocks is not None:
+            for blk in self.blocks:
+                a2, _ = blk["attn"](t, t, t, need_weights=False)
+                t = blk["ln1"](t + a2)
+                t = blk["ln2"](t + blk["ffn"](t))             # 순열등변 유지
         ctx = self.ctx(th.cat([t.mean(dim=1), glob], dim=1))  # (B, ctx) 순열불변
         return th.cat([t.reshape(B, -1), ctx], dim=1)
 
