@@ -37,6 +37,15 @@ HD_LAYERS = [
     "lt_p_c1trafficlight",           # 신호등(점)
     "lt_l_c3vehicleprotectionsafety",  # 차량방호(가드레일)
     "lt_c_c4speedbump",              # 과속방지턱
+    # ↓ 도로 3D 전환(2026-07-11): 전 레이어 z(고도) 포함 — 고가/IC·JC 실높이 소스
+    "lt_c_a3drivewaysection",        # 차도구간(면) — 도로 표면 폴리곤
+    "lt_l_a2link",                   # 주행경로링크(차로수/좌우인접/노드 위상)
+    "lt_p_a1node",                   # 주행경로노드(분기/합류점)
+    "lt_c_b3surfacemark",            # 노면표시(면: 화살표/횡단보도/도류대)
+    "lt_p_b1safetysign",             # 안전표지(점 — 표지판 프롭)
+    "lt_l_c5heightbarrier",          # 높이장벽(중앙분리대 등)
+    "lt_p_c6postpoint",              # 지주(표지판/신호 폴)
+    "lt_c_a5parkinglot",             # 주차장(면)
 ]
 
 
