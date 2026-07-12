@@ -289,6 +289,7 @@ tools/nationwide/blocks/
 tools/nationwide/sgg/
 # OSM 시군구별 산출물 (osm_*.py 로 재생성 — 스크립트만 버전관리)
 tools/nationwide/area/
+tools/nationwide/.water2/
 tools/nationwide/feat/
 tools/nationwide/poi/
 tools/nationwide/roads2/
