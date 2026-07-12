@@ -53,7 +53,8 @@ def _log(msg):
     sys.stderr.flush()
 
 
-def planner_episode(fac, model, seed, K, h, m, leaf_fn, clairvoyant, reseed_base):
+def planner_episode(fac, model, seed, K, h, m, leaf_fn, clairvoyant, reseed_base,
+                    switch_margin=0.0):
     """한 에피소드: (1) 챔피언 greedy 베이스라인 → (2) 같은 시드에서 플래너 에피소드.
     (1)(2) 순서·수식은 rollout_oracle.lookahead_episode 와 동일(앵커 비트 동일성).
     반환 (pdr_base, pdr_planner, n_dec, n_switch, ms_per_dec)."""
@@ -74,7 +75,8 @@ def planner_episode(fac, model, seed, K, h, m, leaf_fn, clairvoyant, reseed_base
 
     # ---- (2) planner: 매 결정 TruncatedRolloutPlanner.act ----
     planner = TruncatedRolloutPlanner(model, K=K, h=h, m=m, leaf_fn=leaf_fn,
-                                      clairvoyant=clairvoyant, reseed_base=reseed_base)
+                                      clairvoyant=clairvoyant, reseed_base=reseed_base,
+                                      switch_margin=switch_margin)
     obs, _ = env.reset(seed=seed)
     prev_p = env.unwrapped.preventable_woG
     done, w = False, 0.0
@@ -101,7 +103,7 @@ def worker(job):
     """(region, cfg, model_dir, seed0, ep 리스트, K, h, m, leaf_path, clairvoyant,
     reseed_base) → per-ep 행 목록."""
     (region, cfg, model_dir, seed0, eps, K, h, m,
-     leaf_path, clairvoyant, reseed_base) = job
+     leaf_path, clairvoyant, reseed_base, switch_margin) = job
     from rollout_oracle import _set_env_vars
     _set_env_vars()                                  # essential+load · occ (env 빌드 전)
     import torch as th
@@ -124,7 +126,8 @@ def worker(job):
             for ep in eps:
                 t0 = time.time()
                 pdr_b, pdr_p, nd, ns, mspd = planner_episode(
-                    fac, model, seed0 + ep, K, h, m, leaf_fn, clairvoyant, reseed_base)
+                    fac, model, seed0 + ep, K, h, m, leaf_fn, clairvoyant, reseed_base,
+                                switch_margin=switch_margin)
                 rows.append({"region": region, "ep": ep,
                              "pdr_planner": pdr_p, "pdr_base": pdr_b,
                              "n_dec": nd, "n_switch": ns,
@@ -154,6 +157,8 @@ def main():
     ap.add_argument("--clairvoyant", action="store_true",
                     help="재시드 생략(=기존 오라클 천리안 — 앵커/격차분해용)")
     ap.add_argument("--reseed_base", type=int, default=777000)
+    ap.add_argument("--switch_margin", type=float, default=0.0,
+                    help="스위치 마진 ε(pdrwog 단위) — 평균 개선>ε×preventable 일 때만 이탈")
     ap.add_argument("--workers", type=int, default=32)
     ap.add_argument("--chunk", type=int, default=5, help="잡당 에피소드 수(부하 균형)")
     ap.add_argument("--seed0", type=int, default=SEED0_DEFAULT)
@@ -207,9 +212,10 @@ def main():
         todo = [ep for ep in range(A.n_eps) if (k, ep) not in done]
         for i in range(0, len(todo), A.chunk):
             jobs.append((k, cfg, A.model_dir, A.seed0, todo[i:i + A.chunk],
-                         A.K, A.h, A.m, leaf_path, A.clairvoyant, A.reseed_base))
+                         A.K, A.h, A.m, leaf_path, A.clairvoyant, A.reseed_base,
+                         A.switch_margin))
     _log(f"[planner] regions={len(pairs)} n_eps={A.n_eps} K={A.K} h={A.h} m={A.m} "
-         f"leaf={A.leaf} clairvoyant={A.clairvoyant} jobs={len(jobs)} "
+         f"leaf={A.leaf} clairvoyant={A.clairvoyant} margin={A.switch_margin} jobs={len(jobs)} "
          f"workers={A.workers} out={A.out}")
     if not jobs:
         _log("[planner] 할 일 없음(전부 완료)")

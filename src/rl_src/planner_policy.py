@@ -68,15 +68,19 @@ class TruncatedRolloutPlanner:
         leaf_fn: leaf_value.load_leaf 콜백((B,355)→(B,) pdrwog 단위) — None 이면 절단분 0.
         clairvoyant: True 면 재시드 생략(=기존 오라클, rng 비트복제 천리안).
         reseed_base: 비천리안 재시드 베이스(평가 CRN 11000·리프 20000 과 분리된 777000 대역).
+        switch_margin: 스위치 마진 ε(pdrwog 단위) — 상상 미래 평균 개선이
+            ε×preventable_woG 를 초과할 때만 greedy 에서 이탈. m 유한 MC 의 잔여
+            노이즈가 한계 스위치를 만드는 것을 차단(0=기존 엄격개선).
     """
 
     def __init__(self, model, K=8, h=10, m=2, leaf_fn=None, clairvoyant=False,
-                 reseed_base=777000):
+                 reseed_base=777000, switch_margin=0.0):
         self.model = model
         self.K, self.h, self.m = int(K), int(h), int(m)
         self.leaf_fn = leaf_fn
         self.clairvoyant = bool(clairvoyant)
         self.reseed_base = int(reseed_base)
+        self.switch_margin = float(switch_margin)
         self._dest_tab = None
         self._cloner = None
         # act() 부가정보: lookahead 수행여부·스위치여부·소요 ms·후보 수
@@ -158,20 +162,28 @@ class TruncatedRolloutPlanner:
         info["n_cand"] = len(cand)
         preventable = float(env.unwrapped.preventable_woG)
         m_eff = 1 if self.clairvoyant else max(1, self.m)
+        # 비천리안 CRN(2026-07-13 수정): j번째 상상 미래 시드를 **후보 간 공유**(구현 1판은
+        # 후보idx 를 시드에 포함 → 후보마다 다른 실현으로 Q 비교 = 랭킹이 실현 노이즈에
+        # 오염되어 그리드 전 구성 악화·과잉 스위치 32회/ep). 진짜 미래는 여전히 미지
+        # (비천리안 유지) — 같은 상상 미래 위 paired 비교로 분산만 소거. 결정마다 다른
+        # 스트림(_n_dec 반영)이라 특정 실현 패턴에 고착되지 않음.
+        self._n_dec = getattr(self, "_n_dec", 0) + 1
+        seeds = [self.reseed_base + ep_seed * 97 + j * 13 + self._n_dec * 10007
+                 for j in range(m_eff)]
         qs = []
-        for ci, a in enumerate(cand):
+        for a in cand:
             acc = 0.0
             for j in range(m_eff):
                 clone = self._cloner.clone(env, ep_seed, None)
                 if not self.clairvoyant:
                     # 비천리안 핵심: 복제 rng 를 미래-무지 스트림으로 교체(원본 무접촉).
-                    clone.unwrapped.ev_manager.set_seed(np.random.default_rng(
-                        self.reseed_base + ep_seed * 97 + j * 13 + ci))
+                    clone.unwrapped.ev_manager.set_seed(np.random.default_rng(seeds[j]))
                 acc += self._rollout(clone, a, preventable)
             qs.append(acc / m_eff)
 
         gi, bi = cand.index(g), int(np.argmax(qs))
-        if qs[bi] > qs[gi]:                      # 엄격 개선일 때만 스위치(동률=greedy 유지)
+        # 마진 초과 개선일 때만 스위치(동률·미세개선=greedy 유지 — margin=0 이면 기존 엄격개선)
+        if qs[bi] > qs[gi] + self.switch_margin * preventable:
             a_exec = cand[bi]
             info["switched"] = (a_exec != g)
         else:
