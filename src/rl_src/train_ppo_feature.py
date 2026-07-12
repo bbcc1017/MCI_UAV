@@ -205,9 +205,10 @@ def parse_args():
                    help="epoch 조기중단 KL 상한(권장 0.03). 미지정=SB3 기본(무제동).")
     p.add_argument("--n_epochs", type=int, default=None,
                    help="롤아웃 재사용 epoch 수(권장 4~6). 미지정=SB3 기본(10).")
-    p.add_argument("--reward_mode", choices=["raw", "woG", "pdrwog", "rywt"], default="woG",
+    p.add_argument("--reward_mode", choices=["raw", "woG", "pdrwog", "rywt", "pdrwog_da"], default="woG",
                    help="보상 변환(RewardRedesignWrapper). 기본 woG(Green 제외). "
-                        "pdrwog=r_woG/preventable_woG(0~1 규모불변, --norm_reward 병용 권장).")
+                        "pdrwog=r_woG/preventable_woG(0~1 규모불변, --norm_reward 병용 권장). "
+                        "pdrwog_da=결정귀속 재배치(합 보존, v5 P2).")
     p.add_argument("--norm_reward", action="store_true", default=False,
                    help="VecNormalize 보상 정규화(기본 off — woG 스케일 해석/휴리스틱 비교 유지).")
     p.add_argument("--resume_from", default=None,
