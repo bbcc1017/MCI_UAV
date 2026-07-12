@@ -41,12 +41,14 @@ MODEL_VARIANT = {
 
 
 def parse_model_specs(spec: str, model_root: str):
-    """--models 파싱 → [(name, mdir, variant)].
+    """--models 파싱 → [(name, mdir, variant, algo)].
 
     항목 2형식(쉼표구분 혼용 가능):
       * 레거시 단축명 "L3_pointer"        → (model_root/L3_pointer_s0, MODEL_VARIANT 참조)
-      * 일반형 "이름=디렉터리=obs_variant" → 임의 모델 디렉터리(상대경로는 REPO 기준)
-    기본값(L0~L3)은 전부 레거시 형식 → 기존 동작 불변.
+      * 일반형 "이름=디렉터리=obs_variant[=algo]" → 임의 모델 디렉터리(상대경로는 REPO 기준).
+        algo(v5 zoo): ppo|dqn|qrdqn|sacd|reinforce — 4번째 토큰 명시가 우선, 생략 시
+        mdir/meta.json(train_zoo 저장 관례)의 "algo" 자동 감지, 둘 다 없으면 ppo.
+    기본값(L0~L3)은 전부 레거시 형식 → 기존 동작 불변(algo="ppo").
     """
     entries = []
     for tok in spec.split(","):
@@ -55,17 +57,55 @@ def parse_model_specs(spec: str, model_root: str):
             continue
         if "=" in tok:
             parts = tok.split("=")
-            if len(parts) != 3:
-                raise ValueError(f"--models 항목 형식 오류(이름=디렉터리=obs_variant): {tok!r}")
-            name, mdir, variant = parts
+            if len(parts) not in (3, 4):
+                raise ValueError(f"--models 항목 형식 오류(이름=디렉터리=obs_variant[=algo]): {tok!r}")
+            name, mdir, variant = parts[:3]
+            algo = parts[3] if len(parts) == 4 else None
             if not os.path.isabs(mdir):
                 mdir = os.path.join(REPO, mdir)
         else:
             if tok not in MODEL_VARIANT:
-                raise ValueError(f"미지 단축명 {tok!r} — 일반형 '이름=디렉터리=obs_variant' 사용")
+                raise ValueError(f"미지 단축명 {tok!r} — 일반형 '이름=디렉터리=obs_variant[=algo]' 사용")
             name, mdir, variant = tok, os.path.join(model_root, f"{tok}_s0"), MODEL_VARIANT[tok]
-        entries.append((name, mdir, variant))
+            algo = None
+        if algo is None:  # meta.json(v5 zoo 저장 관례) 자동 감지 — 없으면 기존 기본 ppo
+            meta_p = os.path.join(mdir, "meta.json")
+            if os.path.exists(meta_p):
+                try:
+                    with open(meta_p, encoding="utf-8") as f:
+                        algo = json.load(f).get("algo", "ppo")
+                except Exception:
+                    algo = "ppo"
+            else:
+                algo = "ppo"
+        entries.append((name, mdir, variant, algo))
     return entries
+
+
+def _load_policy(algo: str, path: str):
+    """algo별 모델 로드 → policy_fn(obs, mask, unwrapped)->int (v5 zoo 로더 디스패치).
+
+    ppo=기존 경로 그대로(MaskablePPO.load + ppo_policy — pointer/deepsets 역직렬화 import 는
+    worker 상단이 담당). 나머지는 지연 import(파일 부재 시 ppo 경로 무영향) 후
+    공통 계약 `predict_masked` 를 evaluate.masked_model_policy 로 래핑."""
+    if algo == "ppo":
+        from sb3_contrib import MaskablePPO
+        from evaluate import ppo_policy
+        return ppo_policy(MaskablePPO.load(path, device="cpu"))
+    from evaluate import masked_model_policy
+    if algo == "dqn":
+        from masked_dqn import MaskedDQN
+        return masked_model_policy(MaskedDQN.load(path, device="cpu"))
+    if algo == "qrdqn":
+        from masked_qrdqn import MaskedQRDQN
+        return masked_model_policy(MaskedQRDQN.load(path, device="cpu"))
+    if algo == "sacd":
+        from masked_sac_discrete import SACDiscrete
+        return masked_model_policy(SACDiscrete.load(path, device="cpu"))
+    if algo == "reinforce":
+        from reinforce_vec import ReinforceVec
+        return masked_model_policy(ReinforceVec.load(path, device="cpu"))
+    raise ValueError(f"미지 algo {algo!r} (ppo|dqn|qrdqn|sacd|reinforce)")
 
 
 def _rollout_woG(factory, policy_fn, seed):
@@ -109,24 +149,25 @@ def worker(job):
         with _suppress_stdout():
             # ---- 정책별 (factory, policy_fn) 구성 ----
             entries = []  # (name, factory, policy_fn)
-            for m, mdir, variant in model_entries:
+            for m, mdir, variant, algo in model_entries:
+                ext = ".pt" if algo == "reinforce" else ".zip"  # reinforce=torch dict, 그외 SB3 zip
                 if use_ckpt:
                     cks = sorted([f for f in os.listdir(os.path.join(mdir, "checkpoints"))
-                                  if f.endswith(".zip")],
+                                  if f.endswith(ext)],
                                  key=lambda f: int(f.split("_")[-2]))
                     if not cks:
                         continue
                     zip_path = os.path.join(mdir, "checkpoints", cks[-1])
                     norm = None  # 체크포인트엔 vecnorm 없음 → 스모크(형상만)
                 else:
-                    zip_path = os.path.join(mdir, "final_model.zip")
+                    zip_path = os.path.join(mdir, f"final_model{ext}")
                     if not os.path.exists(zip_path):
                         continue
                     vn = os.path.join(mdir, "vecnormalize.pkl")
                     norm = load_vecnorm(vn) if os.path.exists(vn) else None
-                model = MaskablePPO.load(zip_path, device="cpu")
+                pol = _load_policy(algo, zip_path)  # v5 zoo 디스패치(ppo=기존 경로 동일)
                 fac = build_factory(variant, norm)
-                entries.append((m, fac, ppo_policy(model)))
+                entries.append((m, fac, pol))
 
             # 규칙 3종: norm 없는 essential env(obs 비의존이나 형상 유지)
             rule_fac = build_factory("essential", None)
@@ -178,7 +219,8 @@ def main():
     ap.add_argument("--model_root", default=os.path.join(REPO, "results/rl/redesign"))
     ap.add_argument("--models", default="L0_base,L1_hygiene,L2_loadobs,L3_pointer",
                     help="쉼표구분. 레거시 단축명(L0_base 등, model_root/<명>_s0) 또는 "
-                         "일반형 '이름=디렉터리=obs_variant'(신규 모델 평가용) 혼용 가능.")
+                         "일반형 '이름=디렉터리=obs_variant[=algo]'(신규 모델 평가용) 혼용 가능. "
+                         "algo 생략 시 meta.json 자동 감지→ppo(v5 zoo: dqn|qrdqn|sacd|reinforce).")
     ap.add_argument("--n_eps", type=int, default=1000)
     ap.add_argument("--workers", type=int, default=17)
     ap.add_argument("--use_ckpt", action="store_true", help="스모크: 최신 ckpt+norm없음")

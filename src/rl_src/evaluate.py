@@ -98,6 +98,17 @@ def ppo_policy(model):
     return _fn
 
 
+def masked_model_policy(model):
+    """v5 zoo 공통 어댑터 — 전 v5 알고(dqn/qrdqn/sacd/reinforce)는 `predict_masked`
+    계약을 구현한다(obs 는 호출자가 정규화 전달). paired_eval_ladder 등 판정 하네스의
+    `fn(obs, mask, env_unwrapped)->int` 규약으로 래핑."""
+    def _fn(obs, mask, env_unwrapped):
+        return int(model.predict_masked(np.asarray(obs),
+                                        np.asarray(mask, dtype=bool),
+                                        deterministic=True))
+    return _fn
+
+
 def dqn_policy(model):
     import torch
     from train_dqn import predict_with_mask  # noqa
