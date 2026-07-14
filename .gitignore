@@ -167,6 +167,11 @@ venv.bak/
 # mkdocs documentation
 /site
 
+# Node 아티팩트(이 레포는 Python/C# — package.json 없음. 도구가 루트서 npm 건드릴 때
+# 생기는 떠돌이 stub 방어)
+package-lock.json
+node_modules/
+
 # mypy
 .mypy_cache/
 .dmypy.json
