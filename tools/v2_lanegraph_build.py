@@ -371,21 +371,29 @@ def main():
                        "invalid_left_ref": bad_l, "invalid_right_ref": bad_r,
                        "special_lane_91p": int((flags & F_SPECIAL).astype(bool).sum())}
 
-    # 약연결 성분(무방향: succ + l/r)
+    # 약연결 성분(무방향: succ + l/r) — 판정은 구내 링크 한정(강변/시계 구는 spill 조각이 성분수를 부풀림)
     dsu = DSU(n)
     for i in range(n):
         for j in succ_lists[i]:
             dsu.union(i, j)
         if leftI[i] >= 0: dsu.union(i, int(leftI[i]))
         if rightI[i] >= 0: dsu.union(i, int(rightI[i]))
-    comp = {}
+    inside_mask = [inpoly(lpts[i][len(lpts[i]) // 2]) for i in range(n)]
+    n_inside = sum(inside_mask)
+    comp, comp_in = {}, {}
     for i in range(n):
-        comp[dsu.find(i)] = comp.get(dsu.find(i), 0) + 1
+        r0 = dsu.find(i)
+        comp[r0] = comp.get(r0, 0) + 1
+        if inside_mask[i]:
+            comp_in[r0] = comp_in.get(r0, 0) + 1
     wcc = max(comp.values()) / n if n else 0.0
+    wcc_in = (max(comp_in.values()) / n_inside) if n_inside else 0.0
+    rep["links"]["inside"] = n_inside
     rep["topology"]["wcc_max_frac"] = round(wcc, 4)
+    rep["topology"]["wcc_inside_frac"] = round(wcc_in, 4)
     rep["topology"]["wcc_count"] = len(comp)
     print(f"[graph] succ 합계 {sum(map(len, succ_lists))}, dead-end {dead_end}(비경계 {nonb_dead}), "
-          f"최대 약연결 {wcc:.1%}/{len(comp)}성분", flush=True)
+          f"약연결 전체 {wcc:.1%}/{len(comp)}성분 · 구내 {wcc_in:.1%}({n_inside}링크)", flush=True)
 
     # ── 제한속도 ────────────────────────────────────────────────
     speed = np.zeros(n, dtype=np.float64)
@@ -772,7 +780,7 @@ def main():
 
     # ── 합격기준 판정 ───────────────────────────────────────────
     crit = {
-        "wcc>=0.95": wcc >= 0.95,
+        "wcc>=0.95": wcc_in >= 0.95,
         "isolated_deadend<2%": (nb_no_lr / n if n else 0) < 0.02,
         "signal_attach>=99%": (att / n_sig if n_sig else 1) >= 0.99,
         "stopS_real>=85%": (real_in / n_app_in if n_app_in else 1) >= 0.85,
