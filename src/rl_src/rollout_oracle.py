@@ -46,10 +46,19 @@ SEED0_DEFAULT = 11000
 H_DEFAULT = 47
 
 
-def _set_env_vars():
-    """L3 학습과 동일 조건(essential+load·occ) — env 빌드/step 전에 설정."""
-    os.environ["MCI_OBS_VARIANT"] = "essential+load"
-    os.environ["MCI_CAP_GATE"] = "occ"
+def _set_env_vars(respect_existing=False):
+    """L3 학습과 동일 조건(essential+load·occ) — env 빌드/step 전에 설정.
+
+    respect_existing(v6): True 면 이미 설정된 env var 를 존중(setdefault) —
+    planner_eval --obs_variant/--h_pad 로 v6 모델(essential+load+valid, 402)을
+    평가할 때 워커의 하드 강제가 main 설정을 덮어쓰는 것을 방지. 기본 False
+    (오라클/리프 등 기존 경로는 하드 강제 유지 — 잔류 env var 오염 방어)."""
+    if respect_existing:
+        os.environ.setdefault("MCI_OBS_VARIANT", "essential+load")
+        os.environ.setdefault("MCI_CAP_GATE", "occ")
+    else:
+        os.environ["MCI_OBS_VARIANT"] = "essential+load"
+        os.environ["MCI_CAP_GATE"] = "occ"
 
 
 def _dest_table(mask_len, H):

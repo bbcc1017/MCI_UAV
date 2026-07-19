@@ -105,7 +105,9 @@ def worker(job):
     (region, cfg, model_dir, seed0, eps, K, h, m,
      leaf_path, clairvoyant, reseed_base, switch_margin) = job
     from rollout_oracle import _set_env_vars
-    _set_env_vars()                                  # essential+load · occ (env 빌드 전)
+    # (v6) 상속 존중: main 의 --obs_variant/--h_pad 설정(fork 상속)을 워커가 덮어쓰지 않음.
+    # 미설정 시 기본(essential+load·occ)은 setdefault 로 동일 유지.
+    _set_env_vars(respect_existing=True)
     import torch as th
     th.set_num_threads(1)
     from sb3_contrib import MaskablePPO
