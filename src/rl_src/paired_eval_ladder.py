@@ -134,6 +134,7 @@ def worker(job):
     from sb3_contrib import MaskablePPO
     from hospital_set_extractor import HospitalSetExtractor  # noqa: F401 (deepsets 역직렬화)
     from pointer_policy import HospitalTokenExtractor, PointerMaskablePolicy  # noqa: F401
+    import pad_vecnorm  # noqa: F401 (v6 valid: PadAwareVecNormalize pickle 해석용 — pointer 전례)
     from viper_distill import make_feature_env, load_vecnorm, _suppress_stdout
     from evaluate import ppo_policy
     from distill_policy import make_heuristic_policy
@@ -141,6 +142,12 @@ def worker(job):
 
     def build_factory(variant, norm):
         os.environ["MCI_OBS_VARIANT"] = variant
+        # (v6) valid variant 는 병원 패딩 레이아웃 필수 — HospitalFeatureWrapper 가
+        # "valid 인데 MCI_H_PAD 없음"이면 에러. 미설정 시만 47(고정 fixed_hos_num=H_DEFAULT)
+        # 로 설정하고 외부 지정은 존중. 이후 비-valid 빌드(규칙 essential 등)도 이 패딩을 타
+        # 므로 make_cap_policy 의 H_DEFAULT=47 코덱과 자연 정합(자연-H 판정 시 규칙 무크래시).
+        if "valid" in variant:
+            os.environ.setdefault("MCI_H_PAD", "47")
         fac = make_feature_env(cfg, norm)
         fac(seed=SEED)  # 강제 빌드(현재 variant 로 캐시 고정) — 이후 env var 바뀌어도 무관
         return fac

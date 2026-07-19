@@ -162,10 +162,23 @@ def main():
     ap.add_argument("--workers", type=int, default=32)
     ap.add_argument("--chunk", type=int, default=5, help="잡당 에피소드 수(부하 균형)")
     ap.add_argument("--seed0", type=int, default=SEED0_DEFAULT)
+    # (v6) 패딩 env 제어: 미지정=환경변수 상속(구 동작). 지정 시 main 에서 os.environ 설정 →
+    # Pool 워커가 fork 로 상속(단 worker 의 _set_env_vars 가 MCI_OBS_VARIANT 를 essential+load
+    # 로 고정하므로 obs_variant 는 essential+load 계열 챔피언에만 유효; MCI_H_PAD 는 무간섭 보존).
+    ap.add_argument("--obs_variant", default=None,
+                    help="MCI_OBS_VARIANT 명시(기본 None=상속). 자연-H 챔피언 판정=essential+load")
+    ap.add_argument("--h_pad", default=None,
+                    help="MCI_H_PAD 명시(기본 None=상속). 자연-H 시나리오를 고정 레이아웃(예 47)으로 패딩")
     ap.add_argument("--validate", action="store_true", help="deepcopy 결정론 검증만 하고 종료")
     ap.add_argument("--validate_steps", type=int, default=120)
     ap.add_argument("--out", default=os.path.join(REPO, "results/rl/redesign/planner_eval.csv"))
     A = ap.parse_args()
+
+    # (v6) obs variant/H_pad 를 Pool fork 전에 설정 → 워커 상속. 미지정 시 미설정(구 동작 불변).
+    if A.obs_variant:
+        os.environ["MCI_OBS_VARIANT"] = A.obs_variant
+    if A.h_pad:
+        os.environ["MCI_H_PAD"] = str(A.h_pad)
 
     # ---- 대상 지역: 시도17 판정(기본) 또는 시군구40 튜닝풀 ----
     if A.tune_pool40:
@@ -216,6 +229,7 @@ def main():
                          A.switch_margin))
     _log(f"[planner] regions={len(pairs)} n_eps={A.n_eps} K={A.K} h={A.h} m={A.m} "
          f"leaf={A.leaf} clairvoyant={A.clairvoyant} margin={A.switch_margin} jobs={len(jobs)} "
+         f"variant={A.obs_variant or '(상속)'} h_pad={A.h_pad or '(상속)'} "
          f"workers={A.workers} out={A.out}")
     if not jobs:
         _log("[planner] 할 일 없음(전부 완료)")

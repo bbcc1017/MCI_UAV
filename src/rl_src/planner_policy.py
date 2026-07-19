@@ -130,7 +130,12 @@ class TruncatedRolloutPlanner:
             obs = _current_obs(env)
         if self._dest_tab is None or len(self._dest_tab) != len(mask):
             from rollout_oracle import _dest_table
-            self._dest_tab = _dest_table(len(mask), env.unwrapped.H)
+            # (v6) dest 테이블은 mask 레이아웃(H_pad)과 정합해야 한다: 패딩 env 는
+            # len(mask)=2×(H_pad+1)×2 인데 unwrapped.H=실H → 오정렬(_codec_from_mask 예외).
+            # gym.Wrapper 속성 위임으로 HospitalFeatureWrapper.H(레이아웃 H_pad)를 잡고,
+            # 구 고정47 경로는 실H=H_pad=47 라 동일값(수치 무영향).
+            H_layout = int(getattr(env, "H", env.unwrapped.H))
+            self._dest_tab = _dest_table(len(mask), H_layout)
         if self._cloner is None:
             from rollout_oracle import Cloner
             self._cloner = Cloner("deepcopy", None, None)  # 플래너는 deepcopy 전용
