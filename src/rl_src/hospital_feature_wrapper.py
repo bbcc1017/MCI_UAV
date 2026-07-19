@@ -96,23 +96,33 @@ class HospitalFeatureWrapper(gym.Wrapper):
         # ---------- 1) action 차원 (FlattenAndDiscreteWrapper 동등 로직) ----------
         nvec = env.action_space.nvec.tolist()  # [3, H+1, 2]
         assert len(nvec) == 3, f"기대 형식 [class, dest, mode], got {nvec}"
-        self._orig_nvec = nvec
-        self.H = nvec[1] - 1
+        # (v6) MCI_H_PAD: 병원 슬롯 패딩 — 자연-H(가변 병원 수) 시나리오를 고정 차원 정책이
+        # 소비하도록 obs/액션/마스크/코덱 레이아웃만 H_pad 기준으로 확장. sim 은 실 H(_H_real)
+        # 로 돌고, 패딩 dest 는 action_masks 가 차단(step 에 방어 가드). 미설정 = 구 동작과
+        # 비트동일(pad_smoke.py 로 봉인).
+        self._sim_nvec = list(nvec)                     # sim 경계(joint mask reshape)용 실 차원
+        self._H_real = nvec[1] - 1
+        _pad = os.environ.get("MCI_H_PAD", "").strip()
+        self.H = int(_pad) if _pad else self._H_real    # 레이아웃 H(외부 노출: n_hospitals 등)
+        if self._H_real > self.H:
+            raise ValueError(f"실 병원수 {self._H_real} > MCI_H_PAD {self.H} — "
+                             f"H_pad 상향 또는 시나리오 max_hos_num cap 필요")
+        self._orig_nvec = [nvec[0], self.H + 1, nvec[2]]  # 레이아웃 nvec(코덱/마스크 shape)
 
         u = env.unwrapped
         amb_num = int(getattr(u, "amb_num", 0))
         uav_num = int(getattr(u, "uav_num", 0))
         if amb_num == 0 and uav_num > 0:
             self._fixed_mode = 1
-            self._effective_nvec = [nvec[0], nvec[1]]
+            self._effective_nvec = [self._orig_nvec[0], self._orig_nvec[1]]
             mode_label = "UAV-only (mode=1 고정)"
         elif uav_num == 0 and amb_num > 0:
             self._fixed_mode = 0
-            self._effective_nvec = [nvec[0], nvec[1]]
+            self._effective_nvec = [self._orig_nvec[0], self._orig_nvec[1]]
             mode_label = "AMB-only (mode=0 고정)"
         else:
             self._fixed_mode = None
-            self._effective_nvec = nvec
+            self._effective_nvec = list(self._orig_nvec)
             mode_label = "AMB+UAV (mode 자유)"
         self._n_actions = int(np.prod(self._effective_nvec))
         self.action_space = spaces.Discrete(self._n_actions)
@@ -130,15 +140,15 @@ class HospitalFeatureWrapper(gym.Wrapper):
         # ETA(분) = lognormal 평균(amb/uav_HtoS_t[0]) — 없으면 거리/속도로 폴백. (#1)
         ambp = u.en_manager.en_properties.get('ambulance', {})
         uavp = u.en_manager.en_properties.get('uav', {})
-        d_road = np.asarray(hp.get('d_HtoS_road', hp.get('d_HtoS_euc', np.zeros(self.H))), dtype=np.float32)
+        d_road = np.asarray(hp.get('d_HtoS_road', hp.get('d_HtoS_euc', np.zeros(self._H_real))), dtype=np.float32)
         d_euc = np.asarray(hp.get('d_HtoS_euc', d_road), dtype=np.float32)
         amb_t = ambp.get('amb_HtoS_t', None)
-        if amb_t is not None and len(amb_t[0]) == self.H:
+        if amb_t is not None and len(amb_t[0]) == self._H_real:
             eta_amb = np.asarray(amb_t[0], dtype=np.float32)
         else:
             eta_amb = d_road * 60.0 / (float(ambp.get('amb_v', 40)) or 40.0)
         uav_t = uavp.get('uav_HtoS_t', None)
-        if uav_t is not None and len(uav_t[0]) == self.H:
+        if uav_t is not None and len(uav_t[0]) == self._H_real:
             eta_uav = np.asarray(uav_t[0], dtype=np.float32)
         else:
             eta_uav = d_euc * 60.0 / (float(uavp.get('uav_v', 80)) or 80.0)
@@ -147,6 +157,15 @@ class HospitalFeatureWrapper(gym.Wrapper):
         eta_clip = float(os.environ.get("MCI_ETA_CLIP", "10.0"))
         self._eta_amb = np.minimum(self._norm_by_min(eta_amb), eta_clip).astype(np.float32)
         self._eta_uav = np.minimum(self._norm_by_min(eta_uav), eta_clip).astype(np.float32)
+        # (v6) 정적 특징 패딩: 패딩 병원 = "무한 원거리 무용 병원"(tier3/용량 0, eta=클립상한
+        # — eta=0 은 "초근접" 오독이라 금지). _helipad 는 이미 H_pad 사이즈 zeros 로 생성됨.
+        if self.H > self._H_real:
+            pn = self.H - self._H_real
+            z = np.zeros(pn, dtype=np.float32)
+            self._is_tier3 = np.concatenate([self._is_tier3, z])
+            self._max_send = np.concatenate([self._max_send, z])
+            self._eta_amb = np.concatenate([self._eta_amb, np.full(pn, eta_clip, dtype=np.float32)])
+            self._eta_uav = np.concatenate([self._eta_uav, np.full(pn, eta_clip, dtype=np.float32)])
 
         # ---------- 3) MCI_OBS_VARIANT → 특징 열 선택 (local/comms/full/essential[+load]) ----------
         toks = _parse_variant()
@@ -173,6 +192,8 @@ class HospitalFeatureWrapper(gym.Wrapper):
         if self._ctx:
             if not self._load:
                 raise ValueError(f"ctx 토큰은 essential+load 기반만 지원 (got MCI_OBS_VARIANT={toks})")
+            if self.H != self._H_real:
+                raise ValueError("ctx variant 는 MCI_H_PAD 미지원(v4 기각 변형 — 패딩 배선 없음)")
             # v4: 순위·모드 시간절감·도착타이밍 3열 추가 (F 7→10)
             self._cols = self._cols + list(_CTX_COLS)
             var_label = "essential+load+ctx"
@@ -211,9 +232,10 @@ class HospitalFeatureWrapper(gym.Wrapper):
         )
         self._ct_cache = None  # 등급-tier 치료가능 마스크 (3, H)
 
+        pad_note = f", H_pad={self.H}(실H {self._H_real})" if self.H != self._H_real else ""
         print(f"[HospitalFeatureWrapper] {mode_label}, action=Discrete({self._n_actions}), "
               f"obs={self._flat_dim} (entity {self.H}x{self._F} + global {self._gdim}), "
-              f"variant={var_label}, helipad={int(self._helipad.sum())}/{self.H}")
+              f"variant={var_label}, helipad={int(self._helipad.sum())}/{self.H}{pad_note}")
 
     @staticmethod
     def _norm_by_min(eta: np.ndarray) -> np.ndarray:
@@ -245,8 +267,12 @@ class HospitalFeatureWrapper(gym.Wrapper):
     # ---------- obs 구성 ----------
     def _dyn(self, obs: dict) -> dict:
         """동적 병원 신호 1회 계산 — _entity/_globals 공유 (중복 계산 방지)."""
-        h = np.asarray(obs['h_states'], dtype=np.float32)  # (H,3) = [idle, queue, occ]
+        h = np.asarray(obs['h_states'], dtype=np.float32)  # (실H,3) = [idle, queue, occ]
         p_sent = np.asarray(obs['p_sent'], dtype=np.float32).reshape(-1)
+        if self.H > self._H_real:  # (v6) 동적 신호 zero-pad — 패딩 병원 = 무활동
+            pn = self.H - self._H_real
+            h = np.vstack([h, np.zeros((pn, h.shape[1]), dtype=np.float32)])
+            p_sent = np.concatenate([p_sent, np.zeros(pn, dtype=np.float32)])
         from EntityManager import EntityManager
         in_flight = EntityManager.in_flight_by_hospital(obs, self.H)  # 현장 지득(내가 보낸 이송중)
         # cap_remain 게이트 (2026-07-03 통신축 재정의, 마스크/RuleManager 와 동일 의미):
@@ -333,6 +359,9 @@ class HospitalFeatureWrapper(gym.Wrapper):
     # ---------- gym API ----------
     def step(self, action):
         decoded = self._decode(action)
+        if decoded[1] > self._H_real:  # (v6) 방어: 패딩 dest 는 마스크가 차단 — 도달 시 버그
+            raise RuntimeError(f"패딩 병원 dest={decoded[1]} 선택(실H={self._H_real}) — "
+                               f"action mask 우회 의심")
         obs, reward, terminated, truncated, info = self.env.step(decoded)
         return self._flat_obs(obs), reward, terminated, truncated, info
 
@@ -349,8 +378,8 @@ class HospitalFeatureWrapper(gym.Wrapper):
             t3 = np.asarray(pinfo['treat_tier3']).astype(bool)
             t2 = np.asarray(pinfo['treat_tier2']).astype(bool)
             n_class = int(self._orig_nvec[0])  # 2 (R/Y — Green 은 action 차원서 제외)
-            ct = np.zeros((n_class, self.H), dtype=bool)
-            for h in range(self.H):
+            ct = np.zeros((n_class, self.H), dtype=bool)  # 패딩 열은 False 유지 (v6)
+            for h in range(self._H_real):
                 ht = int(hos_tier[h])
                 col = t3 if ht == 3 else (t2 if ht == 2 else np.zeros(4, dtype=bool))
                 ct[:, h] = col[:n_class]
@@ -359,7 +388,11 @@ class HospitalFeatureWrapper(gym.Wrapper):
 
     def action_masks(self) -> np.ndarray:
         full = self.env.unwrapped.action_masks_joint()
-        full = full.reshape(self._orig_nvec[0], self._orig_nvec[1], self._orig_nvec[2]).copy()
+        full = full.reshape(self._sim_nvec[0], self._sim_nvec[1], self._sim_nvec[2]).copy()
+        if self.H > self._H_real:  # (v6) 패딩 dest(실H+1..H_pad) 전부 False 로 확장
+            padm = np.zeros((full.shape[0], self.H - self._H_real, full.shape[2]),
+                            dtype=full.dtype)
+            full = np.concatenate([full, padm], axis=1)
         if os.environ.get("MCI_TIER_MASK", "1") != "0":
             ct = self._can_treat_mask()           # (2, H) bool
             full[:, 1:, :] &= ct[:, :, None]      # dest 1..H 만 차단, stay(0) 유지
