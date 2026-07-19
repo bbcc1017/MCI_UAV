@@ -43,6 +43,60 @@ import pad_vecnorm  # noqa: F401 — PadAware VecNormalize(신규 학습 생성 
 
 
 # ---------- 매니페스트 → 멀티 지역 feature env (multi_region_env.py 무수정) ----------
+# (v6 A5) 매니페스트 값 overrides 화이트리스트 — 자원·규모 노브. 네 노브 모두 sim 의
+# ScenarioManager.__init__(=make_base_env 내부)에서만 1회 소비되므로, 빌드 직전 env 에
+# 임시 주입하면 같은 config 로 규모·자원 변형 env 를 만들 수 있다(reset 마다 지역×변형 무작위
+# 샘플 = 도메인 랜덤화). amb=0/uav=0 은 action(mode 축) 차원이 갈리므로 ≥1 강제. 그 외 키는
+# 오타 침묵 방지로 명시 에러.
+_OVERRIDE_ENV_KEYS = ("MCI_INCIDENT_SIZE", "MCI_AMB_NUM", "MCI_UAV_NUM", "MCI_CAPA_SCALE")
+
+
+def _parse_manifest_entry(region: str, entry):
+    """매니페스트 값 → (config 경로:str, overrides:dict[str,str]).
+
+    구 스키마: entry=str(경로) → overrides={} (코드 경로 완전 불변).
+    신 스키마: entry=dict{"path":str, "overrides":dict[str, str|int|float]} → 빌드시 env 주입.
+    overrides 키는 화이트리스트만 허용(오타 침묵 방지), 값은 env 문자열로 정규화(ScenarioManager
+    가 int/float 로 재파싱). MCI_AMB_NUM/MCI_UAV_NUM 은 ≥1 검증(action 차원 보존).
+    """
+    if isinstance(entry, str):
+        return entry, {}
+    if not isinstance(entry, dict):
+        raise ValueError(f"[{region}] 매니페스트 값은 str|dict 여야 함 (got {type(entry).__name__})")
+    if "path" not in entry:
+        raise ValueError(f"[{region}] dict 엔트리에 'path' 키 없음: {entry!r}")
+    raw = entry.get("overrides", {}) or {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"[{region}] 'overrides' 는 dict 여야 함 (got {type(raw).__name__})")
+    overrides = {}
+    for k, v in raw.items():
+        if k not in _OVERRIDE_ENV_KEYS:
+            raise ValueError(f"[{region}] 허용 밖 overrides 키 {k!r} — 허용: "
+                             f"{_OVERRIDE_ENV_KEYS} (오타 확인)")
+        overrides[k] = str(v)  # env 는 문자열; ScenarioManager 가 int/float 로 파싱
+    for k in ("MCI_AMB_NUM", "MCI_UAV_NUM"):
+        if k in overrides and int(overrides[k]) < 1:
+            raise ValueError(f"[{region}] {k}={overrides[k]} <1 금지 — "
+                             f"amb=0/uav=0 은 action 차원(96) 이 갈림")
+    return entry["path"], overrides
+
+
+def _with_env_overrides(overrides: dict) -> dict:
+    """overrides 를 os.environ 에 적용하고 원상복구 스냅샷(키→이전값|None)을 반환.
+    순차 빌드(프로세스-로컬)라 안전. None=원래 없던 키(복구 시 삭제)."""
+    saved = {k: os.environ.get(k) for k in overrides}
+    os.environ.update(overrides)
+    return saved
+
+
+def _restore_env_overrides(saved: dict) -> None:
+    for k, old in saved.items():
+        if old is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = old
+
+
 class FeatureMultiRegionEnv(gym.Env):
     """MultiRegionEnv 의 HospitalFeatureWrapper 판. reset() 마다 무작위 지역 위임.
 
@@ -72,10 +126,16 @@ class FeatureMultiRegionEnv(gym.Env):
 
         self._envs = []
         for i, region in enumerate(self.regions):
-            cfg = manifest[region]
-            if not os.path.exists(cfg):
-                raise FileNotFoundError(f"[{region}] config 미발견: {cfg}")
-            base = make_base_env(cfg, seed=seed + i, rule_test=False, eval_mode=eval_mode)
+            cfg_path, overrides = _parse_manifest_entry(region, manifest[region])
+            if not os.path.exists(cfg_path):
+                raise FileNotFoundError(f"[{region}] config 미발견: {cfg_path}")
+            # (v6 A5) 자원·규모 노브는 make_base_env 내부(ScenarioManager.__init__)에서만 소비 →
+            # 빌드 직전 env 주입 후 finally 원복(overrides 없으면 무동작 = 구 경로 불변).
+            saved = _with_env_overrides(overrides)
+            try:
+                base = make_base_env(cfg_path, seed=seed + i, rule_test=False, eval_mode=eval_mode)
+            finally:
+                _restore_env_overrides(saved)
             # 보상 변환(woG 등, 최내곽) → 그 위에 특징 obs 래퍼. info['r_woG'] 는 base 가 채움.
             self._envs.append(HospitalFeatureWrapper(RewardRedesignWrapper(base)))
 
