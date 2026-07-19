@@ -79,7 +79,7 @@ class ScenarioGenerator:
 
     def __init__(self, base_path, experiment_id=None, kakao_api_key=None, departure_time=None,
                  osrm_url=None, road_provider=None, is_use_time=True, fixed_hos_num=None,
-                 min_hos_num=None):
+                 min_hos_num=None, max_hos_num=None):
         # 실제 도로 API 호출 횟수 카운터 (Kakao + OSRM 공통)
         self.api_call_count = 0
         # 프로젝트 경로 절대화
@@ -175,10 +175,12 @@ class ScenarioGenerator:
         
         # 모든 좌표에서 hos_num 을 동일하게 강제 (RL 학습/평가 obs 차원 일치용)
         # fixed_hos_num = cap(가까운 N개로 잘라냄, 구호환) / min_hos_num = floor(≥N 보장, cap-down 안 함)
+        # max_hos_num = cap-only(v6 자연-H: 자연 선정 H 유지, 초과분만 절단 — floor 없음)
         self.fixed_hos_num = int(fixed_hos_num) if fixed_hos_num else None
         self.min_hos_num = int(min_hos_num) if min_hos_num else None
-        if self.fixed_hos_num and self.min_hos_num:
-            raise ValueError("fixed_hos_num(cap)과 min_hos_num(floor)은 동시에 지정 불가 (상호배타).")
+        self.max_hos_num = int(max_hos_num) if max_hos_num else None
+        if sum(x is not None for x in (self.fixed_hos_num, self.min_hos_num, self.max_hos_num)) > 1:
+            raise ValueError("fixed_hos_num(cap+fill)/min_hos_num(floor)/max_hos_num(cap-only)은 동시 지정 불가 (상호배타).")
 
         print(f"📁 프로젝트 경로: {self.base_path}")
         print(f"🆔 실험 ID: {self.experiment_id}")
@@ -187,6 +189,8 @@ class ScenarioGenerator:
             print(f"fixed_hos_num={self.fixed_hos_num} (보장 룰 후 가까운 N개로 cap)")
         if self.min_hos_num:
             print(f"min_hos_num={self.min_hos_num} (보장 룰 후 ≥N floor, cap-down 안 함)")
+        if self.max_hos_num:
+            print(f"max_hos_num={self.max_hos_num} (자연 H 유지, 초과분만 cap — floor 없음)")
 
     def _validate_data_files(self):
         """필수 데이터 파일들의 존재성 검증"""
@@ -877,21 +881,26 @@ class ScenarioGenerator:
         return df_euc, df_sorted
 
     def _apply_hos_count(self, df_euc, df_sorted, uav_count=0):
-        """병원 수 조정 (API 0회). fixed_hos_num(cap, 구호환) | min_hos_num(floor, add-only).
+        """병원 수 조정 (API 0회). fixed_hos_num(cap, 구호환) | min_hos_num(floor) | max_hos_num(cap-only).
 
-        - 둘 다 None → 동적(no-op).
+        - 셋 다 None → 동적(no-op).
         - fixed_hos_num → 가까운 N개로 cap(부족시 채움, 헬기장 swap 보정). 기존 동작 보존.
         - min_hos_num → floor: len<min 이면 가까운 풀에서 add until==min, len>=min 이면 그대로.
           add-only 라 보장룰(Tier3/헬기장 등)을 깨지 않는다.
+        - max_hos_num → cap-only(v6 자연-H): len>max 일 때만 fixed 와 동일한 cap(+헬기장 swap
+          보정)을 적용하고, 부족해도 채우지 않는다(자연 H 유지).
         """
         fixed_n = getattr(self, "fixed_hos_num", None)
         min_n = getattr(self, "min_hos_num", None)
-        if fixed_n is not None and min_n is not None:
-            raise ValueError("fixed_hos_num(cap)과 min_hos_num(floor)은 동시에 지정 불가 (상호배타).")
+        max_n = getattr(self, "max_hos_num", None)
+        if sum(x is not None for x in (fixed_n, min_n, max_n)) > 1:
+            raise ValueError("fixed_hos_num(cap+fill)/min_hos_num(floor)/max_hos_num(cap-only)은 동시 지정 불가 (상호배타).")
 
-        # ---------- fixed_hos_num cap (구호환, RL obs 차원 일치) ----------
-        if fixed_n is not None:
-            target = int(fixed_n)
+        # ---------- cap: fixed_hos_num(구호환, cap+fill) | max_hos_num(v6, cap-only) ----------
+        cap_n = fixed_n if fixed_n is not None else max_n
+        cap_label = "fixed_hos_num" if fixed_n is not None else "max_hos_num"
+        if cap_n is not None:
+            target = int(cap_n)
             if len(df_euc) > target:
                 # 너무 많음 → 가까운 target 개로 cap. 보장 룰 깨지면 warning.
                 capped = df_euc.head(target).copy()
@@ -935,10 +944,10 @@ class ScenarioGenerator:
                         if n_helipad_t2 < 1: breaks.append("helipad+T2<1")
 
                 if breaks:
-                    print(f"  ⚠️ fixed_hos_num={target} cap 후에도 보장 룰 깨짐: {', '.join(breaks)} — best-effort 진행")
+                    print(f"  ⚠️ {cap_label}={target} cap 후에도 보장 룰 깨짐: {', '.join(breaks)} — best-effort 진행")
                 else:
-                    print(f"  ✓ fixed_hos_num={target} cap 적용 (보장 룰 모두 유지)")
-            elif len(df_euc) < target:
+                    print(f"  ✓ {cap_label}={target} cap 적용 (보장 룰 모두 유지)")
+            elif fixed_n is not None and len(df_euc) < target:
                 deficit = target - len(df_euc)
                 # ★ 행번호(index) 아닌 요양기관명 기준으로 제외해야 중복 안 생김 (P1-a 버그 수정)
                 extra = df_sorted[~df_sorted["요양기관명"].isin(df_euc["요양기관명"])].head(deficit)
@@ -947,6 +956,8 @@ class ScenarioGenerator:
                 df_euc = pd.concat([df_euc, extra]).sort_values("euclidean_distance").reset_index(drop=True)
                 print(f"  📌 fixed_hos_num={target} 채우기: {deficit}개 추가")
                 assert df_euc["요양기관명"].is_unique, "fixed_hos_num fill 후 병원 중복 발생 (P1-a)"
+            elif max_n is not None:
+                print(f"  ✓ max_hos_num={target}: 자연 선정 {len(df_euc)}곳 ≤ {target} (그대로 유지)")
 
         # ---------- min_hos_num floor (Phase 2: ≥N 보장, cap-down 안 함) ----------
         elif min_n is not None:
@@ -1468,6 +1479,8 @@ if __name__ == "__main__":
                         help="[구호환] hos_num cap (가까운 N개로 잘라냄). min_hos_num 과 동시지정 불가")
     parser.add_argument("--min_hos_num", type=int, default=None,
                         help="hos_num floor (보장 룰 후 ≥N 보장, cap-down 안 함). 2-pass H_max floor 용. 미지정 시 동적")
+    parser.add_argument("--max_hos_num", type=int, default=None,
+                        help="hos_num cap-only (v6 자연-H: 자연 선정 유지, 초과분만 절단 — floor 없음). fixed/min 과 동시지정 불가")
 
     args = parser.parse_args()
     try:
@@ -1488,6 +1501,7 @@ if __name__ == "__main__":
             is_use_time=args.is_use_time,
             fixed_hos_num=args.fixed_hos_num,
             min_hos_num=args.min_hos_num,
+            max_hos_num=args.max_hos_num,
         )
 
         # CLI가 주어지면 ENV 기본값을 덮어씀
