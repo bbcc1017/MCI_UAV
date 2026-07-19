@@ -80,8 +80,15 @@ def make_heuristic_policy(rule_name):
 
     def fn(obs, mask, env):
         if not state["init"]:
-            H = int(env.en_manager.en_properties["hospital"]["hos_num"])
-            state["codec"] = make_codec(H)
+            # (v6) 패딩 env 는 mask 레이아웃(H_pad)과 sim 실H 가 다르다 — encode 는 반드시
+            # 레이아웃 코덱(마스크 길이 유도). 실H 코덱이면 flat 인덱스 오정렬로 mask[a]
+            # 상시 False → 첫 유효행동 폴백만 반복(자연-H 판정 heur PDR 0.89 붕괴 원인).
+            # RuleManager 의 dest(1..실H)는 레이아웃의 접두 구간이라 그대로 유효.
+            mode_free = (int(getattr(env, "amb_num", 0)) > 0
+                         and int(getattr(env, "uav_num", 0)) > 0)
+            H_layout = len(mask) // 4 - 1 if mode_free else len(mask) // 2 - 1
+            from loadbalance_heuristic import _codec_from_mask
+            state["codec"] = (None, _codec_from_mask(len(mask), H_layout))
             rule.set_seed(np.random.default_rng(0))
             rule.init_with_scenario({"EntityManager": env.en_manager})
             state["init"] = True

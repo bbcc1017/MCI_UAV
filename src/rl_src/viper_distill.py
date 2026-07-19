@@ -54,20 +54,39 @@ _warnings.filterwarnings("ignore", message=r".*action_masks.*")  # NormObs 래�
 
 class _NormObs(gym.ObservationWrapper):
     """학습 때 쓴 VecNormalize(obs) 통계를 동결 적용 — 오라클/트리/eval 모두 정규화 obs 사용.
-    안 하면 정규화 안 된 obs 가 오라클에 들어가 라벨이 틀어지고 트리가 망가진다."""
-    def __init__(self, env, mean, std, clip):
+    안 하면 정규화 안 된 obs 가 오라클에 들어가 라벨이 틀어지고 트리가 망가진다.
+
+    exempt(v6): PadAwareVecNormalize 의 정규화 면제 열(valid 열 0/1 원값 보존).
+    면제 없이 배열만 동결하면 학습(면제)↔판정(정규화)이 갈라져 extractor 의 valid
+    식별(>0.5)이 붕괴한다 — 상시-실병원 슬롯은 std≈0 이라 정규화 후 0 이 되어
+    "패딩"으로 오독(고정47 성능 붕괴), 자연-H 에선 valid 전멸→어텐션 NaN."""
+    def __init__(self, env, mean, std, clip, exempt=None):
         super().__init__(env); self._m = mean; self._s = std; self._c = clip
+        self._ex = (np.asarray(exempt, dtype=int)
+                    if exempt is not None and len(exempt) else None)
     def observation(self, obs):
-        return np.clip((np.asarray(obs, dtype=np.float32) - self._m) / self._s, -self._c, self._c).astype(np.float32)
+        o = np.asarray(obs, dtype=np.float32)
+        out = np.clip((o - self._m) / self._s, -self._c, self._c).astype(np.float32)
+        if self._ex is not None:
+            out[..., self._ex] = o[..., self._ex]  # 면제 열 원값(0/1) 복원
+        return out
 
 
 def load_vecnorm(path):
-    """vecnormalize.pkl → (mean, std, clip_obs). 학습 VecNormalize(obs) 동결 통계."""
+    """vecnormalize.pkl → (mean, std, clip_obs[, exempt_idx]). 학습 VecNormalize(obs) 동결 통계.
+    PadAwareVecNormalize(v6)면 면제 열을 4번째 원소로 — make_feature_env 가 _NormObs(e, *norm)
+    로 그대로 전달(구 pkl 은 3-튜플 유지, 호출부는 전부 불투명 튜플이라 후방호환)."""
+    import pad_vecnorm  # noqa: F401 — PadAwareVecNormalize pickle 해석용(pointer 전례)
     with open(path, "rb") as f:
         vn = pickle.load(f)
     rms = vn.obs_rms
     mean = np.asarray(rms.mean, dtype=np.float32)
     std = np.sqrt(np.asarray(rms.var, dtype=np.float32) + vn.epsilon).astype(np.float32)
+    # ⚠️ getattr 금지: venv 미부착 언피클 VecNormalize 는 없는 속성 접근 시 SB3
+    # VecEnvWrapper.__getattr__ 가 무한 재귀 — __dict__ 직접 조회로 우회.
+    ex = vn.__dict__.get("exempt_idx", None)
+    if ex is not None and len(ex):
+        return mean, std, float(vn.clip_obs), np.asarray(ex, dtype=int)
     return mean, std, float(vn.clip_obs)
 
 
