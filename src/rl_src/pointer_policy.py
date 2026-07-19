@@ -15,6 +15,9 @@
   - HospitalTokenExtractor : per-hospital 임베딩(embed→self-attn→LN)을 **flat features 벡터
     안에 레이아웃 규약으로 실어** head 까지 전달(features_dim = H*embed + ctx_dim).
     SB3 의 "features_dim 은 flat" 제약 우회 — share_features_extractor=True 전제.
+    (v6 A3) valid_col!=None 이면 그 엔티티 열(0/1)로 패딩 병원을 식별 — attention
+    key_padding_mask 로 패딩 키를 무시하고 ctx 는 유효 병원만 마스크드 평균(패딩 불변·
+    순열등변 보존). None(기본)=구 동작·구 zip state_dict 완전 호환(파라미터 shape 불변).
   - PointerActionNet       : 토큰/ctx 분리 → class·mode 소형 head + per-hospital×mode 스코어
     (dest=0 현장대기는 ctx 의존 스칼라) → (B, n_class*(H+1)*n_mode) logits 합성.
     flatten 순서 = (c,d,m) row-major = HospitalFeatureWrapper._encode 와 일치(등변 테스트로 봉인).
@@ -42,12 +45,17 @@ class HospitalTokenExtractor(BaseFeaturesExtractor):
 
     def __init__(self, observation_space, n_hospitals: int, entity_f: int, global_dim: int,
                  embed_dim: int = 32, n_heads: int = 4, ctx_dim: int = 64,
-                 n_attn_blocks: int = 1):
+                 n_attn_blocks: int = 1, valid_col: int = None):
         super().__init__(observation_space, features_dim=n_hospitals * embed_dim + ctx_dim)
         assert observation_space.shape[0] == n_hospitals * entity_f + global_dim, \
             f"obs dim {observation_space.shape[0]} != H*F+g ({n_hospitals}*{entity_f}+{global_dim})"
         self.H, self.F, self.gdim = n_hospitals, entity_f, global_dim
         self.embed_dim, self.ctx_dim = embed_dim, ctx_dim
+        # (v6 A3) valid_col: 패딩 식별 열 인덱스(0/1). None=구 동작(패딩 인지 없음). 신규
+        # 파라미터 없음 → 구 zip state_dict 로드 시 이 kwarg 부재로 None 복원(완전 호환).
+        self.valid_col = None if valid_col is None else int(valid_col)
+        assert self.valid_col is None or 0 <= self.valid_col < entity_f, \
+            f"valid_col {self.valid_col} 범위 밖 (entity_f={entity_f})"
         self.embed = nn.Sequential(nn.Linear(entity_f, embed_dim), nn.ReLU())
         self.attn = nn.MultiheadAttention(embed_dim, n_heads, batch_first=True)
         self.ln = nn.LayerNorm(embed_dim)
@@ -72,15 +80,28 @@ class HospitalTokenExtractor(BaseFeaturesExtractor):
         B = observations.shape[0]
         ent = observations[:, : self.H * self.F].reshape(B, self.H, self.F)
         glob = observations[:, self.H * self.F:]
-        t = self.embed(ent)                                   # (B, H, e)
-        a, _ = self.attn(t, t, t, need_weights=False)
+        # (v6 A3) 패딩 인지: valid_col 이 있으면 그 열(0/1)로 패딩 병원을 식별.
+        #   kpm(key_padding_mask): True=무시할 키(패딩) → 유효 병원 쿼리는 패딩 키를 안 봄
+        #   → 유효 토큰·ctx 가 패딩 특징 교란에 불변. None 이면 kpm=None(구 동작 동일).
+        if self.valid_col is not None:
+            valid = ent[:, :, self.valid_col] > 0.5           # (B, H) bool
+            kpm = ~valid                                      # (B, H) True=패딩
+        else:
+            valid, kpm = None, None
+        t = self.embed(ent)                                   # (B, H, e) — valid 열 포함(무해)
+        a, _ = self.attn(t, t, t, need_weights=False, key_padding_mask=kpm)
         t = self.ln(t + a)                                    # (B, H, e) 순열등변
         if self.blocks is not None:
             for blk in self.blocks:
-                a2, _ = blk["attn"](t, t, t, need_weights=False)
+                a2, _ = blk["attn"](t, t, t, need_weights=False, key_padding_mask=kpm)
                 t = blk["ln1"](t + a2)
                 t = blk["ln2"](t + blk["ffn"](t))             # 순열등변 유지
-        ctx = self.ctx(th.cat([t.mean(dim=1), glob], dim=1))  # (B, ctx) 순열불변
+        if valid is not None:                                 # 마스크드 평균(유효 병원만)
+            v = valid.float().unsqueeze(2)                    # (B, H, 1)
+            pooled = (t * v).sum(dim=1) / v.sum(dim=1).clamp(min=1.0)  # 실병원≥34→분모>0
+        else:
+            pooled = t.mean(dim=1)                            # 구 동작(전체 평균)
+        ctx = self.ctx(th.cat([pooled, glob], dim=1))         # (B, ctx) 순열불변
         return th.cat([t.reshape(B, -1), ctx], dim=1)
 
 

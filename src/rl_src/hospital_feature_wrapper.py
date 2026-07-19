@@ -13,6 +13,8 @@
 
 병원당 특징 F (MCI_OBS_VARIANT 로 토글):
   essential(기본): [is_tier3, cap_remain, eta_amb, eta_uav] — 중복 제거 최소핵심(F=4).
+  essential+load+valid(v6 A3): essential+load(F=7) + valid(1=실병원/0=패딩) 8열 — MCI_H_PAD
+    병원패딩 시 포인터 마스크드 풀링이 패딩 행을 식별(PadAwareVecNormalize 로 valid 열 정규화 면제).
   full(ablation):  [is_tier3, helipad, eta_amb, eta_uav, idle, queue, occ, cap_remain] (F=8).
   local/comms(ablation): 위 8열을 정적4/실시간4 로 분리.
   - 미설정/"essential" → essential. helipad 는 UAV 마스크가 강제(중복), idle/occ 는
@@ -167,6 +169,15 @@ class HospitalFeatureWrapper(gym.Wrapper):
             self._eta_amb = np.concatenate([self._eta_amb, np.full(pn, eta_clip, dtype=np.float32)])
             self._eta_uav = np.concatenate([self._eta_uav, np.full(pn, eta_clip, dtype=np.float32)])
 
+        # (v6 A3) valid 열 벡터: 실병원 1.0 / 패딩 0.0. 무조건 생성(값싸고 스모크·포인터
+        # 마스크드 풀링 계약에 유용) — obs 에는 essential+load+valid variant 에서만 실린다.
+        # 패딩 없으면 ones(H). PadAwareVecNormalize 가 이 열을 정규화 면제해 0/1 을 보존
+        # (아핀변환이 all-zero 파생 패딩 식별을 뭉개는 것 방지, 설계 확정).
+        self._valid_vec = np.concatenate([
+            np.ones(self._H_real, dtype=np.float32),
+            np.zeros(self.H - self._H_real, dtype=np.float32),
+        ])
+
         # ---------- 3) MCI_OBS_VARIANT → 특징 열 선택 (local/comms/full/essential[+load]) ----------
         toks = _parse_variant()
         self._load = "load" in toks
@@ -212,6 +223,22 @@ class HospitalFeatureWrapper(gym.Wrapper):
                 min((float(pos.min()) if pos.size else 0.0)
                     / float(os.environ.get("MCI_ETA_MIN_NORM", "30")), 2.0),
             ], dtype=np.float32)
+        # (v6 A3) valid 열(마지막 열): 패딩 병원 명시 식별자 — 포인터 마스크드 풀링/
+        # PadAwareVecNormalize 의 견고한 패딩 인지 근거. essential+load 필수·ctx 배타·
+        # MCI_H_PAD 명시 필수(판정 하네스가 variant 문자열만으로 env 재현 원칙).
+        self._valid = "valid" in toks
+        if self._valid:
+            if not self._load:
+                raise ValueError(f"valid 토큰은 essential+load 기반만 지원 "
+                                 f"(got MCI_OBS_VARIANT={toks})")
+            if self._ctx:
+                raise ValueError(f"valid 토큰은 ctx 와 동시 사용 불가 "
+                                 f"(got MCI_OBS_VARIANT={toks})")
+            if not os.environ.get("MCI_H_PAD", "").strip():
+                raise ValueError("valid variant 는 MCI_H_PAD 명시 필수 — 판정 하네스가 "
+                                 "variant 문자열만으로 env 재현(H_pad=실H 여도 명시 설정 요구)")
+            self._cols = self._cols + ["valid"]
+            var_label = "essential+load+valid"
         self._F = len(self._cols)
         # load 스케일 노브(전 신규열 사전 유계 → VecNorm 러닝 std 유의미)
         self._ps_clip = float(os.environ.get("MCI_PSENT_CLIP", "32"))
@@ -319,6 +346,7 @@ class HospitalFeatureWrapper(gym.Wrapper):
             "in_flight": dyn["in_flight"].astype(np.float32),
             "occ_ratio": (np.clip((h[:, 2] + dyn["in_flight"]) / np.maximum(self._max_send, 1.0),
                                   0.0, self._or_clip) if comms else z),
+            "valid": self._valid_vec,   # (v6 A3) 정적 패딩 식별자 — comms 무관 무조건 노출(1/0)
         }
         if self._ctx:
             col_map.update({"eta_rank_amb": self._eta_rank_amb,

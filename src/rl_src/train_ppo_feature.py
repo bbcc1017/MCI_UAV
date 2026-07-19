@@ -36,9 +36,10 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
 
 from env_factory import make_base_env
-from hospital_feature_wrapper import HospitalFeatureWrapper
+from hospital_feature_wrapper import HospitalFeatureWrapper, _parse_variant
 from reward_redesign_wrapper import RewardRedesignWrapper
 from learning_curve_plot import try_plot_learning_curve
+import pad_vecnorm  # noqa: F401 — PadAware VecNormalize(신규 학습 생성 + resume pickle 로드용)
 
 
 # ---------- 매니페스트 → 멀티 지역 feature env (multi_region_env.py 무수정) ----------
@@ -274,16 +275,35 @@ def main():
               f"(+{args.total_timesteps} → {model.num_timesteps + args.total_timesteps})")
     else:
         # ---- 신규 학습 ----
+        # (v6 A3) valid variant: valid 열 정규화 면제(PadAwareVecNormalize) 위해 H/F 를 먼저
+        # 산출(exempt_idx 구성). deepsets 는 무마스크 mean pooling 이 패딩 행을 오염 → valid 배타.
+        # 비-valid·mlp 경로는 H/F 산출을 건너뛰어 기존 동작 완전 보존(probe env 불생성).
+        valid_variant = "valid" in _parse_variant()
+        H = F = gdim = None
+        if args.extractor in ("deepsets", "pointer") or valid_variant:
+            H, F, gdim = _entity_dims(args.config_path, args.seed)
+        if valid_variant and args.extractor == "deepsets":
+            raise ValueError("deepsets 추출기는 valid variant 미지원 — 무마스크 mean pooling 이 "
+                             "패딩 행을 오염(pointer 사용). hospital_set_extractor 는 수정 금지 결정.")
+
         # obs 정규화 필수(ETA·cap_remain 스케일) / reward 정규화는 옵션. eval·VIPER 는 통계 동결 로드.
         # ⚠️gamma 동기화 필수: VecNormalize 의 리턴 추적(discounted return 분산)과 PPO 의
         # gamma 가 불일치하면 보상 정규화 스케일이 왜곡됨.
-        venv = VecNormalize(venv, norm_obs=True, norm_reward=args.norm_reward, clip_obs=10.0,
-                            gamma=args.gamma)
+        if valid_variant:
+            # valid 열(각 병원 flat idx i*F+(F-1))을 정규화 면제 — 0/1 보존(아핀변환 붕괴 방지).
+            exempt = [i * F + (F - 1) for i in range(H)]
+            venv = pad_vecnorm.PadAwareVecNormalize(
+                venv, exempt_idx=exempt, norm_obs=True, norm_reward=args.norm_reward,
+                clip_obs=10.0, gamma=args.gamma)
+            print(f"[feature] PadAwareVecNormalize: valid_col={F - 1} exempt 열={len(exempt)}개 "
+                  f"(H={H} F={F}) — valid 열 정규화 면제")
+        else:
+            venv = VecNormalize(venv, norm_obs=True, norm_reward=args.norm_reward, clip_obs=10.0,
+                                gamma=args.gamma)
 
         policy_cls = "MlpPolicy"
         policy_kwargs = dict(net_arch=[256, 256])
         if args.extractor == "deepsets":
-            H, F, gdim = _entity_dims(args.config_path, args.seed)
             policy_kwargs = dict(
                 features_extractor_class=HospitalSetExtractor,
                 features_extractor_kwargs=dict(n_hospitals=H, entity_f=F, global_dim=gdim,
@@ -292,18 +312,20 @@ def main():
             )
             print(f"[feature] deepsets 추출기: H={H} F={F} global={gdim} embed={args.embed_dim}")
         elif args.extractor == "pointer":
-            H, F, gdim = _entity_dims(args.config_path, args.seed)
             policy_cls = PointerMaskablePolicy  # net_arch 는 정책이 강제(pi=[], vf=[256,256])
+            fe_kwargs = dict(n_hospitals=H, entity_f=F, global_dim=gdim,
+                             embed_dim=args.embed_dim, ctx_dim=args.ctx_dim,
+                             n_attn_blocks=args.n_attn_blocks)
+            if valid_variant:
+                fe_kwargs["valid_col"] = F - 1  # 마지막 열=valid → 마스크드 풀링 활성
             policy_kwargs = dict(
                 features_extractor_class=HospitalTokenExtractor,
-                features_extractor_kwargs=dict(n_hospitals=H, entity_f=F, global_dim=gdim,
-                                               embed_dim=args.embed_dim, ctx_dim=args.ctx_dim,
-                                               n_attn_blocks=args.n_attn_blocks),
+                features_extractor_kwargs=fe_kwargs,
                 head_hidden=args.head_hidden,  # PointerMaskablePolicy.__init__ 로 전달
             )
             print(f"[feature] pointer 추출기+head: H={H} F={F} global={gdim} "
                   f"embed={args.embed_dim} ctx={args.ctx_dim} head_hidden={args.head_hidden} "
-                  f"n_attn_blocks={args.n_attn_blocks}")
+                  f"n_attn_blocks={args.n_attn_blocks} valid_col={fe_kwargs.get('valid_col')}")
 
         # PPO 위생: lr anneal(진행률 p: 1→0 에 선형) / target_kl / n_epochs (미지정=SB3 기본)
         lr = (lambda p: args.learning_rate * p) if args.lr_anneal else args.learning_rate
