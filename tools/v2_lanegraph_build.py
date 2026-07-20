@@ -175,6 +175,12 @@ def main():
     n = len(lid)
     print(f"[a2] 링크 {n} (중복/무id {dup}, 멀티파트 {multipart})", flush=True)
     rep["links"] = {"count": n, "dup_or_noid": dup, "multipart": multipart}
+    if n == 0:  # 정밀도로지도 자체 커버리지 공백(예: 부산 남구/수영구, 인천 강화군, 경북 울릉군) — 페치 실패 아님
+        rep["criteria"] = {"no_data": "SKIP"}
+        with open(os.path.join(out_dir, reg + ".report.json"), "w", encoding="utf-8") as fo:
+            json.dump(rep, fo, ensure_ascii=False, indent=1, default=int)
+        print(f"[skip] {reg}: A2 데이터 없음(정밀도로지도 미커버 지역) — bin 미생성", flush=True)
+        return
 
     # 호장·방위
     cum = []
@@ -310,17 +316,36 @@ def main():
         return float(np.min(np.hypot(p[0] - (A[:, 0] + t * D[:, 0]), p[1] - (A[:, 1] + t * D[:, 1]))))
 
     # WFS bbox 페치는 구 폴리곤 밖 spill 링크를 포함 — 폴리곤 밖 = 전부 경계권(그곳 절단은 페치 경계)
-    _prep = None
+    # ⚠️다중 링(섬 포함 해안 시군구) 경계는 자가교차가 흔해 raw union 이 GEOS TopologyException 으로 죽는다
+    # → 링별 buffer(0) 정리 후 unary_union, 그래도 실패하면 링별 prepared 리스트로 any 판정(폴백).
+    _prep, _preps = None, None
+    from shapely.geometry import Point as _Pt
     if segs is not None:
-        from shapely.geometry import Polygon as _Poly, Point as _Pt
+        from shapely.geometry import Polygon as _Poly
+        from shapely.ops import unary_union as _uu
         from shapely.prepared import prep as _prep_fn
-        _u = _Poly(As[0])
-        for a2 in As[1:]:
-            _u = _u.union(_Poly(a2))
-        _prep = _prep_fn(_u.buffer(0))
+        polys = []
+        for a2 in As:
+            if len(a2) < 3:
+                continue
+            g = _Poly(a2)
+            if not g.is_valid:
+                g = g.buffer(0)          # 자가교차 정리(멀티폴리곤이 될 수 있음)
+            if not g.is_empty:
+                polys.append(g)
+        try:
+            _prep = _prep_fn(_uu(polys))
+        except Exception as ex:          # noqa: BLE001 — GEOS 실패 시 링 단위 판정으로 폴백
+            print(f"[warn] {reg}: 경계 union 실패({type(ex).__name__}) — 링별 판정 폴백", flush=True)
+            _preps = [_prep_fn(g) for g in polys]
 
     def inpoly(p):
-        return True if _prep is None else _prep.contains(_Pt(float(p[0]), float(p[1])))
+        if _prep is None and _preps is None:
+            return True
+        pt = _Pt(float(p[0]), float(p[1]))
+        if _prep is not None:
+            return _prep.contains(pt)
+        return any(g.contains(pt) for g in _preps)
 
     def is_bnd(p):
         return (not inpoly(p)) or edge_dist(p) < args.boundary_margin
@@ -779,15 +804,22 @@ def main():
           flush=True)
 
     # ── 합격기준 판정 ───────────────────────────────────────────
+    # 구내 링크 0 = 그 시군구 자체엔 정밀도로지도가 없고 bbox spill 만 잡힌 경우(예: 옹진군 — 폴리곤은
+    # 백령도까지 뻗지만 링크는 전부 인천 본토). 구내 기준 판정이 무의미하므로 N/A 로 표기한다.
     crit = {
-        "wcc>=0.95": wcc_in >= 0.95,
+        "wcc>=0.95": (wcc_in >= 0.95) if n_inside else None,
         "isolated_deadend<2%": (nb_no_lr / n if n else 0) < 0.02,
         "signal_attach>=99%": (att / n_sig if n_sig else 1) >= 0.99,
-        "stopS_real>=85%": (real_in / n_app_in if n_app_in else 1) >= 0.85,
+        "stopS_real>=85%": ((real_in / n_app_in) >= 0.85) if n_app_in else None,
         "width>=90%": (w_all / n if n else 1) >= 0.90,
     }
-    rep["criteria"] = {k: ("PASS" if v else "FAIL") for k, v in crit.items()}
-    print("[criteria] " + "  ".join(f"{k}:{'PASS' if v else 'FAIL'}" for k, v in crit.items()), flush=True)
+    def verdict(v):
+        return "N/A" if v is None else ("PASS" if v else "FAIL")
+
+    rep["criteria"] = {k: verdict(v) for k, v in crit.items()}
+    rep["criteria_note"] = ("구내 링크 0 — bbox spill 만 존재(해당 시군구에 정밀도로지도 미수록)"
+                            if not n_inside else "")
+    print("[criteria] " + "  ".join(f"{k}:{verdict(v)}" for k, v in crit.items()), flush=True)
 
     # ── LGV2 바이너리 ───────────────────────────────────────────
     anchorE, anchorN = (minE + maxE) * 0.5, (minN + maxN) * 0.5
