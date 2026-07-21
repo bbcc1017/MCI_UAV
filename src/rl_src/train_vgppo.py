@@ -42,8 +42,11 @@ def parse_args():
     p.add_argument("--config_path", required=True, help="챔피언 학습 매니페스트(.json) 또는 config(.yaml)")
     p.add_argument("--resume_from", required=True, help="챔피언 디렉터리(final_model.zip+vecnormalize.pkl)")
     p.add_argument("--value_labels", required=True, help="ncrp_value_labels.pkl(공유 스키마)")
+    p.add_argument("--baseline", default="relative", choices=["relative", "absolute"],
+                   help="value 타깃(설계 R4). relative(기본)=V_champ+dpdr_disc/σ(절단 리프 앵커=정답). "
+                        "absolute=q_target_disc/σ(진단·절단 스케일편향 주의).")
     p.add_argument("--aux_target", default="q_best", choices=["q_greedy", "q_best", "q_exec"],
-                   help="value 회귀 타깃(로더가 _disc 할인 suffix 를 자동 우선). q_best=개선정책 가치(기본).")
+                   help="absolute 모드 타깃(relative 는 dpdr 사용, 무관).")
     p.add_argument("--aux_coef", type=float, default=0.5, help="aux value 회귀 계수(설계값 0.5).")
     p.add_argument("--crr", default="off", choices=["off", "binary", "exp"],
                    help="방법 B(CRR/AWAC) dpdr 가중 masked-NLL. 기본 off(A 단독).")
@@ -109,8 +112,8 @@ def main():
 
     # ---- 가치라벨 로드 + 단위환산 + 유도 설정 ----
     labels = load_value_labels(args.value_labels, model, aux_target=args.aux_target,
-                               sigma_ret=sigma_ret, crr=(None if args.crr == "off" else args.crr),
-                               crr_beta=args.crr_beta)
+                               sigma_ret=sigma_ret, baseline=args.baseline,
+                               crr=(None if args.crr == "off" else args.crr), crr_beta=args.crr_beta)
     model.set_value_guidance(labels, aux_coef=args.aux_coef,
                              crr_coef=(0.0 if args.crr == "off" else args.crr_coef),
                              seed=args.seed)

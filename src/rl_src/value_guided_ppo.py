@@ -53,26 +53,43 @@ def crr_weight(dpdr: np.ndarray, mode: str, beta: float = 1.0, eps: float = 5e-3
     raise ValueError(f"crr mode 는 off|binary|exp, got {mode!r}")
 
 
+def _champion_values(model, obs_np, device, batch=4096):
+    """챔피언 크리틱 V(s)(정규화 return 공간) 배치 예측 — relative baseline 앵커."""
+    import torch as _th
+    model.policy.set_training_mode(False)
+    outs = []
+    with _th.no_grad():
+        for i in range(0, len(obs_np), batch):
+            ob = _th.as_tensor(obs_np[i:i + batch], device=device)
+            outs.append(model.policy.predict_values(ob).flatten().cpu().numpy())
+    return np.concatenate(outs).astype(np.float32)
+
+
 # ============================================================ 스키마 로더 + 단위환산
 def load_value_labels(path: str, model: MaskablePPO, *, aux_target: str = "q_best",
-                      sigma_ret: "float | None" = None, label_gamma: float = 1.0,
+                      sigma_ret: "float | None" = None, baseline: str = "relative",
                       crr: "str | None" = None, crr_beta: float = 1.0,
                       clip_q: float = 1.5, device: "str | None" = None) -> dict:
     """공유 스키마 pkl 로드 → 모델 차원검증 → 타깃 단위환산 → torch 텐서 dict 반환.
 
-    스키마: obs(N,obs_dim 정규화본), q_greedy/q_best/q_exec(N, pdrwog 무할인 suffix),
-            dpdr(N,≥0), [q_*_disc(할인 suffix)], [action(N int)], [mask(N,n_actions bool)],
-            obs_dim, n_actions.
-    반환: {obs, y_tilde, act, mask, w, meta}. y_tilde = q_disc/σ_ret (크리틱 스케일).
+    스키마: obs(N,obs_dim 정규화본), q_greedy/q_best/q_exec(N, pdrwog **h절단** suffix),
+            dpdr(N,≥0), q_*_disc/dpdr_disc(할인), actions/masks, obs_dim, n_actions.
+    반환: {obs, y_tilde, act, mask, w, meta}.
 
-    sigma_ret: 크리틱 정규화 스케일 sqrt(ret_rms.var). None 이면 1.0(norm_reward=False 가정, 경고).
-    label_gamma: 무할인 폴백 문서화용(현재는 raw q 사용). 스키마에 q_*_disc 있으면 그것을 우선.
+    ★baseline 모드(핵심 — 2026-07-22 실데이터서 확정, 설계 R4):
+      NCRP q 는 h=10 **절단** 리프無 롤아웃이라 **완전 가치의 ~1/3**(무편향 크리틱 V≈3.5σ 대비
+      q/σ≈1.0). 절대 회귀(V→q/σ)는 크리틱을 3배 끌어내려 **왜곡**. 절단 리프를 챔피언 V(s)로
+      근사(MVE γ^h·V̂ 항의 앵커 — 개선분에서 tail 상쇄되어 유효):
+        - "relative"(기본): y = V_champ(s) + dpdr_disc/σ_ret  (개선정책 가치 = 현 가치+측정 개선분).
+                            대부분 dpdr=0 → 타깃=V_champ(무변). switched 상태만 V 상향 = §4.3 재형성.
+        - "absolute"     : y = q_target_disc/σ_ret  (진단/대조군 — 절단이면 스케일 편향 알려짐).
+    sigma_ret: sqrt(ret_rms.var). None → 1.0(norm_reward=False 가정, 경고).
     """
     dev = device or model.device
     with open(path, "rb") as f:
         d = pickle.load(f)
-    if "obs" not in d or aux_target not in d:
-        raise KeyError(f"라벨 스키마 누락: obs 또는 {aux_target} (키={sorted(d.keys())})")
+    if "obs" not in d:
+        raise KeyError(f"라벨 스키마 누락: obs (키={sorted(d.keys())})")
 
     obs = np.asarray(d["obs"], dtype=np.float32)
     N = obs.shape[0]
@@ -82,21 +99,28 @@ def load_value_labels(path: str, model: MaskablePPO, *, aux_target: str = "q_bes
     if obs.shape[1] != obs_dim_m or obs_dim_lbl != obs_dim_m:
         raise ValueError(f"obs_dim 불일치 — 라벨 {obs.shape[1]}/{obs_dim_lbl} vs 모델 {obs_dim_m} "
                          f"(챔피언·라벨수집 obs 변형/패딩 일치 확인)")
-
-    # ---- 타깃 단위환산: (할인) q / σ_ret ----
-    disc_key = f"{aux_target}_disc"
-    if disc_key in d:
-        q = np.asarray(d[disc_key], dtype=np.float32)         # 할인 suffix(정확)
-        disc_note = f"{disc_key}(할인 suffix)"
-    else:
-        q = np.asarray(d[aux_target], dtype=np.float32)       # 무할인 폴백
-        disc_note = f"{aux_target}(무할인 폴백 — 상태별 편향 위험, planner q_*_disc 권장)"
-    q = np.clip(q, 0.0, clip_q)                                # OOD/이상치 클립(R1)
     if sigma_ret is None:
         sigma_ret = 1.0
         print("[vg] ⚠️ sigma_ret 미지정 → 1.0 (norm_reward=False 가정). norm_reward=True 챔피언이면 "
               "sqrt(ret_rms.var) 를 반드시 전달할 것(부록 A).", flush=True)
-    y_tilde = (q / float(sigma_ret)).astype(np.float32)
+    sigma_ret = float(sigma_ret)
+
+    # ---- 개선분 dpdr(할인 우선) — relative 앵커의 신호 ----
+    dpdr_raw = np.asarray(d.get("dpdr_disc", d.get("dpdr", np.zeros(N))), dtype=np.float32)
+    imp = np.clip(dpdr_raw, 0.0, clip_q) / sigma_ret          # 정규화 개선분(≥0)
+
+    if baseline == "relative":
+        v_champ = _champion_values(model, obs, dev)           # 정규화 return 공간(≈3.5)
+        y_tilde = (v_champ + imp).astype(np.float32)
+        disc_note = f"relative: V_champ(mean={v_champ.mean():.3f}) + dpdr_disc/σ(mean={imp.mean():.4f})"
+    elif baseline == "absolute":
+        disc_key = f"{aux_target}_disc"
+        q = np.asarray(d.get(disc_key, d.get(aux_target)), dtype=np.float32)
+        q = np.clip(q, 0.0, clip_q)
+        y_tilde = (q / sigma_ret).astype(np.float32)
+        disc_note = f"absolute: {disc_key if disc_key in d else aux_target}/σ (⚠️절단 스케일편향 가능)"
+    else:
+        raise ValueError(f"baseline 은 relative|absolute, got {baseline!r}")
 
     # ---- 방법 B용 action/mask (스키마 최종: 복수형 actions/masks; 구 단수 키도 폴백) ----
     act = d.get("actions", d.get("action"))
@@ -111,15 +135,15 @@ def load_value_labels(path: str, model: MaskablePPO, *, aux_target: str = "q_bes
         "act": th.as_tensor(np.asarray(act, dtype=np.int64), device=dev) if act is not None else None,
         "mask": th.as_tensor(np.asarray(mask, dtype=bool), device=dev) if mask is not None else None,
         "w": th.as_tensor(w, device=dev) if w is not None else None,
-        "meta": {"N": N, "aux_target": aux_target, "disc": disc_note, "sigma_ret": float(sigma_ret),
-                 "n_actions": int(d.get("n_actions", n_act_m)),
-                 "dpdr_mean": float(np.mean(d.get("dpdr", [0]))),
-                 "dpdr_std": float(np.std(d.get("dpdr", [0]))),
+        "meta": {"N": N, "baseline": baseline, "aux_target": aux_target, "note": disc_note,
+                 "sigma_ret": sigma_ret, "n_actions": int(d.get("n_actions", n_act_m)),
+                 "imp_mean": float(imp.mean()), "imp_std": float(imp.std()),
+                 "imp_nonzero_frac": float((imp > 1e-6).mean()),
                  "y_tilde_mean": float(y_tilde.mean()), "y_tilde_std": float(y_tilde.std())},
     }
-    print(f"[vg] 라벨 로드 N={N} target={aux_target} disc={disc_note} σ_ret={sigma_ret:.4f} "
+    print(f"[vg] 라벨 로드 N={N} baseline={baseline} [{disc_note}] σ_ret={sigma_ret:.4f} "
           f"ỹ[mean={out['meta']['y_tilde_mean']:.3f} std={out['meta']['y_tilde_std']:.3f}] "
-          f"dpdr[mean={out['meta']['dpdr_mean']:.4f} std={out['meta']['dpdr_std']:.4f}] "
+          f"imp[mean={out['meta']['imp_mean']:.4f} nonzero={out['meta']['imp_nonzero_frac']:.3f}] "
           f"crr={crr}", flush=True)
     return out
 
