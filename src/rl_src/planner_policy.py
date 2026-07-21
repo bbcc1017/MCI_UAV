@@ -74,13 +74,16 @@ class TruncatedRolloutPlanner:
     """
 
     def __init__(self, model, K=8, h=10, m=2, leaf_fn=None, clairvoyant=False,
-                 reseed_base=777000, switch_margin=0.0):
+                 reseed_base=777000, switch_margin=0.0, gamma=0.99):
         self.model = model
         self.K, self.h, self.m = int(K), int(h), int(m)
         self.leaf_fn = leaf_fn
         self.clairvoyant = bool(clairvoyant)
         self.reseed_base = int(reseed_base)
         self.switch_margin = float(switch_margin)
+        # (v7) gamma: 할인 suffix q_*_disc 계산용(결정 스텝 단위, PPO gamma 정합 기본 0.99).
+        # 스위치 판정은 무할인 qs 유지 → planner 성능 불변, 할인본은 value-target 학습용 노출만.
+        self.gamma = float(gamma)
         self._dest_tab = None
         self._cloner = None
         # act() 부가정보: lookahead 수행여부·스위치여부·소요 ms·후보 수
@@ -90,22 +93,34 @@ class TruncatedRolloutPlanner:
     def _rollout(self, clone, action, preventable):
         """복제본에 후보 action 적용 후 champion greedy 로 최대 h−1 추가 결정(h<0=종단까지)
         진행하며 suffix r_woG 누적 — q_rollout(rollout_oracle)과 동일한 무캐스팅 누적으로
-        앵커의 비트 동일성 보장. 지평 도달·미종결이면 leaf 부트스트랩(×preventable 환산)."""
+        앵커의 비트 동일성 보장. 지평 도달·미종결이면 leaf 부트스트랩(×preventable 환산).
+
+        반환 (w, w_disc): w=무할인 누적(스위치 판정·앵커 재현용, 기존과 비트 동일),
+        w_disc=결정 스텝 gamma 할인 누적(v7 value-target 학습용 — 무할인은 잔여 결정수
+        비례 상태편향이라 크리틱 타깃엔 부적). k=결정 스텝 인덱스(후보 결정 k=0)."""
         obs, _r, term, trunc, info = clone.step(int(action))
-        w = info.get("r_woG", 0.0)
+        r0 = info.get("r_woG", 0.0)
+        w = r0
+        w_disc = r0
         done = term or trunc
         n_extra = 0
+        k = 1
         while not done and (self.h < 0 or n_extra < self.h - 1):
             mask = clone.action_masks()
             a, _ = self.model.predict(obs, action_masks=mask, deterministic=True)
             obs, _r, term, trunc, info = clone.step(int(a))
-            w += info.get("r_woG", 0.0)
+            r = info.get("r_woG", 0.0)
+            w += r
+            w_disc += (self.gamma ** k) * r
             done = term or trunc
             n_extra += 1
+            k += 1
         if not done and self.leaf_fn is not None:
             # leaf 는 pdrwog(=r_woG/preventable) 단위 suffix 예측 → r_woG 단위로 환산해 합산
-            w += float(self.leaf_fn(np.asarray(obs, dtype=np.float32))[0]) * preventable
-        return w
+            lv = float(self.leaf_fn(np.asarray(obs, dtype=np.float32))[0]) * preventable
+            w += lv
+            w_disc += (self.gamma ** k) * lv
+        return w, w_disc
 
     # ---------------------------------------------------------------- 공개 API
     def act(self, env, ep_seed, obs=None):
@@ -120,7 +135,8 @@ class TruncatedRolloutPlanner:
         #   q_greedy=greedy 후보 가치, q_best=최선 후보 가치, dpdr=개선분(q_best−q_greedy).
         #   lookahead 미수행(유효≤1·후보≤1) 시 None. 기존 동작·반환값 불변(정보 추가만).
         info = {"lookahead": False, "switched": False, "ms": 0.0, "n_cand": 0,
-                "q_greedy": None, "q_best": None, "q_exec": None, "dpdr": None}
+                "q_greedy": None, "q_best": None, "q_exec": None, "dpdr": None,
+                "q_greedy_disc": None, "q_best_disc": None, "q_exec_disc": None, "dpdr_disc": None}
 
         mask = np.asarray(env.action_masks(), dtype=bool)
         valid = np.flatnonzero(mask)
@@ -180,16 +196,22 @@ class TruncatedRolloutPlanner:
         seeds = [self.reseed_base + ep_seed * 97 + j * 13 + self._n_dec * 10007
                  for j in range(m_eff)]
         qs = []
+        qs_disc = []   # (v7) 할인 suffix 평균 — value-target 학습용(스위치 판정엔 미사용)
         for a in cand:
             acc = 0.0
+            acc_disc = 0.0
             for j in range(m_eff):
                 clone = self._cloner.clone(env, ep_seed, None)
                 if not self.clairvoyant:
                     # 비천리안 핵심: 복제 rng 를 미래-무지 스트림으로 교체(원본 무접촉).
                     clone.unwrapped.ev_manager.set_seed(np.random.default_rng(seeds[j]))
-                acc += self._rollout(clone, a, preventable)
+                rw, rwd = self._rollout(clone, a, preventable)
+                acc += rw
+                acc_disc += rwd
             qs.append(acc / m_eff)
+            qs_disc.append(acc_disc / m_eff)
 
+        # 스위치·bi 는 무할인 qs 로 판정(기존 성능 불변) — 할인본은 노출만.
         gi, bi = cand.index(g), int(np.argmax(qs))
         # 마진 초과 개선일 때만 스위치(동률·미세개선=greedy 유지 — margin=0 이면 기존 엄격개선)
         if qs[bi] > qs[gi] + self.switch_margin * preventable:
@@ -199,10 +221,16 @@ class TruncatedRolloutPlanner:
             a_exec = g
         # (v7) 후보 가치를 pdrwog 단위로 노출 — 가치 예측 게이트·value-target 수집용
         pv = preventable if preventable > 0 else 1.0
+        ai = cand.index(a_exec)
         info["q_greedy"] = float(qs[gi]) / pv
         info["q_best"] = float(qs[bi]) / pv
-        info["q_exec"] = float(qs[cand.index(a_exec)]) / pv
+        info["q_exec"] = float(qs[ai]) / pv
         info["dpdr"] = (float(qs[bi]) - float(qs[gi])) / pv   # 개선분(≥0)
+        # 할인본(value-target 학습용 — 무할인 상태편향 제거). bi/gi 는 무할인 기준 유지.
+        info["q_greedy_disc"] = float(qs_disc[gi]) / pv
+        info["q_best_disc"] = float(qs_disc[bi]) / pv
+        info["q_exec_disc"] = float(qs_disc[ai]) / pv
+        info["dpdr_disc"] = (float(qs_disc[bi]) - float(qs_disc[gi])) / pv
         info["ms"] = (time.perf_counter() - t0) * 1e3
         self.last_info = info
         return a_exec

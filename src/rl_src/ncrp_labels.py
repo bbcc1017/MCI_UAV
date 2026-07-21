@@ -96,7 +96,9 @@ def label_episode(fac, model, seed, K, h, m, reseed_base, clairvoyant, switch_ma
     S = {"obs": [], "actions": [], "masks": [], "steps": [],
          "greedy": [], "switched": [], "n_cand": [], "plan_ms": [],
          # (v7) 후보 롤아웃 가치(pdrwog 단위, planner last_info). lookahead 미수행 시 nan.
-         "q_greedy": [], "q_best": [], "q_exec": [], "dpdr": []}
+         # 무할인(게이트·스위치 정합) + 할인본 _disc(value-target 학습용, 상태편향 제거).
+         "q_greedy": [], "q_best": [], "q_exec": [], "dpdr": [],
+         "q_greedy_disc": [], "q_best_disc": [], "q_exec_disc": [], "dpdr_disc": []}
     n_dec = n_switch = 0
     step = 0
     while not done:
@@ -128,6 +130,8 @@ def label_episode(fac, model, seed, K, h, m, reseed_base, clairvoyant, switch_ma
             _qn = lambda k: (float(li[k]) if li.get(k) is not None else float("nan"))
             S["q_greedy"].append(_qn("q_greedy")); S["q_best"].append(_qn("q_best"))
             S["q_exec"].append(_qn("q_exec")); S["dpdr"].append(_qn("dpdr"))
+            S["q_greedy_disc"].append(_qn("q_greedy_disc")); S["q_best_disc"].append(_qn("q_best_disc"))
+            S["q_exec_disc"].append(_qn("q_exec_disc")); S["dpdr_disc"].append(_qn("dpdr_disc"))
         obs, _r, term, trunc, _info = env.step(int(g))  # ★진행 = champion greedy(라벨 아님)
         done = term or trunc
         step += 1
@@ -192,7 +196,8 @@ def merge_chunks(chunk_dir, region_order, out, meta):
 
     obs_l, act_l, mask_l, reg_l, ep_l, st_l = [], [], [], [], [], []
     gr_l, sw_l, nc_l, ms_l = [], [], [], []
-    qg_l, qb_l, qe_l, dp_l = [], [], [], []   # (v7) 후보 가치 배열
+    qg_l, qb_l, qe_l, dp_l = [], [], [], []           # (v7) 무할인 후보 가치
+    qgd_l, qbd_l, qed_l, dpd_l = [], [], [], []       # (v7) 할인 후보 가치(_disc)
     n_dec = n_switch = 0
     per_region = {}
     for (region, ep) in sorted(merged, key=_key):
@@ -212,6 +217,8 @@ def merge_chunks(chunk_dir, region_order, out, meta):
         _nan = [float("nan")] * n   # 구 청크(q값 없음) 호환
         qg_l.extend(e.get("q_greedy", _nan)); qb_l.extend(e.get("q_best", _nan))
         qe_l.extend(e.get("q_exec", _nan)); dp_l.extend(e.get("dpdr", _nan))
+        qgd_l.extend(e.get("q_greedy_disc", _nan)); qbd_l.extend(e.get("q_best_disc", _nan))
+        qed_l.extend(e.get("q_exec_disc", _nan)); dpd_l.extend(e.get("dpdr_disc", _nan))
 
     if not act_l:
         raise SystemExit("수집된 라벨 샘플 0건(전 결정 유효액션 ≤1?) — 파라미터 확인")
@@ -237,6 +244,10 @@ def merge_chunks(chunk_dir, region_order, out, meta):
         "q_best": np.asarray(qb_l, dtype=np.float32),
         "q_exec": np.asarray(qe_l, dtype=np.float32),
         "dpdr": np.asarray(dp_l, dtype=np.float32),
+        "q_greedy_disc": np.asarray(qgd_l, dtype=np.float32),
+        "q_best_disc": np.asarray(qbd_l, dtype=np.float32),
+        "q_exec_disc": np.asarray(qed_l, dtype=np.float32),
+        "dpdr_disc": np.asarray(dpd_l, dtype=np.float32),
         # ---- 출처 메타(dict) + 요약 ----
         "meta": meta,
         "n_dec_total": int(n_dec),
