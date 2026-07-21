@@ -94,7 +94,9 @@ def label_episode(fac, model, seed, K, h, m, reseed_base, clairvoyant, switch_ma
     obs, _ = env.reset(seed=seed)
     done = False
     S = {"obs": [], "actions": [], "masks": [], "steps": [],
-         "greedy": [], "switched": [], "n_cand": [], "plan_ms": []}
+         "greedy": [], "switched": [], "n_cand": [], "plan_ms": [],
+         # (v7) 후보 롤아웃 가치(pdrwog 단위, planner last_info). lookahead 미수행 시 nan.
+         "q_greedy": [], "q_best": [], "q_exec": [], "dpdr": []}
     n_dec = n_switch = 0
     step = 0
     while not done:
@@ -123,6 +125,9 @@ def label_episode(fac, model, seed, K, h, m, reseed_base, clairvoyant, switch_ma
             S["switched"].append(switched)
             S["n_cand"].append(int(li["n_cand"]))
             S["plan_ms"].append(float(li["ms"]))
+            _qn = lambda k: (float(li[k]) if li.get(k) is not None else float("nan"))
+            S["q_greedy"].append(_qn("q_greedy")); S["q_best"].append(_qn("q_best"))
+            S["q_exec"].append(_qn("q_exec")); S["dpdr"].append(_qn("dpdr"))
         obs, _r, term, trunc, _info = env.step(int(g))  # ★진행 = champion greedy(라벨 아님)
         done = term or trunc
         step += 1
@@ -187,6 +192,7 @@ def merge_chunks(chunk_dir, region_order, out, meta):
 
     obs_l, act_l, mask_l, reg_l, ep_l, st_l = [], [], [], [], [], []
     gr_l, sw_l, nc_l, ms_l = [], [], [], []
+    qg_l, qb_l, qe_l, dp_l = [], [], [], []   # (v7) 후보 가치 배열
     n_dec = n_switch = 0
     per_region = {}
     for (region, ep) in sorted(merged, key=_key):
@@ -203,6 +209,9 @@ def merge_chunks(chunk_dir, region_order, out, meta):
         ep_l.extend([ep] * n); st_l.extend(e["steps"])
         gr_l.extend(e["greedy"]); sw_l.extend(e["switched"])
         nc_l.extend(e["n_cand"]); ms_l.extend(e["plan_ms"])
+        _nan = [float("nan")] * n   # 구 청크(q값 없음) 호환
+        qg_l.extend(e.get("q_greedy", _nan)); qb_l.extend(e.get("q_best", _nan))
+        qe_l.extend(e.get("q_exec", _nan)); dp_l.extend(e.get("dpdr", _nan))
 
     if not act_l:
         raise SystemExit("수집된 라벨 샘플 0건(전 결정 유효액션 ≤1?) — 파라미터 확인")
@@ -223,6 +232,11 @@ def merge_chunks(chunk_dir, region_order, out, meta):
         "plan_ms": np.asarray(ms_l, dtype=np.float32),
         "eps": np.asarray(ep_l, dtype=np.int32),
         "steps": np.asarray(st_l, dtype=np.int32),
+        # ---- (v7) 후보 롤아웃 가치(pdrwog 단위) — 가치게이트·value-target 학습용 ----
+        "q_greedy": np.asarray(qg_l, dtype=np.float32),
+        "q_best": np.asarray(qb_l, dtype=np.float32),
+        "q_exec": np.asarray(qe_l, dtype=np.float32),
+        "dpdr": np.asarray(dp_l, dtype=np.float32),
         # ---- 출처 메타(dict) + 요약 ----
         "meta": meta,
         "n_dec_total": int(n_dec),

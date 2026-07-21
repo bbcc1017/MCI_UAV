@@ -116,7 +116,11 @@ class TruncatedRolloutPlanner:
         obs: 현재 정규화 obs(에피소드 루프가 보유한 값 — 생략 시 무접촉 재구성 폴백).
         부가정보는 self.last_info(dict)에 기록(ms=플래닝 소요, switched=greedy 이탈 여부)."""
         t0 = time.perf_counter()
-        info = {"lookahead": False, "switched": False, "ms": 0.0, "n_cand": 0}
+        # q_* (v7 가치게이트): 후보 롤아웃 가치를 last_info 로 노출(pdrwog 단위 = r_woG/preventable).
+        #   q_greedy=greedy 후보 가치, q_best=최선 후보 가치, dpdr=개선분(q_best−q_greedy).
+        #   lookahead 미수행(유효≤1·후보≤1) 시 None. 기존 동작·반환값 불변(정보 추가만).
+        info = {"lookahead": False, "switched": False, "ms": 0.0, "n_cand": 0,
+                "q_greedy": None, "q_best": None, "q_exec": None, "dpdr": None}
 
         mask = np.asarray(env.action_masks(), dtype=bool)
         valid = np.flatnonzero(mask)
@@ -193,6 +197,12 @@ class TruncatedRolloutPlanner:
             info["switched"] = (a_exec != g)
         else:
             a_exec = g
+        # (v7) 후보 가치를 pdrwog 단위로 노출 — 가치 예측 게이트·value-target 수집용
+        pv = preventable if preventable > 0 else 1.0
+        info["q_greedy"] = float(qs[gi]) / pv
+        info["q_best"] = float(qs[bi]) / pv
+        info["q_exec"] = float(qs[cand.index(a_exec)]) / pv
+        info["dpdr"] = (float(qs[bi]) - float(qs[gi])) / pv   # 개선분(≥0)
         info["ms"] = (time.perf_counter() - t0) * 1e3
         self.last_info = info
         return a_exec
