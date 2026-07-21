@@ -139,6 +139,18 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
     rep = {"region": reg}
 
+    def emit_nodata(reason):
+        # 정밀도로지도 미수록 지역(vWorld WFS 가 HTTP200 + 0피처로 응답 — 실측 확인). A2 자체가 0이거나,
+        # 구내 링크 0(이웃 구 bbox spill 만 잡힘)인 경우 무데이터로 통일 — bin 미생성(기존 spill bin 정리).
+        rep["criteria"] = {"no_data": "SKIP"}
+        rep["criteria_note"] = reason
+        binp = os.path.join(out_dir, reg + ".bin")
+        if os.path.exists(binp):
+            os.remove(binp)
+        with open(os.path.join(out_dir, reg + ".report.json"), "w", encoding="utf-8") as fo:
+            json.dump(rep, fo, ensure_ascii=False, indent=1, default=int)
+        print(f"[skip] {reg}: {reason} — bin 미생성", flush=True)
+
     ov_roadno, ov_rank = {}, {}
     if args.speed_overrides:
         ov = json.load(open(args.speed_overrides, encoding="utf-8"))
@@ -175,11 +187,8 @@ def main():
     n = len(lid)
     print(f"[a2] 링크 {n} (중복/무id {dup}, 멀티파트 {multipart})", flush=True)
     rep["links"] = {"count": n, "dup_or_noid": dup, "multipart": multipart}
-    if n == 0:  # 정밀도로지도 자체 커버리지 공백(예: 부산 남구/수영구, 인천 강화군, 경북 울릉군) — 페치 실패 아님
-        rep["criteria"] = {"no_data": "SKIP"}
-        with open(os.path.join(out_dir, reg + ".report.json"), "w", encoding="utf-8") as fo:
-            json.dump(rep, fo, ensure_ascii=False, indent=1, default=int)
-        print(f"[skip] {reg}: A2 데이터 없음(정밀도로지도 미커버 지역) — bin 미생성", flush=True)
+    if n == 0:  # A2 자체 0(예: 부산 남구/수영구, 인천 강화군, 경북 울릉군) — WFS HTTP200+0피처 실측 확인
+        emit_nodata("A2 미수록(정밀도로지도 커버리지 공백)")
         return
 
     # 호장·방위
@@ -350,6 +359,14 @@ def main():
     def is_bnd(p):
         return (not inpoly(p)) or edge_dist(p) < args.boundary_margin
 
+    # 구내 링크 0 = 이웃 구 bbox spill 만 존재(부산 영도구=중구 영도대교, 인천 옹진군). 부산 16구
+    # 전수 스캔·WFS HTTP200+0피처 실측으로 해당 시군구 정밀도로지도 미수록 확정 → 무데이터로 통일.
+    inside_mask = [inpoly(lpts[i][len(lpts[i]) // 2]) for i in range(n)]
+    n_inside = sum(inside_mask)
+    if n_inside == 0:
+        emit_nodata("구내 링크 0 — 이웃 구 spill 만 존재(정밀도로지도 미수록)")
+        return
+
     flags = np.zeros(n, dtype=np.uint8)
     dead_end = sum(1 for s in succ_lists if not s)
     for i in range(n):
@@ -403,8 +420,6 @@ def main():
             dsu.union(i, j)
         if leftI[i] >= 0: dsu.union(i, int(leftI[i]))
         if rightI[i] >= 0: dsu.union(i, int(rightI[i]))
-    inside_mask = [inpoly(lpts[i][len(lpts[i]) // 2]) for i in range(n)]
-    n_inside = sum(inside_mask)
     comp, comp_in = {}, {}
     for i in range(n):
         r0 = dsu.find(i)
