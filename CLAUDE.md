@@ -100,6 +100,15 @@ Beyond single-coordinate training, there are two multi-region pipelines driven b
 - **Track B1 ExIt 기각(음성)**: `ncrp_labels.py`(비천리안 라벨 9.8만, switch율26.4%)·`ncrp_label_probe.py`(챔피언-init BC probe, 지역분할). **switched한정 held-out acc 0.125**(chance 3.6배지만 절대낮음) → v3 천리안0.19·v4 관측확장·v6 비천리안0.125 **3중 확증: 룩어헤드 이득은 반응형 정책으로 학습 불가**. B2/B3 미착수 기각. 룩어헤드는 배포시 플래너 실행으로만(결정당~2.9s, 분단위 간격 대비 무시).
 - **최종 배포스택 = `v6_pad_s0`+NCRP-m16**(차원비의존, 0.0863·65.2%); 챔피언+NCRP-m16(0.0852·67.5%)=고정47 상한기준. 산출물: 모델 `results/rl/redesign/v6_{pad,rand}_s{0,1,2}`, CSV `v6_{sido17,holdout250}[_natural]_judgment.csv`·`v6_stress_*`·`planner_{sido17,v6pad_sido17}_h10m16.csv`·`ncrp_probe_v6_m16.json`, 집계 `tools/v6_scoreboard.py`, 정본 `docs/v6_시나리오비의존_보고서_2026-07-20.md`. 다음=해석가능 규칙 증류(Track C)를 v6_pad 위에서 재적합.
 
+### v7 value-guided PPO (2026-07-22) — 룩어헤드 학습흡수 5중 확증 실패(음성)
+
+사용자 목표 "greedy 성능 자체 향상"(궤적 forward search 개선→학습, ≈ExIt). 반응형 천장 돌파 재시도, 시뮬 무수정.
+- **가설**: 행동 BC(v3/v4/v6 3중 실패)는 미래 난수 민감 → 크리틱은 E_future[return] 기댓값이라 난수 씻김 → **가치측 흡수 가능?** (DAR 기각과 다른 축: 신용할당 아닌 value-target 정확도).
+- **가치게이트 통과**(`value_gate_probe.py`): NCRP(m16) 라벨 25200결정 obs 회귀(HGB, 지역분할) — q_best R²=**0.886**(개선가치 예측가능=value-target 학습대상 성립), dpdr R²=**0.251**(개선분 1/4만=근시안 M성분, 3/4 난수=C성분=상한 예고). 행동 BC switched 0.125 대비 생존.
+- **배관 3함정 해결**(음성이 방법실패 아님 보장): ①h10절단→NCRP q는 완전가치 ~1/3(V 3.28σ vs q 1.01σ)→**relative baseline** `y=V_champ(s)+dpdr_disc/σ_ret`(63e4e31, MVE leaf 부트스트랩 정합) ②self-ref→V_champ 동결(no_grad 1회 계산 고정타깃) ③**lr≈0**(v4_plr2 anneal 후 +300k resume→lr 5.5e-6→1.8e-8·approx_kl 1e-9=정책동결)→**lr리셋** constant 1e-4(074f8f0, kl 0.034→0.0085 정상). ⚠️ resume 파인튠은 항상 lr 확인(anneal 0 복원 함정).
+- **★최종 음성(단조 악화)**: A(relative value)+CRR(dpdr가중 행동, binary eps0.002·coef0.4) 결합·lr정상 파인튠(v4_plr2 +300k) → 시도17 5지역(서울·강원·충남·경북·전남) 100ep paired. **정책 안움직이면(vgA lr≈0) champ 동률(+0.0008), lr정상 개입하면(vglr) 7배 악화(+0.0059·5/5·경북+0.0128)**. EV 0.97·critic_ev_labels 0.997 건강=가치는 배움 but greedy 악화. **개입강도∝악화(단조)** = 노이즈 아닌 구조. 원리: NCRP가 미래봐서 뒤집은 행동을 미래무지 정책이 모방하면 열등(dpdr R²0.251 예고). m32 정밀라벨은 수집만(구조적이라 재실행 무의미, 보존).
+- **결론**: 반응형 정책 룩어헤드 흡수불가 **5중 확증**(v3천리안BC·v4관측·v6비천리안BC·**v7A가치·v7CRR행동**). 룩어헤드는 **배포 플래너 실행으로만**(v6 NCRP 채택 원리적 정당화). 코드(전부 커밋·옵션off=구동작): `value_guided_ppo.py`(ValueGuidedMaskablePPO: aux value+CRR, relative baseline, lr리셋)·`train_vgppo.py`·`value_gate_probe.py`, planner q_*·할인 노출(`planner_policy.py`). 정본 `docs/v7_value_guided_{설계,결과}_2026-07-22.md`.
+
 ### Key env vars (RL/sim & scenario gen)
 
 - **`MCI_REDUCED_OBS=1`** aggregates the obs to summary stats (smaller obs dim). **Must match between train and eval** or the model won't load; batch scripts (`run_seed_repro.py`, grid launchers) force it on.
