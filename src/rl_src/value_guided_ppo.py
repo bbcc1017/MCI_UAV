@@ -192,11 +192,15 @@ class ValueGuidedMaskablePPO(MaskablePPO):
         aux_v = zero
         if self._vg_aux_coef > 0:
             aux_v = F.mse_loss(values, vg["y_tilde"].index_select(0, idx_t))
-        # (B) CRR/AWAC 가중 masked-NLL
+        # (B) CRR/AWAC 가중 masked-NLL — **선택집합(w>0) 평균**으로 정규화.
+        # sparse positive(switched·dpdr>eps ~4.4%)를 batch 평균이 ~22배 희석하는 것을 방지 →
+        # crr_coef 를 "flip-BC 강도"(PPO policy loss 대비)로 해석 가능하게. binary w 면
+        # = switched 결정들의 평균 NLL, exp w 면 가중평균. 선택 0개면 0(무기여).
         aux_crr = zero
         if self._vg_crr_coef > 0 and vg["w"] is not None:
             w_b = vg["w"].index_select(0, idx_t)
-            aux_crr = -(w_b * log_prob).mean()
+            denom = w_b.sum().clamp(min=1.0)
+            aux_crr = -(w_b * log_prob).sum() / denom
         # 진단: 라벨셋 크리틱 EV(신규 롤아웃 아님 — 라벨 분포 기준 근사)
         with th.no_grad():
             ev = explained_variance(values.detach().cpu().numpy(),
