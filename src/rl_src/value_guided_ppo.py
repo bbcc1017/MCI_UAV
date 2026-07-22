@@ -68,7 +68,7 @@ def _champion_values(model, obs_np, device, batch=4096):
 # ============================================================ 스키마 로더 + 단위환산
 def load_value_labels(path: str, model: MaskablePPO, *, aux_target: str = "q_best",
                       sigma_ret: "float | None" = None, baseline: str = "relative",
-                      crr: "str | None" = None, crr_beta: float = 1.0,
+                      crr: "str | None" = None, crr_beta: float = 1.0, crr_eps: float = 5e-3,
                       clip_q: float = 1.5, device: "str | None" = None) -> dict:
     """공유 스키마 pkl 로드 → 모델 차원검증 → 타깃 단위환산 → torch 텐서 dict 반환.
 
@@ -125,7 +125,7 @@ def load_value_labels(path: str, model: MaskablePPO, *, aux_target: str = "q_bes
     # ---- 방법 B용 action/mask (스키마 최종: 복수형 actions/masks; 구 단수 키도 폴백) ----
     act = d.get("actions", d.get("action"))
     mask = d.get("masks", d.get("mask"))
-    w = crr_weight(d.get("dpdr", np.zeros(N)), crr, crr_beta) if crr not in (None, "off") else None
+    w = crr_weight(d.get("dpdr", np.zeros(N)), crr, crr_beta, eps=crr_eps) if crr not in (None, "off") else None
     if crr not in (None, "off") and (act is None or mask is None):
         raise ValueError(f"crr={crr} 인데 라벨에 actions/masks 없음 (키={sorted(d.keys())})")
 

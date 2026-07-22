@@ -31,10 +31,31 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import numpy as np
+from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
 
 from train_ppo_feature import make_env_fn
 from value_guided_ppo import ValueGuidedMaskablePPO, load_value_labels
+
+
+class _EVFlush(BaseCallback):
+    """매 롤아웃마다 model._ev_history 를 CSV 로 증분 flush — 학습 중 kl/EV 라이브 확인용
+    (stdout=/dev/null 이라도 파일로 진행 감시). train() 이 append 하므로 1 업데이트 지연(무해)."""
+
+    def __init__(self, path):
+        super().__init__()
+        self.path = path
+
+    def _on_step(self) -> bool:
+        return True
+
+    def _on_rollout_end(self) -> None:
+        hist = getattr(self.model, "_ev_history", [])
+        if hist:
+            with open(self.path, "w", newline="") as f:
+                w = csv.DictWriter(f, fieldnames=list(hist[0].keys()))
+                w.writeheader()
+                w.writerows(hist)
 
 
 def parse_args():
@@ -52,6 +73,8 @@ def parse_args():
                    help="방법 B(CRR/AWAC) dpdr 가중 masked-NLL. 기본 off(A 단독).")
     p.add_argument("--crr_coef", type=float, default=0.05, help="CRR BC 계수(crr!=off 일 때).")
     p.add_argument("--crr_beta", type=float, default=0.05, help="exp 가중 온도 β(pdrwog 스케일).")
+    p.add_argument("--crr_eps", type=float, default=5e-3,
+                   help="binary 필터 임계 1[dpdr>eps](노이즈 스위치 컷). 0.005=switched~4.4%, 0.002=~9.4%.")
     p.add_argument("--total_timesteps", type=int, default=300_000, help="추가 스텝(resume 이어카운트).")
     p.add_argument("--n_envs", type=int, default=4)
     p.add_argument("--vec", choices=["dummy", "subproc"], default="subproc")
@@ -113,14 +136,16 @@ def main():
     # ---- 가치라벨 로드 + 단위환산 + 유도 설정 ----
     labels = load_value_labels(args.value_labels, model, aux_target=args.aux_target,
                                sigma_ret=sigma_ret, baseline=args.baseline,
-                               crr=(None if args.crr == "off" else args.crr), crr_beta=args.crr_beta)
+                               crr=(None if args.crr == "off" else args.crr),
+                               crr_beta=args.crr_beta, crr_eps=args.crr_eps)
     model.set_value_guidance(labels, aux_coef=args.aux_coef,
                              crr_coef=(0.0 if args.crr == "off" else args.crr_coef),
                              seed=args.seed)
 
-    # ---- 파인튠 ----
+    # ---- 파인튠 (ev_history 증분 flush 콜백으로 kl/EV 라이브 감시) ----
+    ev_csv = os.path.join(args.log_dir, "ev_history.csv")
     model.learn(total_timesteps=args.total_timesteps, tb_log_name="vgppo",
-                reset_num_timesteps=False, progress_bar=False)
+                reset_num_timesteps=False, progress_bar=False, callback=_EVFlush(ev_csv))
 
     # ---- 저장 + 진단 곡선 CSV ----
     final_path = os.path.join(args.log_dir, "final_model.zip")
@@ -136,7 +161,24 @@ def main():
         ev0, ev1 = hist[0]["ev"], hist[-1]["ev"]
         print(f"[vgppo] EV(신규롤아웃): {ev0:.4f} → {ev1:.4f} (Δ{ev1 - ev0:+.4f}) over {len(hist)} updates | "
               f"aux_value_loss {hist[0]['aux_value_loss']:.4f}→{hist[-1]['aux_value_loss']:.4f}", flush=True)
-    print(f"Saved: {final_path}\nSaved EV curve: {ev_csv}", flush=True)
+    # 요약 meta.json (stdout=/dev/null 로 돌려도 파일로 결과 회수 — sim print 스팸 회피)
+    import json
+    evs = [h["ev"] for h in hist] if hist else []
+    axl = [h["aux_value_loss"] for h in hist] if hist else []
+    meta = {"config_path": args.config_path, "resume_from": args.resume_from,
+            "value_labels": args.value_labels, "baseline": args.baseline,
+            "aux_target": args.aux_target, "aux_coef": args.aux_coef,
+            "crr": args.crr, "crr_coef": args.crr_coef, "sigma_ret": sigma_ret,
+            "total_timesteps": args.total_timesteps, "n_envs": args.n_envs,
+            "final_num_timesteps": int(model.num_timesteps),
+            "labels_meta": labels["meta"], "n_updates": len(hist),
+            "ev_first": (evs[0] if evs else None), "ev_last": (evs[-1] if evs else None),
+            "ev_min": (min(evs) if evs else None), "ev_max": (max(evs) if evs else None),
+            "aux_value_loss_first": (axl[0] if axl else None),
+            "aux_value_loss_last": (axl[-1] if axl else None)}
+    with open(os.path.join(args.log_dir, "meta.json"), "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+    print(f"Saved: {final_path}\nSaved EV curve: {ev_csv}\nSaved meta.json", flush=True)
 
 
 if __name__ == "__main__":
