@@ -43,7 +43,9 @@
       "PPO_POINTER_V10": 0.14839,
       "PPO_POINTER_V10_NCRP_M16": 0.14324,
       "PPO_POINTER_V10_NCRP_H20M16": 0.14147,
-      "PPO_POINTER_V10_NCRP_H20M16_MILPINJ": 0.14029
+      "PPO_POINTER_V10_NCRP_H20M16_MILPINJ": 0.14029,
+      "NCRP_CLAIR_H20": 0.13411,
+      "NCRP_CLAIR_HINF": 0.12578
     },
     "key_paired_tests": [
       {
@@ -74,7 +76,39 @@
         "wtl": "215/35/0",
         "significant": true
       }
-    ]
+    ],
+    "oracle_reachability": {
+      "definition": "(PDR_LB_T4 − PDR_policy) / (PDR_LB_T4 − PDR_oracle), 0%=LB-T4, 100%=완전 천리안(--clairvoyant --h -1 --m 1 --K 8)",
+      "anchors": {
+        "LB_T4": 0.1686,
+        "oracle_clair_hinf": 0.12578,
+        "span": 0.04283
+      },
+      "eval250_percent": {
+        "MILP_ROLLING": 36.6,
+        "PPO_POINTER_V10": 47.2,
+        "PPO_POINTER_V10_NCRP_M16": 59.2,
+        "PPO_POINTER_V10_NCRP_H20M16": 63.3,
+        "PPO_POINTER_V10_NCRP_H20M16_MILPINJ": 66.1,
+        "NCRP_CLAIR_H20": 80.5,
+        "NCRP_CLAIR_HINF": 100.0
+      },
+      "dev40_percent": {
+        "MILP_ROLLING": 32.3,
+        "PPO": 49.2,
+        "NCRP_H10M16": 61.4,
+        "NCRP_H20M16": 67.0,
+        "NCRP_H20M16_MILPINJ": 68.0,
+        "CLAIR_H20": 82.0,
+        "CLAIR_HINF": 100.0
+      },
+      "loss_split": {
+        "recoverable_within_h20_if_clairvoyant_pp": 14.4,
+        "requires_unbounded_horizon_pp": 19.5,
+        "note": "h20 내부 14.4pp는 m증액·z마진 무효였으므로 잡음보다 후속정책 품질이 지배. 무한지평 19.5pp는 비천리안으로 오히려 손해(h40·h∞ 유의 열세)=배포 불가 경로"
+      },
+      "caveat": "대표점250 기준이라 시도17 기준 v4 57.1%·v5 65.4%·v6 67.5%와 직접 비교 불가"
+    }
   },
   "paired_test": "지역별 episode 차이 배열의 95% CI (v10 관례와 동일)",
   "regression_seal": {
@@ -147,6 +181,20 @@
         "clairvoyant": true
       },
       "scoreboard_role": "headroom_reference"
+    },
+    {
+      "method_id": "NCRP_CLAIR_HINF",
+      "display_name": "천리안 h∞(오라클 앵커)",
+      "family": "upper_bound",
+      "implementation": "src/rl_src/planner_policy.py",
+      "planner": {
+        "K": 8,
+        "h": -1,
+        "m": 1,
+        "clairvoyant": true
+      },
+      "note": "rollout_oracle 과 비트 동일 구성 — 도달률 100% 앵커",
+      "scoreboard_role": "oracle_anchor"
     }
   ],
   "rejected_negative_results": [
@@ -214,5 +262,6 @@
     "definition": "v10 PPO Pointer greedy 위에 NCRP(K8·h20·m16·비천리안·후보 간 CRN 공유) + MILP 액션 2개 후보주입",
     "pdr_wog_eval250": 0.14029,
     "note": "OR 단독(0.15291)은 PPO 미달이지만 후보 생성기로 결합하면 유의 추가 이득(+0.00119±0.00025, 패배 0곳)"
-  }
+  },
+  "next_lever": "롤아웃 후속정책 자체 교체(증류트리·MILP를 suffix policy로) — h·m·K 축은 포화. v7이 기각한 '정책으로 흡수'와 다른 방향"
 }
