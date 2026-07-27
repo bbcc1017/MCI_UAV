@@ -29,6 +29,7 @@ ev_manager 상태 불변(스모크에서 검증). 재시드용 default_rng 생�
 """
 import sys
 import os
+import math
 import time
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -74,13 +75,24 @@ class TruncatedRolloutPlanner:
     """
 
     def __init__(self, model, K=8, h=10, m=2, leaf_fn=None, clairvoyant=False,
-                 reseed_base=777000, switch_margin=0.0, gamma=0.99):
+                 reseed_base=777000, switch_margin=0.0, gamma=0.99,
+                 alloc="uniform", switch_z=0.0, extra_cand_fn=None):
         self.model = model
         self.K, self.h, self.m = int(K), int(h), int(m)
         self.leaf_fn = leaf_fn
         self.clairvoyant = bool(clairvoyant)
         self.reseed_base = int(reseed_base)
         self.switch_margin = float(switch_margin)
+        # (v11) alloc: "uniform"=후보마다 m회(기존, 비트동일) / "sh"=successive halving
+        #   같은 총 롤아웃 예산(K_cand×m)을 rung 마다 하위 절반 탈락시키며 재분배 →
+        #   최종 생존 후보(greedy 포함 강제)의 유효 표본수가 uniform 보다 커진다.
+        # (v11) switch_z: 스위치 판정을 고정 ε 대신 페어드 표준오차 z배로(0=기존 엄격개선).
+        #   d_j = w_bj − w_gj 의 mean > z·SE 일 때만 이탈. SE 는 결정마다 달라 ε 보다 정합적.
+        # (v11) extra_cand_fn(unwrapped, mask) -> [action,...]: 외부(MILP 등) 후보 주입 훅.
+        #   주입 후보도 같은 롤아웃으로 검증되므로 greedy 대비 지배가 유지된다.
+        self.alloc = str(alloc)
+        self.switch_z = float(switch_z)
+        self.extra_cand_fn = extra_cand_fn
         # (v7) gamma: 할인 suffix q_*_disc 계산용(결정 스텝 단위, PPO gamma 정합 기본 0.99).
         # 스위치 판정은 무할인 qs 유지 → planner 성능 불변, 할인본은 value-target 학습용 노출만.
         self.gamma = float(gamma)
@@ -136,7 +148,8 @@ class TruncatedRolloutPlanner:
         #   lookahead 미수행(유효≤1·후보≤1) 시 None. 기존 동작·반환값 불변(정보 추가만).
         info = {"lookahead": False, "switched": False, "ms": 0.0, "n_cand": 0,
                 "q_greedy": None, "q_best": None, "q_exec": None, "dpdr": None,
-                "q_greedy_disc": None, "q_best_disc": None, "q_exec_disc": None, "dpdr_disc": None}
+                "q_greedy_disc": None, "q_best_disc": None, "q_exec_disc": None, "dpdr_disc": None,
+                "n_rollout": 0, "n_extra": 0}
 
         mask = np.asarray(env.action_masks(), dtype=bool)
         valid = np.flatnonzero(mask)
@@ -177,6 +190,17 @@ class TruncatedRolloutPlanner:
             cand.append(x)
         if g not in cand:                        # 안전 가드(order[0]=g 라 항상 포함이긴 함)
             cand.append(g)
+        if self.extra_cand_fn is not None:       # (v11) 외부 후보 주입(MILP 등)
+            for x in self.extra_cand_fn(env.unwrapped, mask):
+                x = int(x)
+                if not mask[x] or x in cand:
+                    continue
+                if self._dest_tab[x] == 0:       # stay 중복은 후보 관례대로 1개만
+                    if seen_stay:
+                        continue
+                    seen_stay = True
+                cand.append(x)
+                info["n_extra"] += 1
         if len(cand) <= 1:
             info["ms"] = (time.perf_counter() - t0) * 1e3
             self.last_info = info
@@ -193,28 +217,88 @@ class TruncatedRolloutPlanner:
         # (비천리안 유지) — 같은 상상 미래 위 paired 비교로 분산만 소거. 결정마다 다른
         # 스트림(_n_dec 반영)이라 특정 실현 패턴에 고착되지 않음.
         self._n_dec = getattr(self, "_n_dec", 0) + 1
-        seeds = [self.reseed_base + ep_seed * 97 + j * 13 + self._n_dec * 10007
-                 for j in range(m_eff)]
-        qs = []
-        qs_disc = []   # (v7) 할인 suffix 평균 — value-target 학습용(스위치 판정엔 미사용)
-        for a in cand:
-            acc = 0.0
-            acc_disc = 0.0
-            for j in range(m_eff):
-                clone = self._cloner.clone(env, ep_seed, None)
-                if not self.clairvoyant:
-                    # 비천리안 핵심: 복제 rng 를 미래-무지 스트림으로 교체(원본 무접촉).
-                    clone.unwrapped.ev_manager.set_seed(np.random.default_rng(seeds[j]))
-                rw, rwd = self._rollout(clone, a, preventable)
-                acc += rw
-                acc_disc += rwd
-            qs.append(acc / m_eff)
-            qs_disc.append(acc_disc / m_eff)
 
-        # 스위치·bi 는 무할인 qs 로 판정(기존 성능 불변) — 할인본은 노출만.
-        gi, bi = cand.index(g), int(np.argmax(qs))
+        def _future_seed(j):
+            return self.reseed_base + ep_seed * 97 + j * 13 + self._n_dec * 10007
+
+        def _one(a, j):
+            """후보 a 를 j번째 상상미래에서 1회 롤아웃 → (무할인, 할인) suffix."""
+            clone = self._cloner.clone(env, ep_seed, None)
+            if not self.clairvoyant:
+                # 비천리안 핵심: 복제 rng 를 미래-무지 스트림으로 교체(원본 무접촉).
+                clone.unwrapped.ev_manager.set_seed(np.random.default_rng(_future_seed(j)))
+            return self._rollout(clone, a, preventable)
+
+        w_paired = None       # (v11) 후보별 미래별 값 — z 스위치·SH 용(uniform 수치엔 무영향)
+        if self.alloc == "sh" and not self.clairvoyant and len(cand) > 2 and m_eff > 1:
+            # ---- (v11) successive halving: 같은 예산(len(cand)×m)을 rung 마다 재분배 ----
+            budget = len(cand) * m_eff
+            n_rungs = max(1, int(np.log2(max(len(cand), 2))) + 1)
+            per_rung = budget / n_rungs
+            W = [[] for _ in cand]
+            surv = list(range(len(cand)))
+            gi0 = cand.index(g)
+            spent, guard = 0, 0
+            while surv and spent < budget and guard < 12:
+                guard += 1
+                add = max(1, int(round(per_rung / len(surv))))
+                add = min(add, max(1, int(np.ceil((budget - spent) / len(surv)))))
+                for i in surv:
+                    for j in range(len(W[i]), len(W[i]) + add):
+                        W[i].append(_one(cand[i], j))
+                    spent += add
+                if len(surv) <= 2:
+                    continue                       # 남은 예산은 최종 2후보(greedy 포함)에 투입
+                means = {i: float(np.mean([x[0] for x in W[i]])) for i in surv}
+                keep = sorted(surv, key=lambda i: -means[i])[:max(2, len(surv) // 2)]
+                if gi0 not in keep:                # greedy 는 페어드 기준이라 항상 생존
+                    keep = keep[:-1] + [gi0]
+                surv = sorted(set(keep))
+            info["n_rollout"] = int(spent)
+            qs = [float(np.mean([x[0] for x in W[i]])) if W[i] else -np.inf
+                  for i in range(len(cand))]
+            qs_disc = [float(np.mean([x[1] for x in W[i]])) if W[i] else 0.0
+                       for i in range(len(cand))]
+            # 최종 argmax 는 생존 후보(표본수 동일)에서만 — 조기탈락 후보의 소표본 평균 배제
+            gi = gi0
+            bi = max(surv, key=lambda i: qs[i]) if surv else gi
+            n_pair = min(len(W[gi]), len(W[bi]))
+            if n_pair > 1 and bi != gi:
+                w_paired = np.asarray([W[bi][j][0] - W[gi][j][0] for j in range(n_pair)])
+        else:
+            qs = []
+            qs_disc = []   # (v7) 할인 suffix 평균 — value-target 학습용(스위치 판정엔 미사용)
+            seeds = [_future_seed(j) for j in range(m_eff)]
+            W = []
+            for a in cand:
+                acc = 0.0
+                acc_disc = 0.0
+                row = []
+                for j in range(m_eff):
+                    clone = self._cloner.clone(env, ep_seed, None)
+                    if not self.clairvoyant:
+                        clone.unwrapped.ev_manager.set_seed(np.random.default_rng(seeds[j]))
+                    rw, rwd = self._rollout(clone, a, preventable)
+                    acc += rw
+                    acc_disc += rwd
+                    row.append(rw)
+                # 누적은 오라클과 동일한 순차합 유지(비트 동일성) — 평균도 같은 식.
+                qs.append(acc / m_eff)
+                qs_disc.append(acc_disc / m_eff)
+                W.append(row)
+            info["n_rollout"] = int(len(cand) * m_eff)
+            # 스위치·bi 는 무할인 qs 로 판정(기존 성능 불변) — 할인본은 노출만.
+            gi, bi = cand.index(g), int(np.argmax(qs))
+            if m_eff > 1 and bi != gi:
+                w_paired = np.asarray(W[bi]) - np.asarray(W[gi])
+
         # 마진 초과 개선일 때만 스위치(동률·미세개선=greedy 유지 — margin=0 이면 기존 엄격개선)
-        if qs[bi] > qs[gi] + self.switch_margin * preventable:
+        thr = self.switch_margin * preventable
+        if self.switch_z > 0.0 and w_paired is not None and w_paired.size > 1:
+            # 페어드 SE 기반 마진: 유한 MC 잡음이 만든 한계 스위치를 결정별로 차단
+            se = float(w_paired.std(ddof=1)) / math.sqrt(w_paired.size)
+            thr = max(thr, self.switch_z * se)
+        if qs[bi] > qs[gi] + thr:
             a_exec = cand[bi]
             info["switched"] = (a_exec != g)
         else:

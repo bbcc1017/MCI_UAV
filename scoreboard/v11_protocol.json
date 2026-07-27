@@ -1,0 +1,99 @@
+{
+  "protocol_id": "v11_ncrp_condition_search__milp_or_baseline",
+  "extends": "scoreboard/v10_protocol.json",
+  "metric": "PDR_woG",
+  "lower_is_better": true,
+  "base_policy": "results/rl/redesign/v10_random4_1000_pointer_s0",
+  "environment": {
+    "MCI_CAP_GATE": "occ",
+    "MCI_OBS_VARIANT": "essential+load+valid",
+    "MCI_H_PAD": "47",
+    "MCI_REWARD_MODE": "woG"
+  },
+  "tuning": {
+    "pool": "scoreboard/v11_ncrp_dev40_regions.txt",
+    "pool_definition": "학습 random4 1,000 중 p2 40좌표 — Codex v10 증류 폐루프 dev40과 동일 집합",
+    "manifest": "scenarios/manifests/sigungu_osrm_train1000_random4_manifest.json",
+    "seeds": [8000, 8019],
+    "episodes_per_region": 20,
+    "note": "평가 대표점250은 팔 선택·조기종료·하이퍼 조정에 일절 사용하지 않았다"
+  },
+  "confirmation": {
+    "manifest": "scenarios/manifests/sigungu_osrm_eval250_representative_manifest.json",
+    "seeds": [0, 29],
+    "episodes_per_region": 30,
+    "cube_extended": "results/scoreboard/v10/full1000/scoreboard_common30_episodes.npz",
+    "hard_gate": "신규 팔의 pdr_base(같은 시드 PPO greedy 재주행)가 기존 cube PPO 행과 1e-9 이내 일치",
+    "preregistered_arms": ["K8h20m16", "K8h20m16_milpinj", "clair_h20m1", "milp"]
+  },
+  "paired_test": "지역별 episode 차이 배열의 95% CI (v10 관례와 동일)",
+  "regression_seal": {
+    "claim": "신규 코드의 기본 경로가 기존 NCRP-m16 산출과 부동소수 동일",
+    "evidence": "results/scoreboard/v11/smoke/seal_default.csv 6행 vs results/scoreboard/v10/full1000/ncrp_m16_eval250_seed0_29.csv"
+  },
+  "methods_added": [
+    {
+      "method_id": "PPO_POINTER_V10_NCRP_H20M16",
+      "display_name": "RL + NCRP-h20m16 (v11 최적조건)",
+      "family": "rl_planner_stack",
+      "implementation": "src/rl_src/planner_policy.py",
+      "planner": {"K": 8, "h": 20, "m": 16, "leaf": "none", "clairvoyant": false,
+                  "reseed_base": 777000, "alloc": "uniform", "switch_margin": 0.0,
+                  "switch_z": 0.0},
+      "selection_evidence": "dev40 paired vs K8h10m16 = +0.00246 ± 0.00104",
+      "scoreboard_role": "proposed_full_stack"
+    },
+    {
+      "method_id": "PPO_POINTER_V10_NCRP_H20M16_MILPINJ",
+      "display_name": "RL + NCRP-h20m16 + MILP 후보주입",
+      "family": "rl_planner_or_hybrid",
+      "implementation": "src/rl_src/planner_policy.py + src/rl_src/milp_policy.py",
+      "planner": {"K": 8, "h": 20, "m": 16, "cand_source": "ppo+milp", "n_propose": 2},
+      "selection_evidence": "dev40 paired vs K8h20m16 = +0.00044 ± 0.00052 (비유의, 사전확정 2순위)",
+      "scoreboard_role": "hybrid"
+    },
+    {
+      "method_id": "MILP_ROLLING",
+      "display_name": "MILP 롤링호라이즌 배정",
+      "family": "operations_research",
+      "implementation": "src/rl_src/milp_policy.py",
+      "definition": "결정시점 스냅샷을 트립슬롯×치료개시기회 정수배정으로 풀고(HiGHS) 즉시 실행 가능한 1건만 방출, 매 결정 재해",
+      "information_level": "I3 병원연계(실시간 점유·큐) + action_masks 공통 안전제약",
+      "hyperparameters": {"n_opp": 3, "slot_margin": 2, "second_wave": false,
+                          "topk_hosp": 0, "future_patients": false,
+                          "force_dispatch": false, "queue_model": "fluid"},
+      "scoreboard_role": "or_baseline"
+    },
+    {
+      "method_id": "NCRP_CLAIR_H20",
+      "display_name": "천리안 h20 (상한 참조)",
+      "family": "upper_bound",
+      "implementation": "src/rl_src/planner_policy.py",
+      "planner": {"K": 8, "h": 20, "m": 1, "clairvoyant": true},
+      "scoreboard_role": "headroom_reference"
+    }
+  ],
+  "rejected_negative_results": [
+    {"item": "h40 / h∞ (m16)", "evidence": "dev40 paired vs h20m16 = −0.00117 ±0.00087 / −0.00110 ±0.00089", "reason": "깊은 롤아웃에서 greedy 후속정책 오차 누적(편향). 스위치율 0.73로 급증"},
+    {"item": "m32 (h10·h20)", "evidence": "+0.00027 ±0.00040 / +0.00002 ±0.00064", "reason": "m16에서 이미 포화 — 남은 손실은 분산이 아님"},
+    {"item": "switch_z=1 페어드 SE 마진", "evidence": "−0.00050 ±0.00069", "reason": "잡음 스위치 억제로는 이득 없음(편향 가설 지지)"},
+    {"item": "successive halving 할당", "evidence": "+0.00021 ±0.00063", "reason": "예산 중립 확인(64 롤아웃/결정 동일)했으나 비유의"},
+    {"item": "MILP 예상 구조환자 수요", "evidence": "dev40 0.16346 vs 0.16312", "reason": "이득 없음·비용 3.3배"},
+    {"item": "MILP force_dispatch", "evidence": "0.16330 (−0.00019 ±0.00019)", "reason": "대기(stay) 병리 가설 탈락"},
+    {"item": "MILP timed 큐 모형", "evidence": "0.16413 (−0.00101 ±0.00168)", "reason": "이송중 환자 시각 인식으로도 개선 없음"},
+    {"item": "K16 (v6에서 이미 확인)", "evidence": "v6 CSV 재분석 +0.00015 ±0.00061", "reason": "후보 수는 무효 축 — v11에서 재실행하지 않음"}
+  ],
+  "artifacts": {
+    "dev40_dir": "results/scoreboard/v11/dev40",
+    "dev40_ladder_summary": "results/scoreboard/v11/dev40/ladder_summary.csv",
+    "dev40_ladder_pairwise": "results/scoreboard/v11/dev40/ladder_pairwise.csv",
+    "dev40_baselines_heur_lbt4": "results/scoreboard/v11/dev40/baselines_heur_lbt4_pe.npz",
+    "eval250_dir": "results/scoreboard/v11/eval250",
+    "report": "docs/v11_NCRP최적조건_MILP_보고서_2026-07-27.md",
+    "design": "docs/v11_NCRP스케일링_MILP_설계_2026-07-26.md",
+    "drivers": ["tools/exp_drivers/run_v11_dev40_ladder.sh",
+                "tools/exp_drivers/run_v11_dev40_ladder2.sh",
+                "tools/exp_drivers/run_v11_eval250_confirm.sh"],
+    "aggregators": ["tools/v11_ladder_report.py", "tools/v11_scoreboard.py"]
+  }
+}
