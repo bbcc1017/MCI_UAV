@@ -141,12 +141,13 @@ python src/sce_src/make_csv_yaml_dynamic.py --base_path . \
   --incident_size 100 --amb_count 30 --uav_count 26 --is_use_time True --kakao_api_key $KAKAO_API_KEY
 ```
 
-**시군구 250 / hold-out 세트 (재구축 도구):**
+**시군구 학습 1,000 / 평가 250 세트 (재구축 도구):**
 
 ```bash
 # 시군구 Kakao 일괄(재개가능·키 로테이션): src/sce_src/gen_sigungu_kakao.py --keys_file <keys>
-# 시군구 OSRM 좌표고정 재구축: src/sce_src/regen_sigungu_osrm.py
-# hold-out 평가점(OSRM, 기존 좌표 재사용/신규): src/sce_src/gen_eval_holdout_osrm.py [--points_from <json>]
+# 평가용 대표점 250 OSRM 좌표고정 재구축: src/sce_src/regen_sigungu_osrm.py
+# 학습용 시군구당 무작위 4점(OSRM, 총 1,000):
+# src/sce_src/gen_eval_holdout_osrm.py [--points_from scenarios/manifests/sigungu_osrm_train1000_random4_points.json]
 # (구식 Kakao hold-out 경로: sample_region_points.py → gen_eval_points.py --min_hos_num <H>)
 ```
 
@@ -169,20 +170,43 @@ python tools/exp_drivers/aggregate_heur.py <manifest.json> "" <prefix>
 <a id="pl-train"></a>
 ### 3.3 RL 학습
 
-**현행 주경로 — 재설계 v2 최종 채택 구성(L3)**: essential+load obs + 포인터 head + PPO 위생 + pdrwog 보상,
-시군구 250 매니페스트 전국 단일 10M.
+**현행 주경로(2026-07-23 분할 변경)**: 시군구당 무작위 4점, 총 1,000개로
+H-agnostic Pointer PPO를 처음부터 10M 학습한다. 기존 대표점 250개는 최종 평가에만 사용한다.
 
 ```bash
-MCI_OBS_VARIANT=essential+load MCI_CAP_GATE=occ \
+MCI_OBS_VARIANT=essential+load+valid MCI_H_PAD=47 MCI_CAP_GATE=occ \
 python src/rl_src/train_ppo_feature.py \
-  --config_path scenarios/manifests/sigungu_osrm_manifest.json \
+  --config_path scenarios/manifests/sigungu_osrm_train1000_random4_manifest.json \
   --extractor pointer --reward_mode pdrwog --norm_reward \
   --lr_anneal --target_kl 0.03 --batch_size 512 --n_epochs 5 \
+  --embed_dim 64 --ctx_dim 128 --head_hidden 128 \
   --n_envs 8 --vec subproc --total_timesteps 10000000 --seed 0 \
-  --log_dir results/rl/redesign/L3_pointer_s0
-# TensorBoard: tensorboard --logdir <log_dir>/tb
+  --log_dir results/rl/redesign/v10_random4_1000_pointer_s0
+# TensorBoard: tensorboard --logdir results/rl/redesign/v10_random4_1000_pointer_s0/tb --port 6006
 ```
 
+- 1,000개 매니페스트는 8개 워커에 125개씩 분할 로드하며, 각 워커는 에피소드
+  `reset()`마다 담당 시나리오를 균등 무작위로 선택한다.
+- 대표점 250개를 미학습 평가셋으로 유지하려면 기존 v6/v9 체크포인트에서
+  `--resume_from`/`--init_from` 하지 않고 반드시 처음부터 학습한다.
+- scoreboard 방법명과 과거 모델 제외 사유는 `scoreboard/v10_protocol.json`이 정본이다.
+  학습 폴더의 `meta.json`에는 실제 Pointer head·학습 매니페스트 hash·seed가 자동 기록된다.
+- v10 논문용 기준선은 random4 1,000좌표와 대표점 250좌표 **모두**에서 Full64×1,000ep를
+  전수 실행하고 좌표별 최저 PDR_woG를 `HEUR64 Best-of-64`로 발췌한다. 이는 평가 결과를 본
+  강한 oracle 기준선이므로 단일 사전고정 배포규칙으로 해석하지 않는다. T4는 발췌된 규칙의
+  class/mode에 발송상한 T=4를 적용한다. HEUR/T4/RL의 공통 평가 seed는 RL seed와 같은
+  `0..999`이며, episode 원자료까지 저장해 paired 검정을 재현한다.
+
+```bash
+CUDA_VISIBLE_DEVICES="" python src/rl_src/v10_full_baselines.py \
+  --n_eps 1000 --seed 0 --workers 112 \
+  --out_dir results/scoreboard/v10/full1000
+```
+
+- 좌표별 Full64 작업은 규칙 8개마다 `work/heur/`에 원자적 체크포인트를 갱신한다. 중단되면
+  같은 명령으로 재개한다. 완료 후 `heuristic_full_summary.csv`(80,000행),
+  `baseline_summary.csv`(1,250행), `baseline_episodes.csv.gz`(2,500,000행)가 생성된다.
+- 구 30/300ep 파일은 `results/scoreboard/v10/pilot30_300/`에 격리하며 논문 수치에 사용하지 않는다.
 - `--extractor mlp | deepsets | pointer` — pointer 는 병원 랭킹 head(순열등변). ⚠️ **uav_num=0(action 96)은
   pointer 미지원 → deepsets** 사용.
 - UAV 대수별 개별 모델(한계가치 곡선용): 앞에 `MCI_UAV_NUM=k` 만 바꿔 동일 명령 반복.
@@ -198,7 +222,7 @@ python src/rl_src/train_ppo_feature.py \
 ```bash
 MCI_REDUCED_OBS=1 MCI_OBS_VARIANT=essential MCI_CAP_GATE=occ \
 python src/rl_src/viper_distill.py \
-  --manifest scenarios/manifests/sigungu_osrm_manifest.json \
+  --manifest scenarios/manifests/sigungu_osrm_train1000_random4_manifest.json \
   --model <model.zip> \
   --n_iter 5 --rollout_eps 10 --max_depth 8 --crit loggap \
   --heur_csv results/sigungu_heuristic_best.csv --out_dir results/viper
@@ -405,12 +429,13 @@ v1 RL 시뮬로그 분석에서 발견: 64룰 휴리는 최근접 1~2곳에 점�
 reset 마다 지역 무작위 샘플), `.yaml`=단일. **한 매니페스트 내 모든 지역은 동일 H(=47)** 여야 obs/action 차원이
 유지된다.
 
-- **현행 주경로 — 시군구 250 전국 단일정책**: `sigungu_osrm_manifest.json` 으로 학습(§3.3), 시도17 paired +
-  hold-out 신좌표로 평가(§3.5). 시군구 휴리 CSV 는 BOM+동명구 주의 → **sigcd 로 매칭**.
+- **현행 주경로**: `sigungu_osrm_train1000_random4_manifest.json`(250개 시군구×4점)으로
+  새 정책을 처음부터 학습하고, `sigungu_osrm_eval250_representative_manifest.json`은 최종 평가에만
+  사용한다. 시군구 휴리 CSV 는 BOM+동명구 주의 → **sigcd 로 매칭**.
 - **Plan 1 (지역별 정책, 레거시)** — `gen_regions.py` → `plan1_manifest.json` → `run_grid_parallel.py`(17지역×알고리즘,
   **CPU 강제** `CUDA_VISIBLE_DEVICES=""`) → `run_grid_eval.py` diagonal 평가.
-- **hold-out 일반화** — `gen_eval_holdout_osrm.py`(현행) 또는 `sample_region_points.py`→`gen_eval_points.py`(구식,
-  `ctprvn.shp` 내부 rejection 샘플).
+- **좌표 분할** — `gen_eval_holdout_osrm.py`가 만든 과거 hold-out p0~p3는 현재 학습 1,000점으로
+  역할이 변경됐다. 대표점 250은 평가 전용이며, 추가 엄격 공간 외삽 평가는 별도 좌표로 수행한다.
 - **sim 디버그 print**: 이벤트마다 stdout 출력 → 트레이너/워커는 **stdout→/dev/null**, stderr→`.err` 만
   캡처(TensorBoard 로 모니터). `sim_src` 수정 금지(설계 결정).
 - 학습 박스는 공유 노드 — 병렬 규모는 **loadavg 로 게이트**(자세한 수칙은 `CLAUDE.md`).
@@ -439,7 +464,7 @@ MCI_UAV/
 │   │   ├── make_csv_yaml_dynamic.py   단일좌표 생성 (Kakao/OSRM)
 │   │   ├── gen_regions.py             17 광역 일괄 (2-pass H_max)
 │   │   ├── gen_sigungu_kakao.py  regen_sigungu_osrm.py  시군구 250 일괄/재구축
-│   │   └── gen_eval_holdout_osrm.py  gen_eval_points.py  sample_region_points.py  hold-out
+│   │   └── gen_eval_holdout_osrm.py  현행 random4 학습좌표 / 나머지는 구식 hold-out
 │   ├── sim_src/                시뮬레이터 코어 (event-driven, 무수정)
 │   │   ├── main.py  ScenarioManager.py  EntityManager.py  EventManager.py
 │   │   ├── RuleManager.py             휴리스틱 64룰
