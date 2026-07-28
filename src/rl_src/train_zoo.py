@@ -24,7 +24,7 @@ reinforce 경로는 영향 없이 동작하고, off-policy 경로만 명확한 �
   OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \\
   MCI_OBS_VARIANT=essential+load MCI_CAP_GATE=occ \\
   python src/rl_src/train_zoo.py --algo reinforce \\
-    --config_path scenarios/manifests/sigungu_osrm_manifest.json \\
+    --config_path scenarios/manifests/sigungu_osrm_eval250_representative_manifest.json \\
     --total_timesteps 10000000 --seed 0 --n_envs 8 --vec subproc \\
     --log_dir results/rl/zoo/reinforce_s0  >/dev/null 2>results/rl/zoo/reinforce_s0.err
 """
@@ -56,7 +56,7 @@ from pointer_policy import HospitalTokenExtractor
 from train_ppo_feature import FeatureMultiRegionEnv
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
-DEFAULT_MANIFEST = os.path.join(REPO, "scenarios/manifests/sigungu_osrm_manifest.json")
+DEFAULT_MANIFEST = os.path.join(REPO, "scenarios/manifests/sigungu_osrm_eval250_representative_manifest.json")
 
 
 def _mask_fn(env):

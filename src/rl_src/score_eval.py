@@ -194,7 +194,7 @@ def main():
 
     # 튜닝풀 모드: 매니페스트/휴리CSV/매칭/지역 자동 전환
     if A.tune_pool40:
-        A.manifest = os.path.join(REPO, "scenarios/manifests/sigungu_osrm_manifest.json")
+        A.manifest = os.path.join(REPO, "scenarios/manifests/sigungu_osrm_eval250_representative_manifest.json")
         A.heur_csv = os.path.join(REPO, "results/sigungu_heuristic_best.csv")
         A.match = "sigcd"
 

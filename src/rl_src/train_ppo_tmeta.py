@@ -4,7 +4,7 @@ RL action = 발송상한 T 선택(Discrete). obs=essential+load feature obs 통�
 MlpPolicy(작은 net)로 충분(action 수 개). pdrwog·occ·VecNorm·PPO위생 승계.
 
 예: MCI_OBS_VARIANT=essential+load MCI_CAP_GATE=occ python src/rl_src/train_ppo_tmeta.py \
-      --config_path scenarios/manifests/sigungu_osrm_manifest.json --total_timesteps 5000000 \
+      --config_path scenarios/manifests/sigungu_osrm_eval250_representative_manifest.json --total_timesteps 5000000 \
       --n_envs 8 --vec subproc --reward_mode pdrwog --norm_reward --lr_anneal --target_kl 0.03 \
       --batch_size 512 --n_epochs 5 --log_dir results/rl/redesign/tmeta_s0
 """

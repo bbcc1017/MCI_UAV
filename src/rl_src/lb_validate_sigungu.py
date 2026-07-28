@@ -7,7 +7,7 @@ for v in ("OMP_NUM_THREADS","MKL_NUM_THREADS","OPENBLAS_NUM_THREADS","NUMEXPR_NU
 sys.path.insert(0,"src/rl_src")
 from multiprocessing import Pool
 import numpy as np
-MANIFEST="scenarios/manifests/sigungu_osrm_manifest.json"
+MANIFEST="scenarios/manifests/sigungu_osrm_eval250_representative_manifest.json"
 REGIONS=sorted(json.load(open(MANIFEST)).keys())
 H=47; SEED=11000  # 2026-07-02 성남 정정: H 46→47
 EP_CSV="results/viper/simlog_sigungu/episodes.csv"

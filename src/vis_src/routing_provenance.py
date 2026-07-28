@@ -32,7 +32,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # (scope, road_mode) -> manifest 파일
 MANIFESTS = {
     ("시군구", "kakao"): "scenarios/manifests/sigungu_kakao_manifest.json",
-    ("시군구", "osrm"): "scenarios/manifests/sigungu_osrm_manifest.json",
+    ("시군구", "osrm"): "scenarios/manifests/sigungu_osrm_eval250_representative_manifest.json",
     ("시도", "kakao"): "scenarios/manifests/plan1_manifest.json",       # 시도 Kakao(plan1)
     ("시도", "osrm"): "scenarios/manifests/sido_osrm_manifest.json",
 }

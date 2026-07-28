@@ -6,7 +6,7 @@
 헬기장 보장 uav_num 25→26 으로 올려 기존 46곳 집합을 그대로 보존하고 성남시의료원을
 추가한다(신규 47집합 ⊇ 구 46집합). 기존 좌표(osrm_pre20260702 백업과 동일)로 전량 재생성.
 
-- 좌표·키: scenarios/manifests/sigungu_osrm_manifest.json 재사용(경로 불변 → manifest 무수정).
+- 좌표·키: scenarios/manifests/sigungu_osrm_eval250_representative_manifest.json 재사용(경로 불변 → manifest 무수정).
 - 파라미터: incident100/amb30/**uav_count26/uav_num26/fixed_hos47**/
   vel50·200/handover5·10/total1000/seed0, is_use_time=False.
 - 검증: 병원 47행·헬기장 26행·uav_info 26행, 성남시의료원 포함 여부 리포트.
@@ -90,7 +90,7 @@ def worker(task):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--manifest", default=os.path.join(
-        REPO, "scenarios", "manifests", "sigungu_osrm_manifest.json"))
+        REPO, "scenarios", "manifests", "sigungu_osrm_eval250_representative_manifest.json"))
     ap.add_argument("--workers", type=int, default=32)
     ap.add_argument("--limit", type=int, default=0, help="테스트용 N개만(0=전체)")
     ap.add_argument("--skip_done", action="store_true",

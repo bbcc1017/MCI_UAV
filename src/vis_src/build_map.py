@@ -4,7 +4,7 @@
 
 시뮬레이션 결과와 무관하게 "점 위치"만 그린다. 4개 레이어를 각각 토글할 수 있다:
   - 시도 대표점 (17개, cross_location_eval.LOCATIONS)      → 큰 별 모양 점
-  - 시군구 대표점 (250개, sigungu_osrm_manifest.json 좌표)  → 작은 점
+  - 시군구 대표점 (250개, sigungu_osrm_eval250_representative_manifest.json 좌표)  → 작은 점
   - 병원 (548개, 엑셀 결합 데이터.xlsx)                     → 마커(빨강 H, 헬기장은 금색 링)
   - 안전센터/소방서 (997개, 안전센터와 소방서.csv)          → 마커(파랑 🚑)
 
@@ -250,7 +250,7 @@ def main():
     ap.add_argument("--centers", default=str(ROOT / "scenarios/안전센터와 소방서.csv"))
     ap.add_argument("--cross_eval", default=str(ROOT / "src/rl_src/cross_location_eval.py"))
     ap.add_argument("--sigungu_manifest",
-                    default=str(ROOT / "scenarios/manifests/sigungu_osrm_manifest.json"))
+                    default=str(ROOT / "scenarios/manifests/sigungu_osrm_eval250_representative_manifest.json"))
     ap.add_argument("--out", default=str(ROOT / "results/map/mci_map.html"))
     args = ap.parse_args()
 

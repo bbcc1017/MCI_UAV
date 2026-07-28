@@ -1,7 +1,7 @@
 import json, os, subprocess, time, yaml
 from concurrent.futures import ThreadPoolExecutor, as_completed
 REPO="/home/ryu/MCI_UAV"; PY="/home/ryu/anaconda3/envs/UAV/bin/python"
-MANIFEST=f"{REPO}/scenarios/manifests/sigungu_osrm_manifest.json"
+MANIFEST=f"{REPO}/scenarios/manifests/sigungu_osrm_eval250_representative_manifest.json"
 LOG=f"{REPO}/experiment_logs/_baseline_psent_orch.log"
 P=80
 # ★ OMP/MKL/OPENBLAS/NUMEXPR=1 핀 필수 — 없으면 각 main.py 가 numpy BLAS 스레드(=코어수)를

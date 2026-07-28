@@ -140,7 +140,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--init", default=os.path.join(REPO, "results/rl/redesign/score_fit.json"),
                     help="score_fit.json(w_vec) — 초기 mean")
-    ap.add_argument("--manifest", default=os.path.join(REPO, "scenarios/manifests/sigungu_osrm_manifest.json"))
+    ap.add_argument("--manifest", default=os.path.join(REPO, "scenarios/manifests/sigungu_osrm_eval250_representative_manifest.json"))
     ap.add_argument("--mode", choices=["timesave", "joint"], default="timesave")
     ap.add_argument("--T_hard", type=float, default=4.0)
     ap.add_argument("--T_lookup", default="none", help="none|rho_step (설정 시 T_hard 무시)")

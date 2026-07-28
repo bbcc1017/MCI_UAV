@@ -266,7 +266,7 @@ def main():
 
     pc = sub.add_parser("collect", help="챔피언 greedy 에피소드 → (obs, pdrwog suffix) npz")
     pc.add_argument("--model_dir", default=os.path.join(REPO, "results/rl/redesign/v4_plr2_s0"))
-    pc.add_argument("--manifest", default=os.path.join(REPO, "scenarios/manifests/sigungu_osrm_manifest.json"))
+    pc.add_argument("--manifest", default=os.path.join(REPO, "scenarios/manifests/sigungu_osrm_eval250_representative_manifest.json"))
     pc.add_argument("--eps_per_region", type=int, default=20)
     pc.add_argument("--regions_limit", type=int, default=0, help=">0 이면 앞 N 지역만(부분 수집)")
     pc.add_argument("--workers", type=int, default=8)

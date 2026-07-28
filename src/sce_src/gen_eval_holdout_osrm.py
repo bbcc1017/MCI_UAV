@@ -1,16 +1,17 @@
-"""일반화 평가용 hold-out 시나리오 일괄 생성 (단위균등, OSRM).
+"""전국 RL 학습용 시군구당 무작위 4점 시나리오 일괄 생성(단위균등, OSRM).
 
-학습 좌표(시군구 representative_point)와 분리된 **새 좌표**에서 모델 일반화를 평가하기 위함.
-- 샘플링: sig.shp 250 시군구 각각 폴리곤 내부 **무작위 점 1개**(단위균등 stratified).
-  → 전체 250점 = (A)전국 평가셋, 시도별 부분집합(=구역수비례) = (B)시도 평가셋. 동일좌표라 A vs B 직접비교 가능.
-- 파라미터는 학습(시군구 OSRM)과 **완전 일치**: incident100/amb30/uav_count26/**uav_num26**/
+2026-07-23 분할 변경: 과거 일반화 hold-out p0~p3를 새 정책의 학습 좌표로 사용하고,
+시군구 representative_point 250개는 평가 전용으로 둔다.
+- 샘플링: sig.shp 250 시군구 각각 폴리곤 내부 **무작위 점 4개**(기본값).
+  → 전체 1,000점. 키는 <시군구>_<sigcd>_p0..p3.
+- 파라미터는 평가 대표점과 **완전 일치**: incident100/amb30/uav_count26/**uav_num26**/
   **fixed_hos_num47**/vel50·200/handover5·10/total1000, OSRM(is_use_time=False). 좌표만 새것.
   (2026-07-02 성남시의료원 헬기장 정정: 자원 추가 원칙으로 46→47병원·헬기장 26 보장.)
-- 실패(OSRM 경로 실패·병원수≠46) 시 같은 시군구 폴리곤서 재추출 재시도.
+- 실패(OSRM 경로 실패·병원수≠47) 시 같은 시군구 폴리곤서 재추출 재시도.
 - 출력: scenarios/exp_eval_holdout/osrm_<name>_<sigcd>/(lat,lon)/config_*.yaml (학습과 분리)
-        + 매니페스트 A: scenarios/manifests/eval_holdout_A_manifest.json (250)
-        + 매니페스트 B: scenarios/manifests/eval_holdout_sido/<sido>.json (시도별 부분집합)
-        + 좌표기록: scenarios/manifests/eval_holdout_points.json
+        + 학습 매니페스트: scenarios/manifests/sigungu_osrm_train1000_random4_manifest.json (1,000)
+        + 시도별 부분집합(레거시 경로): scenarios/manifests/eval_holdout_sido/<sido>.json
+        + 좌표기록: scenarios/manifests/sigungu_osrm_train1000_random4_points.json
 
 예: PYTHONIOENCODING=utf-8 python src/sce_src/gen_eval_holdout_osrm.py --workers 48
 """
@@ -126,7 +127,7 @@ def main():
                     help="시군구당 무작위 점 수(4=총1000). 단위균등·구역수비례 동시충족.")
     ap.add_argument("--limit", type=int, default=0, help="테스트용 시군구 N개만(0=전체250)")
     ap.add_argument("--points_from", default=None,
-                    help="기존 eval_holdout_points.json 경로 — 좌표 고정 재생성(재샘플 없음). "
+                    help="기존 sigungu_osrm_train1000_random4_points.json 경로 — 좌표 고정 재생성(재샘플 없음). "
                          "병원 풀 정정 등으로 시나리오만 다시 구울 때 사용.")
     ap.add_argument("--skip_done", action="store_true",
                     help="(points_from 전용) 최종 config 존재+병원수 일치 좌표 skip(재개)")
@@ -197,7 +198,7 @@ def main():
     # 매니페스트 A (전국)
     os.makedirs(os.path.join(REPO, "scenarios", "manifests", "eval_holdout_sido"), exist_ok=True)
     A = {key(r): r["cfg"] for r in ok}
-    with open(os.path.join(REPO, "scenarios", "manifests", "eval_holdout_A_manifest.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(REPO, "scenarios", "manifests", "sigungu_osrm_train1000_random4_manifest.json"), "w", encoding="utf-8") as f:
         json.dump(A, f, ensure_ascii=False, indent=2)
     # 매니페스트 B (시도별)
     from collections import defaultdict
@@ -208,7 +209,7 @@ def main():
         with open(os.path.join(REPO, "scenarios", "manifests", "eval_holdout_sido", f"{sido}.json"), "w", encoding="utf-8") as f:
             json.dump(d, f, ensure_ascii=False, indent=2)
     # 좌표 기록
-    with open(os.path.join(REPO, "scenarios", "manifests", "eval_holdout_points.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(REPO, "scenarios", "manifests", "sigungu_osrm_train1000_random4_points.json"), "w", encoding="utf-8") as f:
         json.dump({key(r): {k: r[k] for k in ("name", "sido", "lat", "lon", "cfg", "ok")} for r in results},
                   f, ensure_ascii=False, indent=2)
 

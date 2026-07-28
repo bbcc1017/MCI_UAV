@@ -45,7 +45,7 @@ def main():
     sg_tree = (f"results/viper/sigungu_nat_{'occ' if gate=='occ' else 'psent'}_hq/viper_loggap_d12.pkl")
     jobs.append(("A_시군구전국", "전국", sg_tree,
                  f"results/rl/sigungu_nat/ds_ess_woG_{suf}_s0/final_model.zip",
-                 "scenarios/manifests/sigungu_osrm_manifest.json"))
+                 "scenarios/manifests/sigungu_osrm_eval250_representative_manifest.json"))
     sido_manifest = json.load(open("scenarios/manifests/sido_osrm_manifest.json"))
     for rg in REGIONS:
         jobs.append(("B_시도", rg, f"results/viper/sido/{rg}_{gate}/viper_loggap_d12.pkl",

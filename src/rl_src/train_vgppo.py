@@ -16,7 +16,7 @@ VecNormalize 는 **동결**(training=False, R8): 라벨이 챔피언 통계로 �
   MCI_OBS_VARIANT=essential+load MCI_CAP_GATE=occ CUDA_VISIBLE_DEVICES="" \
   OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
   python src/rl_src/train_vgppo.py \
-    --config_path scenarios/manifests/sigungu_osrm_manifest.json \
+    --config_path scenarios/manifests/sigungu_osrm_eval250_representative_manifest.json \
     --resume_from results/rl/redesign/v4_plr2_s0 \
     --value_labels results/rl/redesign/ncrp_value_labels.pkl \
     --aux_target q_best --aux_coef 0.5 --crr off \

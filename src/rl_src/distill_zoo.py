@@ -102,7 +102,7 @@ def heur_lookup(nat_occ="results/sigungu_heuristic_best.csv",
 
 
 def build_jobs(scopes, gates, eval_eps, depths, nat_base="results/rl/sigungu_nat",
-               nat_manifest="scenarios/manifests/sigungu_osrm_manifest.json", nat_tag="A전국",
+               nat_manifest="scenarios/manifests/sigungu_osrm_eval250_representative_manifest.json", nat_tag="A전국",
                nat_heur_occ="results/sigungu_heuristic_best.csv",
                nat_heur_psent="results/sigungu_heuristic_psent_best.csv",
                sido_base="results/rl/sido", sido_manifest="scenarios/manifests/sido_osrm_manifest.json",
@@ -135,7 +135,7 @@ def main():
     ap.add_argument("--out", default=os.path.join(REPO, "results/viper/ZOO_RESULTS.csv"))
     # 전국(A) 스코프 시나리오축 오버라이드 (Kakao 등; 기본=시군구 OSRM)
     ap.add_argument("--nat_base", default="results/rl/sigungu_nat")
-    ap.add_argument("--nat_manifest", default="scenarios/manifests/sigungu_osrm_manifest.json")
+    ap.add_argument("--nat_manifest", default="scenarios/manifests/sigungu_osrm_eval250_representative_manifest.json")
     ap.add_argument("--nat_tag", default="A전국")
     ap.add_argument("--nat_heur_occ", default="results/sigungu_heuristic_best.csv")
     ap.add_argument("--nat_heur_psent", default="results/sigungu_heuristic_psent_best.csv")

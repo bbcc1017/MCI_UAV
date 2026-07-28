@@ -12,7 +12,7 @@ DAGGER 데이터셋은 1회 수집(풀트리 롤아웃) 후 4버전 마스킹 �
 
 예:
   MCI_OBS_VARIANT=essential MCI_GREEN_MASK=1 MCI_CAP_GATE=occ python src/rl_src/viper_comms_versions.py \\
-    --manifest scenarios/manifests/sigungu_osrm_manifest.json \\
+    --manifest scenarios/manifests/sigungu_osrm_eval250_representative_manifest.json \\
     --model results/rl/sigungu_nat/ds_ess_woG_occ_s0/final_model.zip \\
     --out_dir results/viper/comms_versions/sigungu_occ
 """

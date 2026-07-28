@@ -49,11 +49,11 @@ N_HELI = 26
 MANI_DIR = os.path.join(REPO, "scenarios", "manifests")
 # set 이름 → (소스 매니페스트, 키 필터, 출력 experiment_id 접두, 출력 매니페스트)
 SETS = {
-    "sigungu": (os.path.join(MANI_DIR, "sigungu_osrm_manifest.json"), None,
+    "sigungu": (os.path.join(MANI_DIR, "sigungu_osrm_eval250_representative_manifest.json"), None,
                 "시군구natural/osrm", os.path.join(MANI_DIR, "sigungu_natural_osrm_manifest.json")),
     "sido": (os.path.join(MANI_DIR, "sido_osrm_manifest.json"), None,
              "시도natural/osrm", os.path.join(MANI_DIR, "sido_natural_osrm_manifest.json")),
-    "holdout": (os.path.join(MANI_DIR, "eval_holdout_A_manifest.json"), "_p0",
+    "holdout": (os.path.join(MANI_DIR, "sigungu_osrm_train1000_random4_manifest.json"), "_p0",
                 "holdoutAnatural/osrm", os.path.join(MANI_DIR, "holdoutA_natural_osrm_manifest.json")),
 }
 

@@ -273,7 +273,7 @@ def _resolve_pairs(A):
     """--tune_pool40 / --regions / 전체 → [(region, cfg), ...] (planner_eval 관례 승계)."""
     if A.tune_pool40:
         from score_cma import select_tune_regions
-        sig = os.path.join(REPO, "scenarios/manifests/sigungu_osrm_manifest.json")
+        sig = os.path.join(REPO, "scenarios/manifests/sigungu_osrm_eval250_representative_manifest.json")
         pairs = select_tune_regions(sig, 40)
         if A.regions:
             want = set(A.regions.split(","))
@@ -288,7 +288,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model_dir", default=os.path.join(REPO, "results/rl/redesign/v4_plr2_s0"),
                     help="champion 디렉터리(final_model.zip + vecnormalize.pkl)")
-    ap.add_argument("--manifest", default=os.path.join(REPO, "scenarios/manifests/sigungu_osrm_manifest.json"))
+    ap.add_argument("--manifest", default=os.path.join(REPO, "scenarios/manifests/sigungu_osrm_eval250_representative_manifest.json"))
     ap.add_argument("--regions", default="", help="쉼표구분 매니페스트 키 서브셋(생략시 전체/튜닝풀)")
     ap.add_argument("--tune_pool40", action="store_true",
                     help="시군구 sigcd 균등 40지역 튜닝풀 사용(score_cma.select_tune_regions)")

@@ -3,7 +3,7 @@
 
 기존 시군구 OSRM 시나리오(scenarios/exp_시군구/osrm/<name>_osrm/(lat,lon)/)의
 **Kakao 라우팅 짝**을 만든다 — 동일 좌표·동일 병원선정, is_use_time=True(Kakao 교통시간).
-좌표·이름은 scenarios/manifests/sigungu_osrm_manifest.json 에서 그대로 재사용한다
+좌표·이름은 scenarios/manifests/sigungu_osrm_eval250_representative_manifest.json 에서 그대로 재사용한다
 (동일 좌표여야 OSRM↔Kakao 라우팅축 비교쌍이 성립).
 
 출력 구조 (OSRM 의 _osrm 접미사에 대응하는 _kakao 접미사):
@@ -260,7 +260,7 @@ def main():
     ap.add_argument("--base_path", default=".")
     ap.add_argument("--python", default="/home/ryu/anaconda3/envs/UAV/bin/python")
     ap.add_argument("--osrm_manifest",
-                    default="scenarios/manifests/sigungu_osrm_manifest.json")
+                    default="scenarios/manifests/sigungu_osrm_eval250_representative_manifest.json")
     ap.add_argument("--out_manifest",
                     default="scenarios/manifests/sigungu_kakao_manifest.json")
     ap.add_argument("--keys_file", required=True, help="Kakao 키 파일(비주석 줄=키, 첫 줄=주키)")

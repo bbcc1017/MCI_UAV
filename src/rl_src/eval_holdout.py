@@ -72,9 +72,9 @@ def worker(job):
 
 def build_jobs(n_eps, scopes, gates, limit):
     jobs = []
-    A = json.load(open(os.path.join(REPO, "scenarios", "manifests", "eval_holdout_A_manifest.json")))
+    A = json.load(open(os.path.join(REPO, "scenarios", "manifests", "sigungu_osrm_train1000_random4_manifest.json")))
     # sido of each key (key=name_sigcd_pIdx)
-    pts = json.load(open(os.path.join(REPO, "scenarios", "manifests", "eval_holdout_points.json")))
+    pts = json.load(open(os.path.join(REPO, "scenarios", "manifests", "sigungu_osrm_train1000_random4_points.json")))
     sido_of = {k: v["sido"] for k, v in pts.items()}
     for gate in gates:
         suf = "occ" if gate == "occ" else "siteonly"

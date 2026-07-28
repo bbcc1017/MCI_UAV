@@ -100,7 +100,7 @@ def main():
     A = ap.parse_args()
 
     manifest = ("scenarios/manifests/sido_osrm_manifest.json" if A.scope == "sido"
-                else "scenarios/manifests/sigungu_osrm_manifest.json")
+                else "scenarios/manifests/sigungu_osrm_eval250_representative_manifest.json")
     heur_csv = ("results/sido_osrm_heuristic_best.csv" if A.gate == "occ"
                 else "results/sido_osrm_heuristic_psent_best.csv")
     if A.scope == "sigungu":

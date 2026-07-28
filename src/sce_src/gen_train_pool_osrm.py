@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
-"""D1 학습풀 확장(S1b): 시군구당 신규 3점 × 250 = 750점 OSRM 시나리오 생성 → train1000 매니페스트.
+"""레거시 D1 학습풀: 대표점+시군구당 신규 3점 OSRM 시나리오 생성.
 
-현 전국 학습풀(sigungu_osrm_manifest.json, 시군구 250 중심점)을 250→1000점으로 확장한다.
+2026-07-23 이후 현행 학습 정본은 sigungu_osrm_train1000_random4_manifest.json이다.
+이 스크립트는 과거 대표점 250+신규 750 설계를 재현하기 위해 보존한다.
+평가 대표점(sigungu_osrm_eval250_representative_manifest.json)을 250→1000점으로 확장하던 도구다.
 원형 gen_eval_holdout_osrm.py 의 폴리곤 샘플링·OSRM 연결·재시도 로직을 승계하되,
 **오염 방지 제약**을 추가: 신규 좌표는
-  (i) 기존 학습 중심점 250좌표(sigungu_osrm_manifest.json 경로에서 파싱)
-  (ii) holdout 좌표 전체(eval_holdout_points.json 1000점 p0~p3 + plan1nat_eval_points.json 85점)
+  (i) 평가 대표점 250좌표(sigungu_osrm_eval250_representative_manifest.json 경로에서 파싱)
+  (ii) 현행 학습 좌표 전체(sigungu_osrm_train1000_random4_points.json 1000점 p0~p3 + plan1nat_eval_points.json 85점)
 와 **최소 1km 이격**(haversine)한 시군구 폴리곤 내부 점만 허용.
 ⚠️ 초소형 시군구(부산 중구 2.8km² 등)는 1km 제약이 기하적으로 불가능할 수 있어
    반경을 1.0→0.5→0.25→0.125km 로 단계 완화(폴백)하고 points 파일에 radius_km 기록.
@@ -20,7 +22,7 @@
 - 출력: scenarios/exp_train_pool/osrm_<name>_<sigcd>_osrm/(lat,lon)/config_*.yaml (gitignore 영역)
         + 좌표기록 scenarios/manifests/train_pool_points.json
 - 매니페스트 조립(생성 완료 후 별도 실행): --assemble_manifest
-        → scenarios/manifests/sigungu_osrm_train1000_manifest.json
+        → scenarios/manifests/legacy_center250_plus_random750_manifest.json
           = 기존 250 항목(키·경로 그대로) ∪ 신규 성공분(키 <기존키>_t1/_t2/_t3, 절대경로).
           신규 700점 미만이면 실패 처리(--force 로 강행).
 
@@ -71,11 +73,12 @@ RADII_KM = (1.0, 0.5, 0.25, 0.125)   # 이격 반경 폴백 사다리
 MUTUAL_MIN_KM = 0.1              # 같은 시군구 신규점 간 최소 이격(중복좌표 방지 sanity)
 TRIES_PER_RADIUS = 20000         # 반경 단계당 rejection sampling 시도 상한
 
-TRAIN_MANIFEST = os.path.join(REPO, "scenarios", "manifests", "sigungu_osrm_manifest.json")
-HOLDOUT_POINTS = os.path.join(REPO, "scenarios", "manifests", "eval_holdout_points.json")
+TRAIN_MANIFEST = os.path.join(REPO, "scenarios", "manifests", "sigungu_osrm_eval250_representative_manifest.json")
+HOLDOUT_POINTS = os.path.join(REPO, "scenarios", "manifests", "sigungu_osrm_train1000_random4_points.json")
 PLAN1NAT_POINTS = os.path.join(REPO, "scenarios", "manifests", "plan1nat_eval_points.json")
 POINTS_PATH = os.path.join(REPO, "scenarios", "manifests", "train_pool_points.json")
-MANIFEST_OUT = os.path.join(REPO, "scenarios", "manifests", "sigungu_osrm_train1000_manifest.json")
+MANIFEST_OUT = os.path.join(REPO, "scenarios", "manifests",
+                            "legacy_center250_plus_random750_manifest.json")
 
 
 # ---------------------------------------------------------------- 기하 유틸(원형 승계)
