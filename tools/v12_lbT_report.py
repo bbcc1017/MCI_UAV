@@ -45,6 +45,9 @@ def main() -> None:
     ap.add_argument("--csv", default=str(DEFAULT_DIR / "lbT_sweep_eval250_30ep.csv"))
     ap.add_argument("--out_dir", default=str(DEFAULT_DIR))
     ap.add_argument("--ref", default="lb_T4", help="비교 기준 정책명")
+    ap.add_argument("--train_pe", default="",
+                   help="train1000 스윕 NPZ. 주면 시군구별 T 를 학습좌표(4점×30ep)에서 적합해 "
+                        "대표점250 에 전이한 **배포 가능** 수치를 계산한다(좌표 무중복=누수 없음).")
     A = ap.parse_args()
     out_dir = Path(A.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -118,8 +121,29 @@ def main() -> None:
           f"(★평가후 발췌 oracle — 배포 정책 아님)")
     print(f"  → 지역화 상한 이득       : {nat[best_g]-oracle.mean():+.6f}")
     if ref_i is not None:
-        ref_rm = pdr[:, ref_i, :].mean(axis=2)
-        print(f"  {A.ref:22s} : {ref_rm.mean():.6f}")
+        print(f"  {A.ref:22s} : {pdr[:, ref_i, :].mean():.6f}")
+
+    # ---- 3b) 선택편향 분리: 시드 분할 정직 추정 ----
+    # 지역별 argmin_T 는 30ep 에서 40여 후보의 최솟값이라 winner's curse 가 섞인다.
+    # 앞 절반 시드로 T 를 고르고 뒤 절반에서 평가하면 '실제 지역 이질성' 만 남는다.
+    half = n_eps // 2
+    if half >= 5:
+        rm_a = pdr[:, idx, :half].mean(axis=2)          # 선택용(앞 절반)
+        rm_b = pdr[:, idx, half:].mean(axis=2)          # 평가용(뒤 절반)
+        pick = np.argmin(rm_a, axis=1)
+        honest = rm_b[np.arange(len(regions)), pick].mean()
+        fixed = rm_b[:, best_g].mean()
+        insample = rm_b.min(axis=1).mean()              # 뒤 절반 자체 argmin(상한)
+        print(f"\n=== 3b) 시드 분할 정직 추정 (앞 {half}ep 로 T 선택 → 뒤 {n_eps-half}ep 평가) ===")
+        print(f"  전국 고정 T={'inf' if not np.isfinite(Ts[best_g]) else int(Ts[best_g])}"
+              f"            : {fixed:.6f}")
+        print(f"  지역별 T(앞 절반서 선택)   : {honest:.6f}   → 정직 이득 {fixed-honest:+.6f}")
+        print(f"  뒤 절반 자체 argmin(상한)  : {insample:.6f}   "
+              f"(같은 데이터 선택 = 낙관 편향)")
+        print(f"  선택편향 크기              : {(fixed-insample)-(fixed-honest):+.6f} "
+              f"(= 낙관 이득 − 정직 이득)")
+        picked_same = int((Ts[pick] == Ts[best_g]).sum())
+        print(f"  앞 절반 선택이 전국최적과 같은 지역: {picked_same}/{len(regions)}")
 
     # 최적 T vs 기준 T4 의 지역별 유의성(에피소드 95% CI)
     if ref_i is not None:
@@ -131,6 +155,71 @@ def main() -> None:
         m, ci, _ = paired(pdr[:, gi, :].ravel(), pdr[:, ref_i, :].ravel())
         print(f"\n  전국최적T vs {A.ref}: 개선 {m:+.6f} (에피소드 CI95 ±{ci:.6f}) "
               f"승/무/패 {w}/{t_}/{l_}  ※지역별 에피소드 95% CI 기준")
+
+    # ---- 3c) train1000 적합 → 대표점250 전이 (배포 가능) ----
+    transfer = None
+    if A.train_pe and os.path.exists(A.train_pe):
+        tz = np.load(A.train_pe, allow_pickle=False)
+        t_names = [str(x) for x in tz["names"]]
+        t_regions = [str(x) for x in tz["regions"]]
+        t_pdr = np.asarray(tz["pdr"], dtype=np.float64)
+        t_map = {n: i for i, n in enumerate(t_names)}
+        # 학습 매니페스트 키 '<이름>_<sigcd>_p<k>' → sigcd 로 묶어 4점 평균
+        def sigcd_of(key: str) -> str:
+            digits = [t for t in key.split("_") if t.isdigit() and len(t) == 5]
+            return digits[0] if digits else ""
+        by_sig: dict[str, list[int]] = {}
+        for r, k in enumerate(t_regions):
+            by_sig.setdefault(sigcd_of(k), []).append(r)
+        # 두 스윕이 공유하는 T 만 사용(train 격자를 좁혔을 수 있음 — 생략분 명시)
+        shared = [(t, k) for k, (t, _, nm) in enumerate(t_cols) if nm in t_map]
+        drop = [("inf" if not np.isfinite(t) else int(t))
+                for t, _, nm in t_cols if nm not in t_map]
+        Ts_s = np.array([t for t, _ in shared])
+        eval_k = np.array([k for _, k in shared])
+        tr_i = np.array([t_map[t_cols[k][2]] for _, k in shared])
+        pick_sig, n_pts = {}, {}
+        for sig, rows in by_sig.items():
+            prof = t_pdr[np.ix_(rows, tr_i)].mean(axis=(0, 2))   # (공유T,) 4점×30ep 평균
+            pick_sig[sig] = int(np.argmin(prof))
+            n_pts[sig] = len(rows)
+        picked_k, hit = [], 0
+        for r, k in enumerate(regions):
+            sig = sigcd_of(k) or k.split("_")[-1]
+            j = pick_sig.get(sig)
+            picked_k.append(eval_k[j] if j is not None else best_g)
+            hit += j is not None
+        picked_k = np.asarray(picked_k)
+        deploy = region_mean[np.arange(len(regions)), picked_k].mean()
+        print(f"\n=== 3c) train1000 적합 → 대표점250 전이 (★배포 가능, 좌표 무중복) ===")
+        print(f"  학습좌표 {len(t_regions)}점 / 시군구 {len(by_sig)}개 "
+              f"(시군구당 {min(n_pts.values())}~{max(n_pts.values())}점 × {t_pdr.shape[2]}ep) "
+              f"| 전이 매칭 {hit}/{len(regions)}")
+        if drop:
+            print(f"  ⚠️ train 격자에 없어 제외된 T: {drop}  (eval250 250지역 argmin 이 전부 "
+                  f"≤14 이고 T≥15 는 전국 단조 악화라는 근거로 좁힘)")
+        print(f"  전국 고정 T={'inf' if not np.isfinite(Ts[best_g]) else int(Ts[best_g])}"
+              f"                 : {nat[best_g]:.6f}")
+        print(f"  시군구별 T(학습좌표 적합)      : {deploy:.6f}   "
+              f"→ **배포 가능 이득 {nat[best_g]-deploy:+.6f}**")
+        print(f"  시군구별 T(대표점 자체 argmin) : {oracle.mean():.6f}   "
+              f"(평가후 발췌 oracle, 이득 {nat[best_g]-oracle.mean():+.6f})")
+        same = int((picked_k == best_g).sum())
+        print(f"  전이 선택이 전국최적과 같은 시군구: {same}/{len(regions)}")
+        gi = idx[best_g]
+        w = t_ = l_ = 0
+        for r in range(len(regions)):
+            a = pdr[r, idx[picked_k[r]], :]
+            _, _, v = paired(a, pdr[r, gi, :])
+            w += v == "win"; t_ += v == "tie"; l_ += v == "loss"
+        allm, allci, _ = paired(
+            np.concatenate([pdr[r, idx[picked_k[r]], :] for r in range(len(regions))]),
+            pdr[:, gi, :].ravel())
+        print(f"  전이T vs 전국고정T: 개선 {allm:+.6f} (에피소드 CI95 ±{allci:.6f}) "
+              f"승/무/패 {w}/{t_}/{l_}  ※지역별 에피소드 95% CI")
+        transfer = dict(deploy_pdr=float(deploy), deploy_gain=float(nat[best_g] - deploy),
+                        wtl=f"{w}/{t_}/{l_}", n_train_points=len(t_regions),
+                        dropped_T=drop, same_as_national=same)
 
     # ---- CSV 저장 ----
     curve = out_dir / "lbT_curve_eval250.csv"
@@ -166,6 +255,7 @@ def main() -> None:
         "regional_argmin_mean_pdr": float(oracle.mean()),
         "saturation_T": sat,
         "wtl_protocol": "지역별 에피소드 차이 95% CI (v10/v11 _paired 관례)",
+        "transfer_train1000_to_eval250": transfer,
     }, open(meta, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     print(f"\n저장: {curve.name} / {per.name} / {meta.name}  (dir={out_dir})")
 
