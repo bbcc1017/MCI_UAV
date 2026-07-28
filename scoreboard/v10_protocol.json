@@ -1,0 +1,161 @@
+{
+  "protocol_id": "v10_random4_train__representative250_eval",
+  "metric": "PDR_woG",
+  "lower_is_better": true,
+  "train_manifest": "scenarios/manifests/sigungu_osrm_train1000_random4_manifest.json",
+  "eval_manifest": "scenarios/manifests/sigungu_osrm_eval250_representative_manifest.json",
+  "evaluation_seed": 0,
+  "evaluation_episodes_per_policy_per_coordinate": 1000,
+  "fullfactorial_rules": 64,
+  "total_coordinates": 1250,
+  "full_stack_common_scoreboard_episodes_per_point": 30,
+  "fairness_protocol": {
+    "heuristic_rule_selection": "학습 1,000좌표와 평가 250좌표 각각에서 64룰×1,000ep를 전수 실행한 뒤 좌표별 최저 평균 PDR_woG를 발췌",
+    "heuristic_baseline_interpretation": "평가 결과를 본 Best-of-64 oracle 기준선이며 단일 사전고정 배포정책은 아님",
+    "common_random_numbers": "HEUR64·LB-T4·RL은 좌표별 seed 0..999를 공유하고, NCRP 포함 4행 scoreboard는 그중 0..29를 공통 사용",
+    "environment": "MCI_CAP_GATE=occ, MCI_OBS_VARIANT=essential+load+valid, MCI_H_PAD=47",
+    "primary_metric": "episode PDR_woG",
+    "paired_test": "지역별 episode 차이의 95% CI",
+    "representative250_rule_refit": true
+  },
+  "distillation_protocol": {
+    "teacher": "PPO_POINTER_V10",
+    "policy_form": "유효 [class,destination,mode] 후보별 지역불변 특징을 CART로 채점해 최고점 행동 선택",
+    "hard_action_mask": "모든 정보수준에서 물리·의료·인프라·통신 제약 마스크를 공통 적용",
+    "information_levels": {
+      "I0_MINIMAL": "정적 지리·인프라 + 현장 Red/Yellow·가용차량·시간",
+      "I1_FIELD": "I0 + 구조·이송기록 + 병원별 발송·in-flight",
+      "I2_TELEMETRY": "I1 + 차량 운행·복귀 ETA",
+      "I3_CONNECTED": "I2 + 병원 실시간 점유·잔여용량·치료진행"
+    },
+    "complexity_levels": {
+      "C1": "depth<=3, leaves<=8, min_samples_leaf=300",
+      "C2": "depth<=5, leaves<=32, min_samples_leaf=150",
+      "C3": "depth<=7, leaves<=128, min_samples_leaf=75",
+      "C4": "depth<=10, leaves<=512, min_samples_leaf=40"
+    },
+    "collection": "train1000 PPO 상태 37,000 + 네 정보수준 C4 behavior DAgger 상태 45,250",
+    "selection": "train1000의 p2 40좌표, seed 8000..8009 폐루프 검증으로 prob objective와 최종 DAgger 나무군을 확정",
+    "final_evaluation": "대표점250, 모든 16개 나무에 seed 0..29 공통 적용",
+    "preselected_primary": "I3_CONNECTED_C4",
+    "caveats": [
+      "I0도 중앙 안전마스크를 받으므로 완전 무통신 정책이 아님",
+      "16개 나무는 민감도 격자이며 W/T/L은 다중비교 보정 없는 기술통계",
+      "C4는 실행은 빠르지만 512개 잎으로 사람이 직접 암기하는 규칙은 아님"
+    ]
+  },
+  "artifacts": {
+    "root": "results/scoreboard/v10/full1000",
+    "heuristic_full_summary": "results/scoreboard/v10/full1000/heuristic_full_summary.csv",
+    "heuristic_best_summary": "results/scoreboard/v10/full1000/heuristic_best_summary.csv",
+    "t4_summary": "results/scoreboard/v10/full1000/t4_summary.csv",
+    "baseline_summary": "results/scoreboard/v10/full1000/baseline_summary.csv",
+    "baseline_per_episode": "results/scoreboard/v10/full1000/baseline_episodes.csv.gz",
+    "protocol_meta": "results/scoreboard/v10/full1000/protocol_meta.json",
+    "rl_eval250_summary": "results/scoreboard/v10/full1000/rl_eval250_summary.csv",
+    "rl_eval250_per_episode": "results/scoreboard/v10/full1000/rl_eval250_episodes.npz",
+    "ncrp_eval250_common30": "results/scoreboard/v10/full1000/ncrp_m16_eval250_seed0_29.csv",
+    "scoreboard_common30_overall": "results/scoreboard/v10/full1000/scoreboard_common30_overall.csv",
+    "scoreboard_common30_pairwise": "results/scoreboard/v10/full1000/scoreboard_common30_pairwise.csv",
+    "scoreboard_common30_sigungu": "results/scoreboard/v10/full1000/scoreboard_common30_sigungu.csv",
+    "scoreboard_common30_sido": "results/scoreboard/v10/full1000/scoreboard_common30_sido.csv",
+    "scoreboard_common30_meta": "results/scoreboard/v10/full1000/scoreboard_common30_meta.json",
+    "scoreboard_common30_overall_plot": "results/scoreboard/v10/full1000/scoreboard_common30_overall.png",
+    "scoreboard_common30_sigungu_plot": "results/scoreboard/v10/full1000/scoreboard_common30_sigungu.png",
+    "distill_tree_eval250_common30": "results/scoreboard/v10/distill/tree_eval250_seed0_29.csv",
+    "distill_tree_fit_summary": "results/scoreboard/v10/distill/trees_final_prob/fit_summary.csv",
+    "distill_scoreboard_all20": "results/scoreboard/v10/distill/scoreboard/scoreboard_all20_overall.csv",
+    "distill_scoreboard_pairwise": "results/scoreboard/v10/distill/scoreboard/scoreboard_tree_pairwise.csv",
+    "distill_scoreboard_sigungu": "results/scoreboard/v10/distill/scoreboard/scoreboard_tree_sigungu.csv",
+    "distill_scoreboard_meta": "results/scoreboard/v10/distill/scoreboard/scoreboard_meta.json",
+    "distill_scoreboard_plot": "results/scoreboard/v10/distill/scoreboard/scoreboard_all20.png",
+    "distill_information_complexity_plot": "results/scoreboard/v10/distill/scoreboard/tree_info_complexity_matrix.png"
+  },
+  "methods": [
+    {
+      "method_id": "HEUR64_BEST",
+      "display_name": "휴리스틱-64 Best",
+      "family": "heuristic",
+      "implementation": "src/rl_src/v10_full_baselines.py",
+      "definition": "각 좌표에서 64개 규칙을 seed 0..999로 전수 평가해 평균 PDR_woG 최저 규칙을 발췌한 Best-of-64",
+      "model_dir": null,
+      "planner": null,
+      "scoreboard_role": "baseline"
+    },
+    {
+      "method_id": "LB_T4",
+      "display_name": "부하균형 휴리스틱 T4",
+      "family": "heuristic",
+      "implementation": "src/rl_src/loadbalance_heuristic.py",
+      "definition": "각 좌표의 HEUR64_BEST 기반 클래스·모드 규칙에 병원별 발송상한 T=4를 적용하고 같은 seed 0..999로 평가",
+      "model_dir": null,
+      "planner": null,
+      "scoreboard_role": "strong_baseline"
+    },
+    {
+      "method_id": "PPO_POINTER_V10",
+      "display_name": "RL (PPO Pointer)",
+      "family": "rl",
+      "implementation": "src/rl_src/train_ppo_feature.py",
+      "definition": "random4 1,000개에서 처음부터 학습한 destination×mode Pointer",
+      "model_dir": "results/rl/redesign/v10_random4_1000_pointer_s0",
+      "planner": null,
+      "scoreboard_role": "learned_policy"
+    },
+    {
+      "method_id": "PPO_POINTER_V10_NCRP_M16",
+      "display_name": "RL + NCRP-m16",
+      "family": "rl_planner_stack",
+      "implementation": "src/rl_src/planner_policy.py",
+      "definition": "PPO_POINTER_V10을 기준정책으로 사용하는 배포시 온라인 플래너",
+      "model_dir": "results/rl/redesign/v10_random4_1000_pointer_s0",
+      "planner": {
+        "K": 8,
+        "h": 10,
+        "m": 16,
+        "leaf": "none",
+        "clairvoyant": false,
+        "evaluation_episodes_per_point": 30,
+        "evaluation_seed_start": 0
+      },
+      "scoreboard_role": "proposed_full_stack"
+    }
+  ],
+  "historical_models_excluded_from_clean_scoreboard": [
+    {
+      "model": "results/rl/redesign/v4_plr2_s0",
+      "architecture": "PointerActionNet",
+      "reason": "평가 대표점 250개 학습 이력이 있어 새 clean evaluation에 부적합"
+    },
+    {
+      "model": "results/rl/redesign/v6_pad_s0",
+      "architecture": "PointerActionNet",
+      "reason": "대표점 기반 mixed47 학습 이력이 있어 새 clean evaluation에 부적합"
+    },
+    {
+      "model": "results/rl/redesign/v9_ft_control_s0",
+      "architecture": "PointerActionNet",
+      "reason": "v6_pad 파인튜닝 모델이므로 동일한 평가좌표 학습 이력 보유"
+    },
+    {
+      "model": "results/rl/redesign/v8_jointptr_s0",
+      "architecture": "JointPointerActionNet",
+      "reason": "기각된 완전 3원 상호작용 실험 모델"
+    },
+    {
+      "model": "results/rl/redesign/v9_rescm_s0",
+      "architecture": "ClassModeResidualPointerActionNet",
+      "reason": "기각된 잔차 표현력 실험 모델"
+    },
+    {
+      "model": "results/rl/redesign/v9_resrank1_s0",
+      "architecture": "LowRankResidualPointerActionNet",
+      "reason": "기각된 잔차 표현력 실험 모델"
+    },
+    {
+      "model": "results/rl/redesign/v9_resrank2_s0",
+      "architecture": "LowRankResidualPointerActionNet",
+      "reason": "기각된 잔차 표현력 실험 모델"
+    }
+  ]
+}
