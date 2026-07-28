@@ -1,0 +1,92 @@
+{
+  "protocol_id": "v12_gopt_cross_attention__lbT_full_sweep",
+  "extends": "scoreboard/v10_protocol.json",
+  "metric": "PDR_woG",
+  "lower_is_better": true,
+  "round_type": "screening",
+  "round_type_note": "시드 대조군 없음(사용자 결정) — 개선폭에서 학습 시드 잡음을 분리할 수 없다. 승자는 seed 1·2 복제 후 최종 수치를 재확립한다.",
+  "base_policy": "results/rl/redesign/v10_random4_1000_pointer_s0",
+  "environment": {
+    "MCI_CAP_GATE": "occ",
+    "MCI_OBS_VARIANT": "essential+load+valid",
+    "MCI_H_PAD": "47"
+  },
+  "obs_unchanged": {
+    "obs_dim": 402,
+    "n_actions": 192,
+    "rationale": "GOPT 의 수요 스트림(class×mode 4토큰)은 기존 글로벌 26차원의 재배치로 만든다(patient_agg 등급별 5열 + fleet_agg 수단별 5열 + 공유 6열 = 16 → Linear). 정보 추가가 없으므로 v10 과 완전 동일 조건이고 기존 scoreboard cube 의 PPO 에피소드별 값을 paired 기준으로 직접 쓸 수 있다."
+  },
+  "motivation": {
+    "diagnosis": "기준선 head L[c,d,m] = f_class(ctx)[c] + S(token_d, ctx)[m] + g_mode(ctx)[m] 에서 S 에 class 축이 없다 → 같은 상태에서 Red/Yellow 의 목적지 선호 순위가 수학적으로 동일하고, 등급 차이는 action mask(Red→Tier3)로만 들어간다.",
+    "physics": "Red 0.56/((t/91)^1.58+1) 은 Yellow 0.81/((t/160)^2.41+1) 보다 급 → Red 는 ETA, Yellow 는 부하를 더 무겁게 봐야 하는데 표현 불가.",
+    "prior_failure": "v8 은 scorer 를 class 별로 쪼개(S[c,d,m]) 시도 → 표본공유 상실로 +0.0026 악화. GOPT 는 query 만 조건화해 후보측 파라미터를 공유하므로 그 실패 모드를 우회한다.",
+    "prior_negative_evidence": "v9 의 class×mode 잔차·저랭크 3원 잔차는 control 미달이었다. 다만 v6 warm-start + 1M + 상수 lr 5e-5 의 파인튠 체제였고 잔차 0-초기화였다 — from-scratch 10M 과는 다른 실험이라 기각으로 인용할 수 없으나 사전확률은 낮게 잡는다."
+  },
+  "reference": {
+    "paper": "GOPT: Generalizable Online 3D Bin Packing via Transformer-based Deep Reinforcement Learning (IEEE RA-L 2024)",
+    "arxiv": "https://arxiv.org/abs/2409.05344",
+    "repo": "https://github.com/Xiong5Heng/GOPT",
+    "ported_components": [
+      "ActorHead: logits = bmm(layer_1(item), layer_2(ems)^T) → 수요토큰 × 목적지토큰 bilinear 채점",
+      "EncoderBlock: self(item) + self(EMS, mask) + cross(EMS←item) + cross(item←EMS)",
+      "CriticHead: sum(item) ⊕ masked_sum(EMS) → MLP (X6 격리 팔로만 채택)"
+    ],
+    "intentional_deviations": [
+      "bmm 에 1/sqrt(e) 스케일 + key 층 gain 0.01 — 초기 정책 near-uniform(프로젝트 PPO 위생 관례). GOPT 원문엔 없다.",
+      "패딩 마스크를 '목적지가 key 인' 어텐션에만 적용(GOPT 는 item 이 key 인 cross 에도 넘기지만 그쪽 스트림엔 패딩이 없어 무해한 quirk).",
+      "GOPT 의 pooled critic 대신 SB3 vf[256,256] 유지 — 우리 병원 슬롯은 현장 거리순 정렬(Spearman(슬롯,road_dist)=+0.966~+0.995, 전 지역 일관)이라 합 풀링이 실신호를 파괴할 수 있다. 순열불변 critic 은 X6 로 격리 측정."
+    ]
+  },
+  "track_A_arms": {
+    "common_recipe": "train1000 random4 1,000좌표 · fresh-start · 10M · seed 0 · pdrwog+norm_reward · lr 3e-4 anneal · target_kl 0.03 · n_steps 512 · batch 512 · n_epochs 5 · embed 64 · ctx 128 · n_envs 8 subproc",
+    "arms": [
+      {"name": "X1_bilinear", "dir": "results/rl/redesign/v12_x1_bilinear_s0", "flags": "--extractor gopt_bilinear --n_gopt_blocks 0", "params": 999845, "question": "중증도 조건부 목적지 순위 (★핵심)"},
+      {"name": "X2_xattn1", "dir": "results/rl/redesign/v12_x2_xattn1_s0", "flags": "--extractor gopt_bilinear --n_gopt_blocks 1", "params": 1199781, "question": "수요↔목적지 크로스어텐션 1블록의 순효과"},
+      {"name": "X3_gopt3", "dir": "results/rl/redesign/v12_x3_gopt3_s0", "flags": "--extractor gopt_bilinear --n_gopt_blocks 3 --n_heads 8", "params": 1599653, "question": "GOPT 원논문 설정(풀버전)"},
+      {"name": "X4_attn0", "dir": "results/rl/redesign/v12_x4_attn0_s0", "flags": "--extractor pointer --n_attn_blocks 0", "params": 907080, "question": "현 attention 1층의 기여도(하한)"},
+      {"name": "X5_cap518", "dir": "results/rl/redesign/v12_x5_cap518_s0", "flags": "--extractor pointer --head_hidden 518", "params": 999770, "question": "X1 용량 대조군(파라미터 −75 차이)"},
+      {"name": "X6_poolcritic", "dir": "results/rl/redesign/v12_x6_poolcritic_s0", "flags": "--extractor pointer --pooled_critic", "params": 174216, "question": "critic 교체 단독 효과 (⚠️v10 의 1/5.3 크기)"}
+    ],
+    "capacity_control_caveat": "X5 는 X1(핵심 팔)에 파라미터를 맞췄다. X3 총량(1.60M)을 v10 구조로 맞추면 head_hidden 3596(192→3596→2)이 되어 퇴화한 대조군이므로 쓰지 않는다 — X2/X3 가 이기면 wave 2 에서 별도 매칭을 설계한다.",
+    "judgment": {
+      "manifest": "scenarios/manifests/sigungu_osrm_eval250_representative_manifest.json",
+      "seeds": [0, 29],
+      "episodes_per_region": 30,
+      "execution": "v10 + X1~X6 를 한 번의 paired_eval_ladder 실행에 넣어 모든 쌍비교가 same-seed paired 가 되게 한다",
+      "wtl": "지역별 에피소드 차이의 95% CI(_paired 관례) — 지역평균 임계값 금지",
+      "hard_gate": "이 실행의 V10 행이 cube(scoreboard_common30_sigungu.csv 의 pdr_wog_PPO_POINTER_V10)와 일치. cube 는 float32 저장이라 허용오차는 1e-9 가 아니라 float32 정밀도(≈1e-8); Track B gate 에서 최대 3.25e-09 관측 = 동일 궤적 확인."
+    }
+  },
+  "track_B_lbT_sweep": {
+    "purpose": "LB-T 의 T=4 가 실제 최적인지 전수 확인하고, 지역별 argmin_T 산포로 'T 동적화 여지'를 학습 없이 결정한다(있으면 t_meta_wrapper.py 자산으로 T-메타 RL 재개).",
+    "grid": "T = 2,3,...,40 + 상한없음(lb_Tinf = 1e9, t_meta_wrapper.T_SET_DEFAULT 무제한 관례와 동일 값)",
+    "rule_source": "results/scoreboard/v10/full1000/heuristic_best_summary.csv 의 dataset=eval250 행(좌표별 best-of-64). v10 t4_summary 의 base_rule_index 와 일치 확인 → 스윕의 T=4 가 cube 의 LB_T4 와 정합.",
+    "outputs": [
+      "results/scoreboard/v12/lbT_sweep/lbT_curve_eval250.csv — 전국 평균 PDR(T) 곡선·포화 T",
+      "results/scoreboard/v12/lbT_sweep/lbT_per_region_eval250.csv — 지역별 argmin_T·T4 대비 이득",
+      "results/scoreboard/v12/lbT_sweep/lbT_report_meta.json"
+    ],
+    "two_baselines": {
+      "deployable": "전국 단일 최적 T (좌표 정보 불필요)",
+      "oracle": "지역별 argmin_T = 평가후 발췌 oracle — v10 프로토콜의 HEUR64 Best-of-64 와 동일 관례로 라벨하며 배포 정책이 아니다"
+    }
+  },
+  "artifacts": {
+    "code": [
+      "src/rl_src/gopt_policy.py",
+      "src/rl_src/gopt_smoke.py",
+      "tools/v12_scoreboard.py",
+      "tools/v12_lbT_report.py",
+      "tools/exp_drivers/run_v12_gopt_wave1.sh",
+      "tools/exp_drivers/run_v12_lbT_sweep.sh",
+      "tools/exp_drivers/run_v12_eval250.sh"
+    ],
+    "results_root": "results/scoreboard/v12"
+  },
+  "measured_compute_notes": {
+    "sim_step_ms": 1.046,
+    "v10_vecstep_wallclock_ms": 21.6,
+    "network_share_of_wallclock_cuda": {"attn1_v10": 0.068, "attn3": 0.138, "big_2.28M_params": 0.195},
+    "conclusion": "병목은 환경/IPC 이고 GPU 는 놀고 있다(신경망 6.8%). 인코더 증축의 wall-clock 비용은 무시 가능(10M 7.5h→8.5h). 속도 레버는 GPU 가 아니라 n_envs 이지만 rollout 크기가 바뀌어 v10 비교가 깨지므로 이 라운드는 n_envs 8 고정."
+  }
+}

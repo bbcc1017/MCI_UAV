@@ -349,12 +349,15 @@ def parse_args():
     p.add_argument("--vec", choices=["dummy", "subproc"], default="dummy")
     p.add_argument("--extractor",
                    choices=["mlp", "deepsets", "pointer", "pointer_joint3",
-                            "pointer_rescm", "pointer_resrank1", "pointer_resrank2"],
+                            "pointer_rescm", "pointer_resrank1", "pointer_resrank2",
+                            "gopt_bilinear"],
                    default="mlp",
                    help="mlp(기본): 평탄 obs+MlpPolicy / deepsets: 순열불변 인코더(3c) / "
                         "pointer: destination×mode 병원 랭킹(기준선) / pointer_joint3: "
                         "완전 3원 head / pointer_rescm: 기준+class×mode 잔차 / "
-                        "pointer_resrank1,2: 기준+저랭크 3원 잔차")
+                        "pointer_resrank1,2: 기준+저랭크 3원 잔차 / "
+                        "gopt_bilinear: GOPT식 수요(class×mode)토큰 × 목적지토큰 bilinear 채점 "
+                        "(--n_gopt_blocks 로 크로스어텐션 증축 — v12)")
     # ---- PPO 위생(플랜 v2 L1, 근거: docs/RL_재설계_설계노트_2026-07-04.md) ----
     p.add_argument("--lr_anneal", action="store_true", default=False,
                    help="learning_rate 를 진행률에 따라 →0 linear anneal(기본 off=고정 lr).")
@@ -389,7 +392,21 @@ def parse_args():
                    help="PointerActionNet scorer 은닉폭(pointer 전용, 기본 64=구 아키텍처).")
     p.add_argument("--n_attn_blocks", type=int, default=1,
                    help="pointer 추출기 attention 블록 수(기본 1=구 아키텍처, ≥2 부터 "
-                        "FFN 포함 블록 증축 — v4).")
+                        "FFN 포함 블록 증축 — v4). 0 = 토큰 혼합 제거(deep-sets 하한, "
+                        "attention 기여도 측정용 — v12).")
+    # ---- v12 (GOPT 계열): 기본값이면 전부 기존 경로와 비트 동일 ----
+    p.add_argument("--n_heads", type=int, default=4,
+                   help="어텐션 헤드 수(기본 4=구 아키텍처).")
+    p.add_argument("--n_gopt_blocks", type=int, default=0,
+                   help="gopt_bilinear 전용: 수요↔목적지 크로스어텐션 블록 수"
+                        "(self×2+cross×2/블록). 기본 0=인코더는 v10 그대로, head 만 bilinear.")
+    p.add_argument("--ff_expansion", type=int, default=4,
+                   help="GoptEncoderBlock FFN 확장배수(기본 4=GOPT 원문).")
+    p.add_argument("--attn_dropout", type=float, default=0.0,
+                   help="GoptEncoderBlock dropout(기본 0=GOPT 원문 기본).")
+    p.add_argument("--pooled_critic", action="store_true", default=False,
+                   help="critic 을 GOPT식 순열불변 합풀링 MLP 로 교체(기본 off=SB3 vf[256,256]). "
+                        "⚠️ 고정 H 전제(패딩 마스크 미사용) — v12 X6 격리 팔.")
     p.add_argument("--region_weights", default=None,
                    help="지역 샘플링 가중 CSV(컬럼 region,weight) — 매니페스트 학습 전용. "
                         "미지정(기본)=균등 샘플링(기존 동작).")
@@ -406,7 +423,14 @@ def _write_run_meta(args, model, status: str) -> None:
     policy = type(model.policy).__name__
     extractor = type(fx).__name__
     fresh_start = args.resume_from is None and args.init_from is None
-    method_id = "PPO_POINTER_V10" if is_random4 and args.extractor == "pointer" else None
+    # 정본 PPO_POINTER_V10 행은 v10 프로토콜이 고정한 **단일 구성**에만 부여한다
+    # (기준 Pointer·attention 1블록·기준폭 64/128/128·seed 0). 아키텍처·시드 변형이
+    # 같은 method_id 를 자칭하면 scoreboard 빌드가 정본 PPO 행으로 오인한다.
+    _canon = {"extractor": "pointer", "n_attn_blocks": 1, "embed_dim": 64,
+              "ctx_dim": 128, "head_hidden": 128, "seed": 0,
+              "n_heads": 4, "n_gopt_blocks": 0, "pooled_critic": False}
+    off_spec = [k for k, v in _canon.items() if getattr(args, k) != v]
+    method_id = "PPO_POINTER_V10" if is_random4 and not off_spec else None
     meta = {
         "schema_version": 1,
         "status": status,
@@ -414,6 +438,8 @@ def _write_run_meta(args, model, status: str) -> None:
         "scoreboard_protocol": "v10_random4_train__representative250_eval",
         "scoreboard_method_id": method_id,
         "scoreboard_eligible": bool(method_id and fresh_start),
+        # 정본 구성에서 벗어난 인자 목록(빈 리스트=정본). 변형 런의 provenance 근거.
+        "scoreboard_off_spec_args": off_spec,
         "algorithm": "MaskablePPO",
         "extractor_arg": args.extractor,
         "policy_class": policy,
@@ -458,7 +484,16 @@ def _write_run_meta(args, model, status: str) -> None:
             "ctx_dim": args.ctx_dim,
             "head_hidden": args.head_hidden,
             "n_attn_blocks": args.n_attn_blocks,
+            # v12 (GOPT 계열) — 기본값이면 기존 경로와 동일
+            "n_heads": args.n_heads,
+            "n_gopt_blocks": args.n_gopt_blocks,
+            "ff_expansion": args.ff_expansion,
+            "attn_dropout": args.attn_dropout,
+            "pooled_critic": args.pooled_critic,
         },
+        # 학습 디바이스(저널 재현성 — 구 run 은 이 키가 없다)
+        "device": str(getattr(model, "device", "unknown")),
+        "n_parameters": int(sum(p.numel() for p in model.policy.parameters())),
         "obs_dim": int(model.observation_space.shape[0]),
         "n_actions": int(model.action_space.n),
         "n_hospitals": int(getattr(fx, "H", -1)),
@@ -501,6 +536,12 @@ def main():
         from pointer_policy import (HospitalTokenExtractor, JointPointerMaskablePolicy,
                                     PointerMaskablePolicy,
                                     ResidualPointerMaskablePolicy)  # noqa: F401
+        if args.pooled_critic:  # (v12 X6) v10 actor + 순열불변 pooled critic
+            from gopt_policy import PointerPooledCriticMaskablePolicy  # noqa: F401
+    elif args.extractor == "gopt_bilinear":
+        from pointer_policy import HospitalTokenExtractor, PointerMaskablePolicy  # noqa: F401
+        from gopt_policy import (GoptBilinearActionNet, GoptMaskablePolicy,
+                                 GoptTokenExtractor)  # noqa: F401
 
     if args.resume_from:
         # ---- 이어학습: vecnorm 통계 + 정책/옵티마이저/num_timesteps 복원 ----
@@ -522,7 +563,8 @@ def main():
         # 비-valid·mlp 경로는 H/F 산출을 건너뛰어 기존 동작 완전 보존(probe env 불생성).
         valid_variant = "valid" in _parse_variant()
         H = F = gdim = None
-        if args.extractor == "deepsets" or args.extractor.startswith("pointer") or valid_variant:
+        if (args.extractor in ("deepsets", "gopt_bilinear")
+                or args.extractor.startswith("pointer") or valid_variant):
             H, F, gdim = _entity_dims(args.config_path, args.seed)
         if valid_variant and args.extractor == "deepsets":
             raise ValueError("deepsets 추출기는 valid variant 미지원 — 무마스크 mean pooling 이 "
@@ -579,9 +621,11 @@ def main():
                     residual_kwargs = dict(
                         residual_kind="lowrank",
                         residual_rank=1 if args.extractor.endswith("rank1") else 2)
+            if args.pooled_critic:  # (v12 X6) actor 는 v10 그대로, critic 만 교체
+                policy_cls = PointerPooledCriticMaskablePolicy
             fe_kwargs = dict(n_hospitals=H, entity_f=F, global_dim=gdim,
                              embed_dim=args.embed_dim, ctx_dim=args.ctx_dim,
-                             n_attn_blocks=args.n_attn_blocks)
+                             n_attn_blocks=args.n_attn_blocks, n_heads=args.n_heads)
             if valid_variant:
                 fe_kwargs["valid_col"] = F - 1  # 마지막 열=valid → 마스크드 풀링 활성
             policy_kwargs = dict(
@@ -592,7 +636,30 @@ def main():
             )
             print(f"[feature] {args.extractor} 추출기+head: H={H} F={F} global={gdim} "
                   f"embed={args.embed_dim} ctx={args.ctx_dim} head_hidden={args.head_hidden} "
-                  f"n_attn_blocks={args.n_attn_blocks} valid_col={fe_kwargs.get('valid_col')}")
+                  f"n_attn_blocks={args.n_attn_blocks} n_heads={args.n_heads} "
+                  f"pooled_critic={args.pooled_critic} valid_col={fe_kwargs.get('valid_col')}")
+        elif args.extractor == "gopt_bilinear":
+            # (v12) 수요(class×mode) 토큰 × 목적지(병원+stay) 토큰 bilinear 채점.
+            # n_gopt_blocks=0 이면 인코더는 v10 과 동일 모듈 → head 효과만 격리(X1).
+            policy_cls = GoptMaskablePolicy
+            fe_kwargs = dict(n_hospitals=H, entity_f=F, global_dim=gdim,
+                             embed_dim=args.embed_dim, ctx_dim=args.ctx_dim,
+                             n_attn_blocks=args.n_attn_blocks, n_heads=args.n_heads,
+                             n_gopt_blocks=args.n_gopt_blocks,
+                             ff_expansion=args.ff_expansion, dropout=args.attn_dropout)
+            if valid_variant:
+                fe_kwargs["valid_col"] = F - 1
+            policy_kwargs = dict(
+                features_extractor_class=GoptTokenExtractor,
+                features_extractor_kwargs=fe_kwargs,
+                head_hidden=args.head_hidden,   # bilinear head 는 미사용(부모 계약상 전달)
+                pooled_critic=args.pooled_critic,
+            )
+            print(f"[feature] gopt_bilinear: H={H} F={F} global={gdim} embed={args.embed_dim} "
+                  f"ctx={args.ctx_dim} n_attn_blocks={args.n_attn_blocks} "
+                  f"n_gopt_blocks={args.n_gopt_blocks} n_heads={args.n_heads} "
+                  f"ff_expansion={args.ff_expansion} dropout={args.attn_dropout} "
+                  f"pooled_critic={args.pooled_critic} valid_col={fe_kwargs.get('valid_col')}")
 
         # PPO 위생: lr anneal(진행률 p: 1→0 에 선형) / target_kl / n_epochs (미지정=SB3 기본)
         lr = (lambda p: args.learning_rate * p) if args.lr_anneal else args.learning_rate

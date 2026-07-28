@@ -60,7 +60,12 @@ class HospitalTokenExtractor(BaseFeaturesExtractor):
         assert self.valid_col is None or 0 <= self.valid_col < entity_f, \
             f"valid_col {self.valid_col} 범위 밖 (entity_f={entity_f})"
         self.embed = nn.Sequential(nn.Linear(entity_f, embed_dim), nn.ReLU())
-        self.attn = nn.MultiheadAttention(embed_dim, n_heads, batch_first=True)
+        # (v12) n_attn_blocks=0 = **토큰 혼합 제거** 하한 팔. 병원 토큰이 서로를 보지 않는
+        # deep-sets 포인터가 되어, 남은 상대정보는 ctx 의 마스크드 평균뿐이다. 즉 "토큰 수준
+        # attention 이 실제로 일하는가"를 직접 잰다(기준선 1층의 기여도 = attn1 − attn0).
+        # 기본 1 = 구 아키텍처·구 zip state_dict 완전 동일(파라미터 이름/shape 불변).
+        self.attn = (nn.MultiheadAttention(embed_dim, n_heads, batch_first=True)
+                     if int(n_attn_blocks) >= 1 else None)
         self.ln = nn.LayerNorm(embed_dim)
         # (v4) 추가 attention 블록: [self-attn+LN → FFN(2e)+LN] × (n_attn_blocks−1).
         # 기본 1 = 구 아키텍처와 state_dict 완전 동일(구 zip 로드 호환) — 1블록째는 위
@@ -92,8 +97,11 @@ class HospitalTokenExtractor(BaseFeaturesExtractor):
         else:
             valid, kpm = None, None
         t = self.embed(ent)                                   # (B, H, e) — valid 열 포함(무해)
-        a, _ = self.attn(t, t, t, need_weights=False, key_padding_mask=kpm)
-        t = self.ln(t + a)                                    # (B, H, e) 순열등변
+        if self.attn is not None:
+            a, _ = self.attn(t, t, t, need_weights=False, key_padding_mask=kpm)
+            t = self.ln(t + a)                                # (B, H, e) 순열등변
+        else:                                                 # (v12) 토큰 혼합 없음
+            t = self.ln(t)
         if self.blocks is not None:
             for blk in self.blocks:
                 a2, _ = blk["attn"](t, t, t, need_weights=False, key_padding_mask=kpm)

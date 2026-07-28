@@ -23,10 +23,27 @@ import argparse
 import csv
 import hashlib
 import json
+import re
 import sys
 import time
 import subprocess
 from multiprocessing import Pool
+
+# (v12) 임의 발송상한 baseline 이름 → T. `lb_T4`(구 하드코딩)와 바이트 동일 동작 유지:
+# 정수는 int 로 넘겨 make_cap_policy(rule, 4) 호출이 종전과 같다. `lb_Tinf` = 상한 없음
+# (1e9 — t_meta_wrapper.T_SET_DEFAULT 의 무제한 관례와 동일 값).
+_LB_T_RE = re.compile(r"^lb_T(inf|\d+(?:\.\d+)?)$")
+
+
+def parse_lb_T(name: str):
+    """'lb_T4'/'lb_T12'/'lb_T2.5'/'lb_Tinf' → T (아니면 None)."""
+    m = _LB_T_RE.match(name)
+    if m is None:
+        return None
+    if m.group(1) == "inf":
+        return 1e9
+    v = float(m.group(1))
+    return int(v) if v.is_integer() else v
 
 sys.path.insert(0, os.path.dirname(__file__))
 os.environ.setdefault("MCI_REWARD_MODE", "woG")  # eval 은 info['r_woG'] 를 직접 읽음(모드 무관)
@@ -136,6 +153,9 @@ def worker(job):
     from sb3_contrib import MaskablePPO
     from hospital_set_extractor import HospitalSetExtractor  # noqa: F401 (deepsets 역직렬화)
     from pointer_policy import HospitalTokenExtractor, PointerMaskablePolicy  # noqa: F401
+    from gopt_policy import (GoptBilinearActionNet, GoptMaskablePolicy,  # noqa: F401
+                             GoptTokenExtractor,
+                             PointerPooledCriticMaskablePolicy)  # (v12 역직렬화)
     import pad_vecnorm  # noqa: F401 (v6 valid: PadAwareVecNormalize pickle 해석용 — pointer 전례)
     from viper_distill import make_feature_env, load_vecnorm, _suppress_stdout
     from evaluate import ppo_policy
@@ -182,8 +202,10 @@ def worker(job):
             rule_fac = build_factory(env_variant, None)
             if "heur" in baselines:
                 entries.append(("heur", rule_fac, make_heuristic_policy(best_rule)))
-            if "lb_T4" in baselines:
-                entries.append(("lb_T4", rule_fac, make_cap_policy(best_rule, 4)))
+            for _b in baselines:                      # (v12) lb_T<k> 전수 스윕 지원
+                _T = parse_lb_T(_b)
+                if _T is not None:
+                    entries.append((_b, rule_fac, make_cap_policy(best_rule, _T)))
             if "lb_adaptT" in baselines:
                 entries.append(("lb_adaptT", rule_fac, make_adaptive_cap_policy(best_rule)))
 
@@ -256,12 +278,15 @@ def main():
     model_entries = parse_model_specs(A.models, A.model_root)
     models = [e[0] for e in model_entries]  # 이하 요약/사다리 로직은 이름 기준(기존 유지)
     baselines_requested = [x.strip() for x in A.baselines.split(",") if x.strip()]
-    unknown = set(baselines_requested) - {"heur", "lb_T4", "lb_adaptT"}
+    unknown = {b for b in baselines_requested
+               if b not in ("heur", "lb_adaptT") and parse_lb_T(b) is None}
     if unknown:
-        raise ValueError(f"미지 baseline: {sorted(unknown)}")
+        raise ValueError(f"미지 baseline: {sorted(unknown)} "
+                         f"(heur | lb_adaptT | lb_T<k> 예: lb_T4, lb_T12, lb_Tinf)")
 
     if A.dataset_role == "train1000":
-        import re
+        # (v12) 구 지역 `import re` 제거 — 모듈 최상위 import 사용(함수 내 import 는 main()
+        # 전체에서 re 를 지역변수로 만들어 이후 추가 코드가 UnboundLocalError 를 밟기 쉽다).
         pat = re.compile(r"^.+_(\d{5})_p([0-3])$")
         groups = {}
         for key in manifest:
@@ -353,7 +378,9 @@ def main():
                 if arr.shape != (A.n_eps,) or not np.isfinite(arr).all() or np.any((arr < 0) | (arr > 1)):
                     raise RuntimeError(f"PDR 원자료 오류: {r['region']} {name}")
     rl_models = [m for m in models if f"PDR_{m}" in ok[0]]
-    baselines = [b for b in ("heur", "lb_T4", "lb_adaptT") if b in names]
+    # (v12) lb_T<k> 임의 개수 지원 — names 등장 순서를 보존한다(구 동작: heur,lb_T4,lb_adaptT).
+    baselines = [b for b in names
+                 if b in ("heur", "lb_adaptT") or parse_lb_T(b) is not None]
 
     # 절대 PDR_woG (낮을수록 좋음) 저장
     with open(A.out, "w", newline="", encoding="utf-8") as f:
