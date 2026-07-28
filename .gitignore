@@ -277,10 +277,14 @@ experiment_logs/
 *.tfevents.*
 # Codex
 .codex/
-# Codex용 스킬 설치 경로(caveman 등 `npx skills add` 산출물 — 에이전트 도구, 코드 아님)
+# 에이전트 스킬 설치 산출물(caveman 등 `npx skills add`) — 도구지 프로젝트 코드 아님
 .agents/
+skills-lock.json
 # 문서
 docs/
+
+# 시나리오 생성 실패 로그(재실행 시 재생성 — 산출물 아님)
+scenarios/manifests/*.failed.json
 
 # Claude Code 로컬 전용 메모(Unity 작업 등) — 팀 공유 CLAUDE.md와 분리
 .claude.local.md
