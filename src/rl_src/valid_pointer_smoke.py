@@ -4,8 +4,10 @@
 세 축을 검증한다:
   T1 wrapper 실전 : essential+load+valid + MCI_H_PAD 로 자연-H(경기 실H=38) 시나리오를
                     obs 402=47*8+26 로 소비, valid 열(=[1]*38+[0]*9) 이 롤아웃 내내 불변.
-  T2 extractor 수학: HospitalTokenExtractor(valid_col=7) 의 (a) 패딩 불변 (b) 순열등변
-                    (c) all-valid=None 동치를 순수 torch 로(env 불요, seed 고정).
+  T2 extractor/head 수학: HospitalTokenExtractor(valid_col=7) 의 (a) 패딩 불변 (b) 순열등변
+                    (c) all-valid=None 동치, (d) 기준 pointer 의 class 순위 공유 제약과
+                    JointPointerActionNet 의 3원 상호작용 복원, (e) residual 3종의 기준선
+                    0-init 동치·gradient 생존을 순수 torch 로 검증.
   T3 PadAware      : PadAwareVecNormalize 가 exempt 열을 정규화 면제·비면제 열은 변형,
                     save→VecNormalize.load 왕복 후 클래스·exempt_idx·동작 보존.
 
@@ -85,7 +87,9 @@ def t1_wrapper():
 def t2_extractor():
     import torch as th
     from gymnasium.spaces import Box
-    from pointer_policy import HospitalTokenExtractor, PointerActionNet
+    from pointer_policy import (ClassModeResidualPointerActionNet, HospitalTokenExtractor,
+                                JointPointerActionNet, LowRankResidualPointerActionNet,
+                                PointerActionNet)
     out = []
     H, F, G, e = 47, 8, 26, 32
     n_valid = 38
@@ -162,6 +166,64 @@ def t2_extractor():
     assert d_equiv < 1e-5, f"all-valid 동치 위반 Δ={d_equiv}"
     out.append(f"[OK] T2(c) all-valid 동치 (None vs valid_col=7 Δ={d_equiv:.1e} — "
                f"MHA 마스크 fast-path 반올림 오차)")
+
+    # (d) 3원 상호작용: 기준선은 class 간 로짓 차이가 d,m 과 무관한 상수지만,
+    # joint head 는 병원 토큰별 class×mode 점수를 가져 그 제약을 제거해야 한다.
+    th.manual_seed(7)
+    base_head = PointerActionNet(H, e, 64)
+    joint_head = JointPointerActionNet(H, e, 64)
+    base_head.eval(); joint_head.eval()
+    with th.no_grad():
+        LB = base_head(feat).reshape(B, 2, H + 1, 2)
+        LJ = joint_head(feat).reshape(B, 2, H + 1, 2)
+    base_gap = LB[:, 0, :n_valid + 1, :] - LB[:, 1, :n_valid + 1, :]
+    joint_gap = LJ[:, 0, :n_valid + 1, :] - LJ[:, 1, :n_valid + 1, :]
+    base_spread = (base_gap - base_gap[:, :1, :1]).abs().max().item()
+    joint_spread = (joint_gap - joint_gap[:, :1, :1]).abs().max().item()
+    assert base_spread < 1e-6, f"기준 pointer class 순위 공유식 위반 Δ={base_spread}"
+    assert joint_spread > 1e-3, f"joint 3원 상호작용 미복원 Δ={joint_spread}"
+
+    # joint head 도 병원 순열에 정확히 등변이어야 한다(가변 H 일반화 계약).
+    with th.no_grad():
+        LJ_pm = joint_head(feat_pm).reshape(B, 2, H + 1, 2)
+    joint_eq = (LJ_pm[:, :, 1:n_valid + 1, :]
+                - LJ[:, :, 1:n_valid + 1, :][:, :, perm, :]).abs().max().item()
+    joint_stay = (LJ_pm[:, :, 0, :] - LJ[:, :, 0, :]).abs().max().item()
+    assert joint_eq < 1e-5 and joint_stay < 1e-5, \
+        f"joint 순열등변 위반 dest={joint_eq} stay={joint_stay}"
+    out.append(f"[OK] T2(d) 3원 상호작용 (기준 class-gap spread={base_spread:.1e}, "
+               f"joint={joint_spread:.2f}; joint 순열등변 Δ={max(joint_eq, joint_stay):.1e})")
+
+    # (e) baseline 포함 residual: 기준 state_dict 이식 + residual 0-init이면 logits 정확히 동일,
+    # 첫 역전파에서 0-init 마지막 층 gradient가 살아 있어 실제로 학습 가능해야 한다.
+    th.manual_seed(13)
+    base = PointerActionNet(H, e, 64)
+    residuals = [
+        ("cm", ClassModeResidualPointerActionNet(H, e, 64)),
+        ("rank1", LowRankResidualPointerActionNet(H, e, 64, rank=1)),
+        ("rank2", LowRankResidualPointerActionNet(H, e, 64, rank=2)),
+    ]
+    weight = th.randn(B, 2 * (H + 1) * 2)
+    checks = []
+    with th.no_grad():
+        base_logits = base(feat)
+    for name, rh in residuals:
+        inc = rh.load_state_dict(base.state_dict(), strict=False)
+        assert not inc.unexpected_keys, (name, inc)
+        with th.no_grad():
+            rlog = rh(feat)
+        delta0 = (rlog - base_logits).abs().max().item()
+        assert delta0 == 0.0, f"{name} 0-init baseline 동치 위반 Δ={delta0}"
+        rh.zero_grad(set_to_none=True)
+        loss = (rh(feat) * weight).mean()
+        loss.backward()
+        if name == "cm":
+            grad = rh.r_cm.weight.grad.abs().max().item()
+        else:
+            grad = rh.r_v.weight.grad.abs().max().item()
+        assert grad > 1e-8, f"{name} residual gradient 소실 {grad}"
+        checks.append(f"{name}:Δ0={delta0:.0f},g={grad:.1e}")
+    out.append("[OK] T2(e) residual baseline 포함·gradient 생존 (" + ", ".join(checks) + ")")
     return out
 
 

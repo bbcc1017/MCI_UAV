@@ -21,6 +21,9 @@
   - PointerActionNet       : 토큰/ctx 분리 → class·mode 소형 head + per-hospital×mode 스코어
     (dest=0 현장대기는 ctx 의존 스칼라) → (B, n_class*(H+1)*n_mode) logits 합성.
     flatten 순서 = (c,d,m) row-major = HospitalFeatureWrapper._encode 와 일치(등변 테스트로 봉인).
+  - JointPointerActionNet  : 위 기준선의 extractor·value branch 는 그대로 두고, 병원별 스코어를
+    mode 에서 class×mode 로만 확장한다. 따라서 class×destination×mode 3원 상호작용을 직접
+    표현하면서 H 불변·순열등변·단일 categorical·하드 마스킹 계약은 그대로 유지한다.
   - PointerMaskablePolicy  : net_arch=dict(pi=[], vf=[256,256]) 강제(latent_pi=features 통과),
     _build 에서 action_net 교체. ⚠️ super()._build 가 옵티마이저를 먼저 만들므로 교체 후
     **옵티마이저 재생성 필수**(신규 파라미터 등록). 최종 logit 층은 gain 0.01(초기 near-uniform).
@@ -142,6 +145,117 @@ class PointerActionNet(nn.Module):
         return L.reshape(B, -1)
 
 
+class JointPointerActionNet(nn.Module):
+    """중증도×목적지×수단 3원 상호작용을 복원한 포인터 head.
+
+    기준선 PointerActionNet 은 병원 스코어 ``S[d,m]`` 를 두 class 가 공유하므로
+    ``L[Red,d,m] - L[Yellow,d,m]`` 가 모든 d,m 에서 상수다. 즉 하드 마스크로 제거되지 않은
+    후보 사이에서는 Red와 Yellow가 같은 병원·수단 순위를 갖는 구조적 제약이 있다.
+
+    이 head 는 공유 병원 토큰마다 ``S[d,c,m]`` 를 출력한다::
+
+        L[b,c,d,m] = f_class[b,c] + S[b,d,c,m] + g_mode[b,m]
+
+    병원 scorer 와 stay head 의 마지막 출력 차원만 C×M 으로 바꾸므로, extractor·critic·PPO
+    하이퍼·관측·행동 마스크·flat action codec 은 기준선과 동일하다. 병원 축 가중치 공유도
+    유지되어 가변 H 패딩과 병원 순열에 계속 등변이다.
+    """
+
+    def __init__(self, H: int, embed_dim: int, ctx_dim: int,
+                 n_class: int = 2, n_mode: int = 2, hidden: int = 64):
+        super().__init__()
+        self.H, self.e, self.c = H, embed_dim, ctx_dim
+        self.n_class, self.n_mode = n_class, n_mode
+        self.f_class = nn.Linear(ctx_dim, n_class)
+        self.g_mode = nn.Linear(ctx_dim, n_mode)
+        self.s0 = nn.Linear(ctx_dim, n_class * n_mode)
+        self.scorer = nn.Sequential(
+            nn.Linear(embed_dim + ctx_dim, hidden), nn.ReLU(),
+            nn.Linear(hidden, n_class * n_mode),
+        )
+
+    def forward(self, latent: th.Tensor) -> th.Tensor:
+        B = latent.shape[0]
+        tokens = latent[:, : self.H * self.e].reshape(B, self.H, self.e)
+        ctx = latent[:, self.H * self.e:]
+        fc = self.f_class(ctx)                                      # (B, C)
+        gm = self.g_mode(ctx)                                       # (B, M)
+        s0 = self.s0(ctx).reshape(B, 1, self.n_class, self.n_mode)  # (B, 1, C, M)
+        ctx_e = ctx.unsqueeze(1).expand(-1, self.H, -1)
+        s = self.scorer(th.cat([tokens, ctx_e], dim=2))
+        s = s.reshape(B, self.H, self.n_class, self.n_mode)         # (B, H, C, M)
+        S = th.cat([s0, s], dim=1).permute(0, 2, 1, 3)             # (B, C, H+1, M)
+        L = fc[:, :, None, None] + S + gm[:, None, None, :]
+        # row-major flatten: idx = c*(H+1)*M + d*M + m
+        return L.reshape(B, -1)
+
+
+class ClassModeResidualPointerActionNet(PointerActionNet):
+    """기준 Pointer 위에 상태의존 class×mode 잔차만 더하는 최소 확장.
+
+    ``S[d,m]`` 병원 랭킹은 그대로 공유하고 ``R[c,m|ctx]`` 만 추가한다. 따라서 의료 적합성
+    마스크가 이미 담당하는 class×destination 차이를 중복 학습하지 않으면서, Red가 UAV 시간
+    절감에 더 민감한 식의 중증도별 수단 선호를 표현한다. ``r_cm`` 0 초기화 시 기준 Pointer와
+    수치적으로 완전히 동일해 warm-start 정책을 훼손하지 않는다.
+    """
+
+    def __init__(self, H: int, embed_dim: int, ctx_dim: int,
+                 n_class: int = 2, n_mode: int = 2, hidden: int = 64):
+        super().__init__(H, embed_dim, ctx_dim, n_class, n_mode, hidden)
+        self.r_cm = nn.Linear(ctx_dim, n_class * n_mode)
+        nn.init.constant_(self.r_cm.weight, 0.0)
+        nn.init.constant_(self.r_cm.bias, 0.0)
+
+    def forward(self, latent: th.Tensor) -> th.Tensor:
+        B = latent.shape[0]
+        base = super().forward(latent).reshape(B, self.n_class, self.H + 1, self.n_mode)
+        ctx = latent[:, self.H * self.e:]
+        residual = self.r_cm(ctx).reshape(B, self.n_class, 1, self.n_mode)
+        return (base + residual).reshape(B, -1)
+
+
+class LowRankResidualPointerActionNet(PointerActionNet):
+    """기준 Pointer + rank-R class×destination×mode 잔차.
+
+    완전 자유 C×D×M 출력 대신
+    ``Δ[c,d,m]=Σ_r tanh(U[c,r|ctx])·V[d,r,m|h_d,ctx]`` 로 제한한다. 병원별 V scorer는
+    가중치를 공유하므로 H 불변·순열등변이다. V 최종층과 stay 잔차를 0 초기화해 시작 정책은
+    기준 Pointer와 정확히 같고, rank=1/2가 표현력-정규화 사다리를 이룬다.
+    """
+
+    def __init__(self, H: int, embed_dim: int, ctx_dim: int,
+                 n_class: int = 2, n_mode: int = 2, hidden: int = 64,
+                 rank: int = 1):
+        super().__init__(H, embed_dim, ctx_dim, n_class, n_mode, hidden)
+        self.rank = int(rank)
+        if self.rank < 1:
+            raise ValueError(f"residual rank는 1 이상이어야 함: {rank}")
+        self.r_u = nn.Linear(ctx_dim, n_class * self.rank)
+        # token/ctx 자체가 이미 비선형 표현이므로 V는 단일 저랭크 투영만 둔다. 별도 hidden
+        # MLP를 복제하면 rank-1이어도 기준 scorer만큼 파라미터가 늘어 "저랭크" 규제가 약해진다.
+        self.r_v = nn.Linear(embed_dim + ctx_dim, self.rank * n_mode)
+        self.r0 = nn.Linear(ctx_dim, n_class * n_mode)
+        # 기준 정책 포함: 병원 residual V와 stay residual 모두 정확히 0에서 시작.
+        nn.init.constant_(self.r_v.weight, 0.0)
+        nn.init.constant_(self.r_v.bias, 0.0)
+        nn.init.constant_(self.r0.weight, 0.0)
+        nn.init.constant_(self.r0.bias, 0.0)
+
+    def forward(self, latent: th.Tensor) -> th.Tensor:
+        B = latent.shape[0]
+        base = super().forward(latent).reshape(B, self.n_class, self.H + 1, self.n_mode)
+        tokens = latent[:, : self.H * self.e].reshape(B, self.H, self.e)
+        ctx = latent[:, self.H * self.e:]
+        u = th.tanh(self.r_u(ctx).reshape(B, self.n_class, self.rank))       # (B,C,R)
+        ctx_e = ctx.unsqueeze(1).expand(-1, self.H, -1)
+        v = self.r_v(th.cat([tokens, ctx_e], dim=2))
+        v = v.reshape(B, self.H, self.rank, self.n_mode)                    # (B,H,R,M)
+        hospital = th.einsum("bcr,bhrm->bchm", u, v)                        # (B,C,H,M)
+        stay = self.r0(ctx).reshape(B, self.n_class, 1, self.n_mode)
+        residual = th.cat([stay, hospital], dim=2)                          # (B,C,H+1,M)
+        return (base + residual).reshape(B, -1)
+
+
 class PointerMaskablePolicy(MaskableActorCriticPolicy):
     """MaskableActorCriticPolicy 의 action_net 만 PointerActionNet 으로 교체한 정책."""
 
@@ -179,5 +293,70 @@ class PointerMaskablePolicy(MaskableActorCriticPolicy):
             nn.init.orthogonal_(lin.weight, gain=0.01)
             nn.init.constant_(lin.bias, 0.0)
         # ⚠️ super()._build 가 구 action_net 기준으로 옵티마이저를 이미 생성 → 재생성 필수
+        self.optimizer = self.optimizer_class(self.parameters(), lr=lr_schedule(1),
+                                              **self.optimizer_kwargs)
+
+
+class JointPointerMaskablePolicy(PointerMaskablePolicy):
+    """기준선과 동일한 torso/critic 위에 JointPointerActionNet 만 사용하는 실험 정책."""
+
+    def _build(self, lr_schedule) -> None:
+        # 부모의 extractor·critic 검증과 optimizer 계약을 그대로 거친 뒤 action head 만 교체한다.
+        super()._build(lr_schedule)
+        fx = self.features_extractor
+        self.action_net = JointPointerActionNet(
+            fx.H, fx.embed_dim, fx.ctx_dim, n_class=2, n_mode=2,
+            hidden=getattr(self, "_head_hidden", 64))
+        for m in self.action_net.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.orthogonal_(m.weight, gain=np.sqrt(2))
+                nn.init.constant_(m.bias, 0.0)
+        for lin in (self.action_net.f_class, self.action_net.g_mode,
+                    self.action_net.s0, self.action_net.scorer[-1]):
+            nn.init.orthogonal_(lin.weight, gain=0.01)
+            nn.init.constant_(lin.bias, 0.0)
+        # 부모 optimizer 는 기존 PointerActionNet 파라미터를 가리키므로 신규 head 기준 재생성.
+        self.optimizer = self.optimizer_class(self.parameters(), lr=lr_schedule(1),
+                                              **self.optimizer_kwargs)
+
+
+class ResidualPointerMaskablePolicy(PointerMaskablePolicy):
+    """기준 Pointer를 포함하는 class×mode 또는 저랭크 3원 잔차 실험 정책."""
+
+    def __init__(self, *args, residual_kind: str = "cm", residual_rank: int = 1, **kwargs):
+        self._residual_kind = str(residual_kind)
+        self._residual_rank = int(residual_rank)
+        super().__init__(*args, **kwargs)
+
+    def _build(self, lr_schedule) -> None:
+        super()._build(lr_schedule)
+        fx = self.features_extractor
+        common = dict(H=fx.H, embed_dim=fx.embed_dim, ctx_dim=fx.ctx_dim,
+                      n_class=2, n_mode=2, hidden=getattr(self, "_head_hidden", 64))
+        if self._residual_kind == "cm":
+            self.action_net = ClassModeResidualPointerActionNet(**common)
+        elif self._residual_kind == "lowrank":
+            self.action_net = LowRankResidualPointerActionNet(
+                **common, rank=self._residual_rank)
+        else:
+            raise ValueError(f"residual_kind은 cm|lowrank: {self._residual_kind!r}")
+
+        # 기준 head는 기존 Pointer와 같은 초기화, residual 경로만 마지막에 다시 0으로 봉인.
+        for m in self.action_net.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.orthogonal_(m.weight, gain=np.sqrt(2))
+                nn.init.constant_(m.bias, 0.0)
+        for lin in (self.action_net.f_class, self.action_net.g_mode,
+                    self.action_net.s0, self.action_net.scorer[-1]):
+            nn.init.orthogonal_(lin.weight, gain=0.01)
+            nn.init.constant_(lin.bias, 0.0)
+        if self._residual_kind == "cm":
+            nn.init.constant_(self.action_net.r_cm.weight, 0.0)
+            nn.init.constant_(self.action_net.r_cm.bias, 0.0)
+        else:
+            nn.init.constant_(self.action_net.r_v.weight, 0.0)
+            nn.init.constant_(self.action_net.r_v.bias, 0.0)
+            nn.init.constant_(self.action_net.r0.weight, 0.0)
+            nn.init.constant_(self.action_net.r0.bias, 0.0)
         self.optimizer = self.optimizer_class(self.parameters(), lr=lr_schedule(1),
                                               **self.optimizer_kwargs)
