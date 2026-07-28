@@ -21,9 +21,11 @@ for _v in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXP
 
 import argparse
 import csv
+import hashlib
 import json
 import sys
 import time
+import subprocess
 from multiprocessing import Pool
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -126,7 +128,7 @@ def _rollout_woG(factory, policy_fn, seed):
 
 
 def worker(job):
-    region, cfg, best_rule, model_entries, n_eps, use_ckpt = job
+    region, cfg, best_rule, model_entries, baselines, n_eps, seed, use_ckpt, env_variant = job
     import numpy as np
     import torch as th
     th.set_num_threads(1)
@@ -149,7 +151,7 @@ def worker(job):
         if "valid" in variant:
             os.environ.setdefault("MCI_H_PAD", "47")
         fac = make_feature_env(cfg, norm)
-        fac(seed=SEED)  # 강제 빌드(현재 variant 로 캐시 고정) — 이후 env var 바뀌어도 무관
+        fac(seed=seed)  # 강제 빌드(현재 variant 로 캐시 고정) — 이후 env var 바뀌어도 무관
         return fac
 
     try:
@@ -176,17 +178,20 @@ def worker(job):
                 fac = build_factory(variant, norm)
                 entries.append((m, fac, pol))
 
-            # 규칙 3종: norm 없는 essential env(obs 비의존이나 형상 유지)
-            rule_fac = build_factory("essential", None)
-            entries.append(("heur", rule_fac, make_heuristic_policy(best_rule)))
-            entries.append(("lb_T4", rule_fac, make_cap_policy(best_rule, 4)))
-            entries.append(("lb_adaptT", rule_fac, make_adaptive_cap_policy(best_rule)))
+            # 규칙 정책은 obs 비의존. v10은 RL과 같은 valid/pad 배관을 명시해 환경 설정도 통일한다.
+            rule_fac = build_factory(env_variant, None)
+            if "heur" in baselines:
+                entries.append(("heur", rule_fac, make_heuristic_policy(best_rule)))
+            if "lb_T4" in baselines:
+                entries.append(("lb_T4", rule_fac, make_cap_policy(best_rule, 4)))
+            if "lb_adaptT" in baselines:
+                entries.append(("lb_adaptT", rule_fac, make_adaptive_cap_policy(best_rule)))
 
             names = [e[0] for e in entries]
             W = {n: np.zeros(n_eps) for n in names}
             P = {n: np.zeros(n_eps) for n in names}
             for ep in range(n_eps):
-                s = SEED + ep
+                s = seed + ep
                 for name, fac, pol in entries:
                     w, pdr = _rollout_woG(fac, pol, s)
                     W[name][ep] = w
@@ -198,6 +203,7 @@ def worker(job):
             out[f"PDR_{n}"] = float(P[n].mean())
         # paired 배열 보존(집계용) — PDR_woG 기준 승/무/패는 main 에서
         out["_P"] = {n: P[n].tolist() for n in names}
+        out["_W"] = {n: W[n].tolist() for n in names}
         return out
     except Exception as e:
         import traceback
@@ -229,21 +235,68 @@ def main():
                          "일반형 '이름=디렉터리=obs_variant[=algo]'(신규 모델 평가용) 혼용 가능. "
                          "algo 생략 시 meta.json 자동 감지→ppo(v5 zoo: dqn|qrdqn|sacd|reinforce).")
     ap.add_argument("--n_eps", type=int, default=1000)
+    ap.add_argument("--seed", type=int, default=SEED)
     ap.add_argument("--workers", type=int, default=17)
+    ap.add_argument("--baselines", default="heur,lb_T4,lb_adaptT",
+                    help="쉼표구분: heur,lb_T4,lb_adaptT. baseline-only는 --models '' 사용")
+    ap.add_argument("--env_variant", default="essential",
+                    help="규칙 평가 env obs 배관. v10은 essential+load+valid")
+    ap.add_argument("--dataset_role", choices=["generic", "train1000", "eval250"], default="generic",
+                    help="v10 데이터셋 구조·개수 엄격 검증")
+    ap.add_argument("--strict", action="store_true",
+                    help="누락 규칙·실패 job·출력 수 불일치 시 즉시 실패")
     ap.add_argument("--use_ckpt", action="store_true", help="스모크: 최신 ckpt+norm없음")
     ap.add_argument("--out", default=os.path.join(REPO, "results/rl/redesign/paired_ladder.csv"))
+    ap.add_argument("--dump_pe", default="", help="per-episode PDR/woG NPZ 저장(공정 paired 재분석용)")
+    ap.add_argument("--meta_out", default="", help="평가 provenance JSON(기본 <out>.meta.json)")
     A = ap.parse_args()
 
     import numpy as np  # noqa
     manifest = json.load(open(A.manifest, encoding="utf-8"))
     model_entries = parse_model_specs(A.models, A.model_root)
     models = [e[0] for e in model_entries]  # 이하 요약/사다리 로직은 이름 기준(기존 유지)
+    baselines_requested = [x.strip() for x in A.baselines.split(",") if x.strip()]
+    unknown = set(baselines_requested) - {"heur", "lb_T4", "lb_adaptT"}
+    if unknown:
+        raise ValueError(f"미지 baseline: {sorted(unknown)}")
+
+    if A.dataset_role == "train1000":
+        import re
+        pat = re.compile(r"^.+_(\d{5})_p([0-3])$")
+        groups = {}
+        for key in manifest:
+            match = pat.match(key)
+            if not match:
+                raise ValueError(f"train1000 키 형식 오류: {key!r}")
+            groups.setdefault(match.group(1), set()).add(int(match.group(2)))
+        bad = {k: sorted(v) for k, v in groups.items() if v != {0, 1, 2, 3}}
+        if len(manifest) != 1000 or len(groups) != 250 or bad:
+            raise ValueError(f"train1000 구조 오류: N={len(manifest)} groups={len(groups)} bad={list(bad.items())[:5]}")
+    elif A.dataset_role == "eval250":
+        if len(manifest) != 250 or any(k.endswith(("_p0", "_p1", "_p2", "_p3")) for k in manifest):
+            raise ValueError(f"eval250 구조 오류: N={len(manifest)}")
 
     # 휴리 best_rule 룩업 (BOM 대응). match=name→region 키, sigcd→sigcd 키.
     best_by = {}
+    heuristic_rows = []
     with open(A.heur_csv, encoding="utf-8-sig") as f:
         for r in csv.DictReader(f):
-            best_by[r["region"] if A.match == "name" else r["sigcd"]] = r["best_rule"]
+            lookup_key = r["region"] if A.match == "name" else r["sigcd"]
+            if lookup_key in best_by and A.strict:
+                raise ValueError(f"heur_csv 중복 키: {lookup_key}")
+            best_by[lookup_key] = r["best_rule"]
+            heuristic_rows.append(r)
+    if A.strict and A.dataset_role in {"train1000", "eval250"}:
+        if len(best_by) != 250:
+            raise ValueError(f"v10 heur_csv는 250개 시군구 규칙이어야 함: {len(best_by)}")
+        if not heuristic_rows or "selection_manifest" not in heuristic_rows[0]:
+            raise ValueError("v10 strict 평가에는 학습 1,000좌표에서 적합한 selection_manifest 열이 필요함")
+        expected_fit_manifest = os.path.realpath(os.path.join(
+            REPO, "scenarios/manifests/sigungu_osrm_train1000_random4_manifest.json"
+        ))
+        fit_sources = {os.path.realpath(r["selection_manifest"]) for r in heuristic_rows}
+        if fit_sources != {expected_fit_manifest}:
+            raise ValueError(f"휴리스틱 규칙 선택 데이터가 v10 train1000이 아님: {sorted(fit_sources)}")
 
     def _lookup(key):
         if A.match == "name":
@@ -261,10 +314,15 @@ def main():
     if A.key_filter:
         keys = [k for k in keys if A.key_filter in k]
 
-    jobs = [(k, manifest[k], _lookup(k), model_entries, A.n_eps, A.use_ckpt)
+    missing_rules = [k for k in keys if _lookup(k) is None]
+    if missing_rules and A.strict:
+        raise ValueError(f"휴리스틱 규칙 누락 {len(missing_rules)}개: {missing_rules[:5]}")
+    jobs = [(k, manifest[k], _lookup(k), model_entries, baselines_requested, A.n_eps,
+             A.seed, A.use_ckpt, A.env_variant)
             for k in keys if _lookup(k) is not None]
     print(f"[paired] jobs={len(jobs)} match={A.match} filter={A.key_filter!r} models={models} "
-          f"n_eps={A.n_eps} use_ckpt={A.use_ckpt} workers={A.workers}", flush=True)
+          f"baselines={baselines_requested} n_eps={A.n_eps} seed={A.seed} "
+          f"use_ckpt={A.use_ckpt} workers={A.workers}", flush=True)
 
     res, t0 = [], time.time()
     with Pool(min(A.workers, len(jobs)), maxtasksperchild=1) as pool:
@@ -278,9 +336,22 @@ def main():
                 print(f"  [{k}/{len(jobs)}] FAIL {r['region']}: {r['err'][:200]}", flush=True)
 
     ok = [r for r in res if r["ok"]]
+    failed = [r for r in res if not r["ok"]]
+    if A.strict and (failed or len(ok) != len(jobs)):
+        raise RuntimeError(f"평가 실패: failed={len(failed)}, ok={len(ok)}, jobs={len(jobs)}")
     if not ok:
         print("전부 실패", flush=True); return
+    order = {key: i for i, key in enumerate(keys)}
+    ok.sort(key=lambda r: order[r["region"]])
     names = ok[0]["names"]
+    if A.strict:
+        for r in ok:
+            if r["names"] != names:
+                raise RuntimeError(f"정책 목록 불일치: {r['region']} {r['names']} != {names}")
+            for name in names:
+                arr = np.asarray(r["_P"][name], dtype=float)
+                if arr.shape != (A.n_eps,) or not np.isfinite(arr).all() or np.any((arr < 0) | (arr > 1)):
+                    raise RuntimeError(f"PDR 원자료 오류: {r['region']} {name}")
     rl_models = [m for m in models if f"PDR_{m}" in ok[0]]
     baselines = [b for b in ("heur", "lb_T4", "lb_adaptT") if b in names]
 
@@ -293,6 +364,79 @@ def main():
             w.writerow({c: r.get(c) for c in cols})
     print(f"\n저장 {A.out}  wall={time.time()-t0:.0f}s", flush=True)
 
+    # per-episode 원자료: 별도 실행한 정책도 같은 manifest/seed/n_eps이면 정확한 paired 결합 가능.
+    if A.dump_pe:
+        pdr = np.asarray([[r["_P"][name] for name in names] for r in ok], dtype=np.float64)
+        wog = np.asarray([[r["_W"][name] for name in names] for r in ok], dtype=np.float64)
+        np.savez_compressed(
+            A.dump_pe,
+            regions=np.asarray([r["region"] for r in ok]),
+            names=np.asarray(names),
+            seeds=np.arange(A.seed, A.seed + A.n_eps, dtype=np.int64),
+            pdr=pdr,
+            wog=wog,
+        )
+        print(f"저장(per-ep) {A.dump_pe} shape={pdr.shape}", flush=True)
+
+    def _sha256(path):
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for block in iter(lambda: f.read(1024 * 1024), b""):
+                h.update(block)
+        return h.hexdigest()
+
+    def _scenario_bundle_sha256(data):
+        h = hashlib.sha256()
+        for key in sorted(data):
+            path = os.path.realpath(data[key])
+            h.update(key.encode("utf-8"))
+            h.update(b"\0")
+            h.update(path.encode("utf-8"))
+            h.update(b"\0")
+            with open(path, "rb") as f:
+                for block in iter(lambda: f.read(1024 * 1024), b""):
+                    h.update(block)
+            h.update(b"\0")
+        return h.hexdigest()
+
+    try:
+        git_sha = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=REPO, text=True, stderr=subprocess.DEVNULL
+        ).strip()
+    except Exception:
+        git_sha = "unknown"
+    meta_path = A.meta_out or A.out + ".meta.json"
+    meta = {
+        "protocol": "same-seed-paired-pdrwog",
+        "manifest": os.path.abspath(A.manifest),
+        "manifest_sha256": _sha256(A.manifest),
+        "scenario_bundle_sha256": _scenario_bundle_sha256({k: manifest[k] for k in keys}),
+        "heur_csv": os.path.abspath(A.heur_csv),
+        "heur_csv_sha256": _sha256(A.heur_csv),
+        "dataset_role": A.dataset_role,
+        "seed": A.seed,
+        "n_eps": A.n_eps,
+        "n_regions": len(ok),
+        "models": [{"name": n, "dir": d, "variant": v, "algo": a}
+                   for n, d, v, a in model_entries],
+        "baselines": baselines_requested,
+        "environment": {
+            "MCI_CAP_GATE": "occ",
+            "MCI_OBS_VARIANT": A.env_variant,
+            "MCI_H_PAD": os.environ.get("MCI_H_PAD", "47" if "valid" in A.env_variant else ""),
+            "MCI_REWARD_MODE": "woG",
+        },
+        "metric": "PDR_woG",
+        "lower_is_better": True,
+        "git_sha": git_sha,
+        "outputs": {"summary_csv": os.path.abspath(A.out),
+                    "per_episode_npz": os.path.abspath(A.dump_pe) if A.dump_pe else None},
+    }
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    print(f"저장(meta) {meta_path}", flush=True)
+
     # paired 요약: 각 RL vs 각 baseline (PDR_woG 개선 = baseline−RL, 승=RL이 유의 낮음)
     print("\n=== paired PDR_woG (양수=RL 우수, 승/무/패 across 지역) ===", flush=True)
     for m in rl_models:
@@ -304,6 +448,20 @@ def main():
             loss = sum(d[2] == "loss" for d in diffs)
             line += f"  vs {b}: {md:+.4f} ({win}/{tie}/{loss})"
         print(line, flush=True)
+
+    # 임의 모델 일반형의 첫 항목을 control로 보고 나머지 RL과 직접 paired 비교. 기존 L사다리는
+    # 아래 전용 블록을 그대로 유지하고, v9처럼 이름이 자유로운 아키텍처 실험도 에피소드 배열
+    # 95%CI 기준 W/T/L을 잃지 않도록 한다. 양수 = 비교 모델(m)이 첫 모델(base)보다 PDR 낮음.
+    if len(rl_models) >= 2:
+        base = rl_models[0]
+        print(f"\n=== RL 직접 비교 (양수=비교 모델이 {base}보다 우수) ===", flush=True)
+        for m in rl_models[1:]:
+            diffs = [_paired(r["_P"][m], r["_P"][base]) for r in ok]
+            md = np.mean([d[0] for d in diffs])
+            win = sum(d[2] == "win" for d in diffs)
+            tie = sum(d[2] == "tie" for d in diffs)
+            loss = sum(d[2] == "loss" for d in diffs)
+            print(f"  {m} vs {base}: {md:+.4f} ({win}/{tie}/{loss})", flush=True)
     # 사다리 기여 (인접 단계 PDR 개선)
     print("\n=== 사다리 기여 (양수=상위단계가 PDR 낮춤) ===", flush=True)
     order = [m for m in ("L0_base", "L1_hygiene", "L2_loadobs", "L3_pointer") if m in rl_models]

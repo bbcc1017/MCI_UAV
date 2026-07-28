@@ -8,23 +8,31 @@ env_factory.py 는 수정하지 않고, 여기서만 HospitalFeatureWrapper 로 
   * 정보수준 local/comms 는 env 변수 MCI_OBS_VARIANT 로 제어(래퍼 내장) — 인자 불필요.
   * 매니페스트(.json) 입력 시 각 지역 base env 를 HospitalFeatureWrapper 로 감싸는
     _FeatureMultiRegionEnv 자체 구현 사용 (multi_region_env.py 무수정).
-  * --extractor {mlp,deepsets}: mlp(기본)=평탄 obs+MlpPolicy / deepsets=순열불변 인코더(3c).
+  * --extractor pointer_rescm/pointer_resrank{1,2}: 기준 Pointer를 정확히 포함하는
+    중증도×수단/저랭크 3원 residual head. --init_from 으로 기존 정책에서 안전하게 시작.
 
 주의: obs 차원이 기존과 달라 기존 가중치와 비호환 — 새로 학습할 것.
 train/eval 시 MCI_OBS_VARIANT 를 동일하게 둘 것(obs 차원 일치).
 
 예:
+  MCI_OBS_VARIANT=essential+load+valid MCI_H_PAD=47 MCI_CAP_GATE=occ \\
   python src/rl_src/train_ppo_feature.py \\
-    --config_path scenarios/manifests/plan1nat_manifest.json --total_timesteps 200000 \\
-    --n_envs 4 --log_dir results/rl/ppo_feature
+    --config_path scenarios/manifests/sigungu_osrm_train1000_random4_manifest.json \\
+    --extractor pointer --reward_mode pdrwog --norm_reward \\
+    --n_envs 8 --vec subproc --total_timesteps 10000000 \\
+    --log_dir results/rl/redesign/v10_random4_1000_pointer_s0
 """
 import argparse
 import csv
+import hashlib
 import json
 import os
+import re
+import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
+REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
 
 import gymnasium as gym
 import numpy as np
@@ -49,6 +57,85 @@ import pad_vecnorm  # noqa: F401 — PadAware VecNormalize(신규 학습 생성 
 # 샘플 = 도메인 랜덤화). amb=0/uav=0 은 action(mode 축) 차원이 갈리므로 ≥1 강제. 그 외 키는
 # 오타 침묵 방지로 명시 에러.
 _OVERRIDE_ENV_KEYS = ("MCI_INCIDENT_SIZE", "MCI_AMB_NUM", "MCI_UAV_NUM", "MCI_CAPA_SCALE")
+_RANDOM4_MANIFEST = "sigungu_osrm_train1000_random4_manifest.json"
+_REPRESENTATIVE_MANIFEST = "sigungu_osrm_eval250_representative_manifest.json"
+_RANDOM4_KEY_RE = re.compile(r"_(\d{5})_p([0-3])$")
+_COORD_RE = re.compile(r"\(([-\d.]+),([-\d.]+)\)")
+
+
+def _manifest_sha256(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def _manifest_coords(manifest: dict) -> set:
+    coords = set()
+    for entry in manifest.values():
+        path, _ = _parse_manifest_entry("(검증)", entry)
+        match = _COORD_RE.search(path)
+        if match is None:
+            raise ValueError(f"매니페스트 경로에서 좌표 파싱 실패: {path}")
+        coords.add((float(match.group(1)), float(match.group(2))))
+    return coords
+
+
+def _git_sha() -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "-C", REPO, "rev-parse", "--short", "HEAD"],
+            stderr=subprocess.DEVNULL).decode().strip()
+    except Exception:
+        return "unknown"
+
+
+def _manifest_sampling_summary(manifest_path: str) -> str:
+    """학습 시작 전에 멀티지역 reset 표본 구성을 요약하고 random4 정본은 엄격 검증한다."""
+    with open(manifest_path, encoding="utf-8") as f:
+        manifest = json.load(f)
+    keys = list(manifest)
+    if not keys:
+        raise ValueError(f"빈 manifest: {manifest_path}")
+
+    groups = {}
+    unmatched = []
+    for key in keys:
+        match = _RANDOM4_KEY_RE.search(key)
+        if match is None:
+            unmatched.append(key)
+            continue
+        groups.setdefault(match.group(1), set()).add(int(match.group(2)))
+
+    is_random4 = os.path.basename(manifest_path) == _RANDOM4_MANIFEST
+    if is_random4:
+        incomplete = {sigcd: sorted(pidx) for sigcd, pidx in groups.items()
+                      if pidx != {0, 1, 2, 3}}
+        if unmatched or len(keys) != 1000 or len(groups) != 250 or incomplete:
+            raise ValueError(
+                f"random4 학습 매니페스트 구조 오류: entries={len(keys)}, "
+                f"sigungu={len(groups)}, unmatched={len(unmatched)}, "
+                f"incomplete={list(incomplete.items())[:5]}")
+        # 대표점 250은 최종 평가 전용이다. 키뿐 아니라 실제 config 경로와 경로 속 좌표까지
+        # 교집합 0을 학습 시작 때 봉인해, 파일 조립 실수로 평가점이 학습에 섞이는 것을 막는다.
+        eval_path = os.path.join(os.path.dirname(os.path.abspath(manifest_path)),
+                                 _REPRESENTATIVE_MANIFEST)
+        if not os.path.exists(eval_path):
+            raise FileNotFoundError(f"평가 대표점 매니페스트 미발견: {eval_path}")
+        with open(eval_path, encoding="utf-8") as f:
+            eval_manifest = json.load(f)
+        overlap_key = set(manifest) & set(eval_manifest)
+        train_paths = {_parse_manifest_entry(k, v)[0] for k, v in manifest.items()}
+        eval_paths = {_parse_manifest_entry(k, v)[0] for k, v in eval_manifest.items()}
+        overlap_path = train_paths & eval_paths
+        overlap_coord = _manifest_coords(manifest) & _manifest_coords(eval_manifest)
+        if overlap_key or overlap_path or overlap_coord:
+            raise ValueError(
+                "학습 random4에 평가 대표점 혼입: "
+                f"key={len(overlap_key)} path={len(overlap_path)} coord={len(overlap_coord)}")
+        return "시군구 250 × 좌표 4 = 1,000개, reset마다 균등 무작위 샘플링"
+    return f"지역/시나리오 {len(keys)}개, reset마다 균등 무작위 샘플링"
 
 
 def _parse_manifest_entry(region: str, entry):
@@ -234,7 +321,11 @@ def make_env_fn(config_path: str, seed: int = 0, rank: int = 0, n_envs: int = 1,
 def _entity_dims(config_path: str, seed: int):
     """3c 추출기용 (H, F, global_dim) 산출 — probe env 1회 생성."""
     if config_path.endswith(".json"):
-        e = FeatureMultiRegionEnv(config_path, seed=seed)
+        # 차원은 전 지역 생성 시 이미 각 shard 내부에서 검증한다. 여기서는 대형 매니페스트
+        # 1,000개를 중복 로드하지 않고 첫 엔트리 하나만 probe한다.
+        with open(config_path, encoding="utf-8") as f:
+            n_regions = len(json.load(f))
+        e = FeatureMultiRegionEnv(config_path, seed=seed, shard=(0, n_regions))
         dims = (e.n_hospitals, e.entity_f, e.global_dim)
         e.close()
         return dims
@@ -256,9 +347,14 @@ def parse_args():
     p.add_argument("--ent_coef", type=float, default=0.01)
     p.add_argument("--checkpoint_freq", type=int, default=20_000)
     p.add_argument("--vec", choices=["dummy", "subproc"], default="dummy")
-    p.add_argument("--extractor", choices=["mlp", "deepsets", "pointer"], default="mlp",
+    p.add_argument("--extractor",
+                   choices=["mlp", "deepsets", "pointer", "pointer_joint3",
+                            "pointer_rescm", "pointer_resrank1", "pointer_resrank2"],
+                   default="mlp",
                    help="mlp(기본): 평탄 obs+MlpPolicy / deepsets: 순열불변 인코더(3c) / "
-                        "pointer: per-hospital 스코어링 head(pointer_policy, 랭킹 구조)")
+                        "pointer: destination×mode 병원 랭킹(기준선) / pointer_joint3: "
+                        "완전 3원 head / pointer_rescm: 기준+class×mode 잔차 / "
+                        "pointer_resrank1,2: 기준+저랭크 3원 잔차")
     # ---- PPO 위생(플랜 v2 L1, 근거: docs/RL_재설계_설계노트_2026-07-04.md) ----
     p.add_argument("--lr_anneal", action="store_true", default=False,
                    help="learning_rate 를 진행률에 따라 →0 linear anneal(기본 off=고정 lr).")
@@ -276,6 +372,10 @@ def parse_args():
                    help="기존 모델 디렉터리(또는 final_model.zip 경로). 주면 정책·옵티마이저·"
                         "num_timesteps·vecnormalize 통계를 복원해 이어학습(reset_num_timesteps=False). "
                         "이때 total_timesteps 는 '추가' 스텝 수(예: 5M→10M 이면 5_000_000).")
+    p.add_argument("--init_from", default=None,
+                   help="기존 모델 디렉터리(또는 zip)의 정책·vecnormalize만 새 모델에 이식. "
+                        "optimizer/학습률/step은 새로 시작해 residual warm-start와 동일 예산 "
+                        "control에 사용(--resume_from과 상호배타).")
     # ---- 하이퍼 v3 (S1a): 할인/아키텍처 폭 스윕 ----
     p.add_argument("--gamma", type=float, default=0.99,
                    help="할인율(기본 0.99=SB3 기본). ⚠️VecNormalize 리턴 정규화에도 동기 전달됨.")
@@ -296,9 +396,89 @@ def parse_args():
     return p.parse_args()
 
 
+def _write_run_meta(args, model, status: str) -> None:
+    """결과 폴더만 보고도 scoreboard 방법·데이터·head를 식별할 수 있는 실행 명세 저장."""
+    manifest_abs = os.path.abspath(args.config_path)
+    manifest_name = os.path.basename(manifest_abs)
+    is_random4 = manifest_name == _RANDOM4_MANIFEST
+    fx = model.policy.features_extractor
+    head = type(model.policy.action_net).__name__
+    policy = type(model.policy).__name__
+    extractor = type(fx).__name__
+    fresh_start = args.resume_from is None and args.init_from is None
+    method_id = "PPO_POINTER_V10" if is_random4 and args.extractor == "pointer" else None
+    meta = {
+        "schema_version": 1,
+        "status": status,
+        "run_id": os.path.basename(os.path.normpath(args.log_dir)),
+        "scoreboard_protocol": "v10_random4_train__representative250_eval",
+        "scoreboard_method_id": method_id,
+        "scoreboard_eligible": bool(method_id and fresh_start),
+        "algorithm": "MaskablePPO",
+        "extractor_arg": args.extractor,
+        "policy_class": policy,
+        "action_head_class": head,
+        "feature_extractor_class": extractor,
+        "pointer_spec": (
+            "L(c,d,m)=f_class(c|ctx)+S(d,m|hospital,ctx)+g_mode(m|ctx)"
+            if head == "PointerActionNet" else None),
+        "action_structure": "[class,destination,mode] joint Discrete categorical",
+        "train_manifest": manifest_abs,
+        "train_manifest_sha256": _manifest_sha256(manifest_abs),
+        "train_dataset_role": (
+            "TRAIN_ONLY_RANDOM4_1000" if is_random4 else "OTHER_OR_LEGACY"),
+        "eval_manifest": os.path.join(
+            os.path.dirname(manifest_abs), _REPRESENTATIVE_MANIFEST),
+        "eval_dataset_role": "FINAL_EVAL_ONLY_REPRESENTATIVE250",
+        "train_eval_key_path_coord_overlap": [0, 0, 0] if is_random4 else None,
+        "fresh_start": fresh_start,
+        "resume_from": args.resume_from,
+        "init_from": args.init_from,
+        "seed": args.seed,
+        "total_timesteps_requested": args.total_timesteps,
+        "num_timesteps_current": int(model.num_timesteps),
+        "obs_variant": os.environ.get("MCI_OBS_VARIANT", "essential"),
+        "h_pad": os.environ.get("MCI_H_PAD"),
+        "cap_gate": os.environ.get("MCI_CAP_GATE", "occ"),
+        "reward_mode": args.reward_mode,
+        "norm_reward": args.norm_reward,
+        "n_envs": args.n_envs,
+        "vec": args.vec,
+        "hyperparameters": {
+            "learning_rate": args.learning_rate,
+            "lr_anneal": args.lr_anneal,
+            "target_kl": args.target_kl,
+            "n_steps": args.n_steps,
+            "batch_size": args.batch_size,
+            "n_epochs": args.n_epochs,
+            "ent_coef": args.ent_coef,
+            "gamma": args.gamma,
+            "gae_lambda": args.gae_lambda,
+            "embed_dim": args.embed_dim,
+            "ctx_dim": args.ctx_dim,
+            "head_hidden": args.head_hidden,
+            "n_attn_blocks": args.n_attn_blocks,
+        },
+        "obs_dim": int(model.observation_space.shape[0]),
+        "n_actions": int(model.action_space.n),
+        "n_hospitals": int(getattr(fx, "H", -1)),
+        "entity_features": int(getattr(fx, "F", -1)),
+        "git_sha": _git_sha(),
+        "argv": sys.argv,
+    }
+    out = os.path.join(args.log_dir, "meta.json")
+    with open(out, "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+    print(f"[feature] run metadata: {out} ({status}, head={head})")
+
+
 def main():
     args = parse_args()
+    if args.resume_from and args.init_from:
+        raise ValueError("--resume_from과 --init_from은 동시에 사용할 수 없음")
     os.makedirs(args.log_dir, exist_ok=True)
+    if args.config_path.endswith(".json"):
+        print(f"[feature] manifest: {_manifest_sampling_summary(args.config_path)}")
     # RewardRedesignWrapper 는 MCI_REWARD_MODE 를 읽음 — CLI 값으로 강제(Subproc 자식에도 전파).
     os.environ["MCI_REWARD_MODE"] = args.reward_mode
     print(f"[feature] MCI_OBS_VARIANT={os.environ.get('MCI_OBS_VARIANT','(essential)')} "
@@ -317,8 +497,10 @@ def main():
     # 추출기/정책 클래스는 (신규 정책생성 / resume 시 역직렬화) 양쪽에 import 되어 있어야 함.
     if args.extractor == "deepsets":
         from hospital_set_extractor import HospitalSetExtractor  # noqa: F401
-    elif args.extractor == "pointer":
-        from pointer_policy import HospitalTokenExtractor, PointerMaskablePolicy  # noqa: F401
+    elif args.extractor.startswith("pointer"):
+        from pointer_policy import (HospitalTokenExtractor, JointPointerMaskablePolicy,
+                                    PointerMaskablePolicy,
+                                    ResidualPointerMaskablePolicy)  # noqa: F401
 
     if args.resume_from:
         # ---- 이어학습: vecnorm 통계 + 정책/옵티마이저/num_timesteps 복원 ----
@@ -340,7 +522,7 @@ def main():
         # 비-valid·mlp 경로는 H/F 산출을 건너뛰어 기존 동작 완전 보존(probe env 불생성).
         valid_variant = "valid" in _parse_variant()
         H = F = gdim = None
-        if args.extractor in ("deepsets", "pointer") or valid_variant:
+        if args.extractor == "deepsets" or args.extractor.startswith("pointer") or valid_variant:
             H, F, gdim = _entity_dims(args.config_path, args.seed)
         if valid_variant and args.extractor == "deepsets":
             raise ValueError("deepsets 추출기는 valid variant 미지원 — 무마스크 mean pooling 이 "
@@ -349,7 +531,17 @@ def main():
         # obs 정규화 필수(ETA·cap_remain 스케일) / reward 정규화는 옵션. eval·VIPER 는 통계 동결 로드.
         # ⚠️gamma 동기화 필수: VecNormalize 의 리턴 추적(discounted return 분산)과 PPO 의
         # gamma 가 불일치하면 보상 정규화 스케일이 왜곡됨.
-        if valid_variant:
+        if args.init_from:
+            init_zip = args.init_from
+            if os.path.isdir(init_zip):
+                init_zip = os.path.join(init_zip, "final_model.zip")
+            init_vn = os.path.join(os.path.dirname(init_zip), "vecnormalize.pkl")
+            venv = VecNormalize.load(init_vn, venv)
+            venv.training = True
+            venv.norm_reward = args.norm_reward
+            print(f"[feature] init vecnormalize from {init_vn} "
+                  f"(optimizer/lr/step은 신규)")
+        elif valid_variant:
             # valid 열(각 병원 flat idx i*F+(F-1))을 정규화 면제 — 0/1 보존(아핀변환 붕괴 방지).
             exempt = [i * F + (F - 1) for i in range(H)]
             venv = pad_vecnorm.PadAwareVecNormalize(
@@ -371,8 +563,22 @@ def main():
                 net_arch=[256, 256],
             )
             print(f"[feature] deepsets 추출기: H={H} F={F} global={gdim} embed={args.embed_dim}")
-        elif args.extractor == "pointer":
-            policy_cls = PointerMaskablePolicy  # net_arch 는 정책이 강제(pi=[], vf=[256,256])
+        elif args.extractor.startswith("pointer"):
+            # 두 실험은 torso/critic/PPO 설정이 같고 action head 의 class 조건부 여부만 다르다.
+            if args.extractor == "pointer":
+                policy_cls = PointerMaskablePolicy
+                residual_kwargs = {}
+            elif args.extractor == "pointer_joint3":
+                policy_cls = JointPointerMaskablePolicy
+                residual_kwargs = {}
+            else:
+                policy_cls = ResidualPointerMaskablePolicy
+                if args.extractor == "pointer_rescm":
+                    residual_kwargs = dict(residual_kind="cm", residual_rank=1)
+                else:
+                    residual_kwargs = dict(
+                        residual_kind="lowrank",
+                        residual_rank=1 if args.extractor.endswith("rank1") else 2)
             fe_kwargs = dict(n_hospitals=H, entity_f=F, global_dim=gdim,
                              embed_dim=args.embed_dim, ctx_dim=args.ctx_dim,
                              n_attn_blocks=args.n_attn_blocks)
@@ -382,8 +588,9 @@ def main():
                 features_extractor_class=HospitalTokenExtractor,
                 features_extractor_kwargs=fe_kwargs,
                 head_hidden=args.head_hidden,  # PointerMaskablePolicy.__init__ 로 전달
+                **residual_kwargs,
             )
-            print(f"[feature] pointer 추출기+head: H={H} F={F} global={gdim} "
+            print(f"[feature] {args.extractor} 추출기+head: H={H} F={F} global={gdim} "
                   f"embed={args.embed_dim} ctx={args.ctx_dim} head_hidden={args.head_hidden} "
                   f"n_attn_blocks={args.n_attn_blocks} valid_col={fe_kwargs.get('valid_col')}")
 
@@ -409,7 +616,23 @@ def main():
             tensorboard_log=os.path.join(args.log_dir, "tb"),
             **hygiene,
         )
+        if args.init_from:
+            # 신규 residual 파라미터만 missing이어야 한다. 기준 torso/critic/head는 이름·shape가
+            # 동일해 v6 state_dict를 그대로 이식한다. optimizer는 위에서 새로 생성된 상태 유지.
+            source = MaskablePPO.load(init_zip, device="cpu")
+            incompatible = model.policy.load_state_dict(source.policy.state_dict(), strict=False)
+            allowed = ("action_net.r_cm.", "action_net.r_u.", "action_net.r_v.",
+                       "action_net.r0.")
+            bad_missing = [k for k in incompatible.missing_keys
+                           if not k.startswith(allowed)]
+            if bad_missing or incompatible.unexpected_keys:
+                raise RuntimeError("init_from state_dict 불일치: "
+                                   f"missing={incompatible.missing_keys} "
+                                   f"unexpected={incompatible.unexpected_keys}")
+            print(f"[feature] init policy from {init_zip}: "
+                  f"신규 파라미터={incompatible.missing_keys or '(없음; control)'}")
 
+    _write_run_meta(args, model, status="training")
     ckpt_cb = CheckpointCallback(
         save_freq=max(args.checkpoint_freq // args.n_envs, 1),
         save_path=os.path.join(args.log_dir, "checkpoints"),
@@ -424,6 +647,7 @@ def main():
     model.save(final_path)
     vecnorm_path = os.path.join(args.log_dir, "vecnormalize.pkl")
     venv.save(vecnorm_path)  # eval/VIPER 에서 VecNormalize.load 후 training=False 로 동결 적용 필수
+    _write_run_meta(args, model, status="complete")
     print(f"Saved: {final_path}\nSaved: {vecnorm_path}")
     try_plot_learning_curve(args.log_dir)
 
