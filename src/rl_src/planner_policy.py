@@ -76,7 +76,8 @@ class TruncatedRolloutPlanner:
 
     def __init__(self, model, K=8, h=10, m=2, leaf_fn=None, clairvoyant=False,
                  reseed_base=777000, switch_margin=0.0, gamma=0.99,
-                 alloc="uniform", switch_z=0.0, extra_cand_fn=None):
+                 alloc="uniform", switch_z=0.0, extra_cand_fn=None,
+                 greedy_action_fn=None, rollout_action_fn=None):
         self.model = model
         self.K, self.h, self.m = int(K), int(h), int(m)
         self.leaf_fn = leaf_fn
@@ -93,6 +94,11 @@ class TruncatedRolloutPlanner:
         self.alloc = str(alloc)
         self.switch_z = float(switch_z)
         self.extra_cand_fn = extra_cand_fn
+        # (v15) 정책 포트폴리오: PPO 확률은 top-K 후보 생성에 그대로 사용하되,
+        # 엄격개선 비교 기준행동과 롤아웃 후속정책만 외부 반응형 정책으로 교체할 수 있다.
+        # 콜백은 (env_unwrapped, mask, obs) -> 유효 action. None이면 기존 PPO와 비트동일.
+        self.greedy_action_fn = greedy_action_fn
+        self.rollout_action_fn = rollout_action_fn
         # (v7) gamma: 할인 suffix q_*_disc 계산용(결정 스텝 단위, PPO gamma 정합 기본 0.99).
         # 스위치 판정은 무할인 qs 유지 → planner 성능 불변, 할인본은 value-target 학습용 노출만.
         self.gamma = float(gamma)
@@ -119,7 +125,10 @@ class TruncatedRolloutPlanner:
         k = 1
         while not done and (self.h < 0 or n_extra < self.h - 1):
             mask = clone.action_masks()
-            a, _ = self.model.predict(obs, action_masks=mask, deterministic=True)
+            if self.rollout_action_fn is None:
+                a, _ = self.model.predict(obs, action_masks=mask, deterministic=True)
+            else:
+                a = self.rollout_action_fn(clone.unwrapped, mask, obs)
             obs, _r, term, trunc, info = clone.step(int(a))
             r = info.get("r_woG", 0.0)
             w += r
@@ -176,7 +185,13 @@ class TruncatedRolloutPlanner:
         # ---- 후보 선정(rollout_oracle.lookahead_episode 와 동일: top-K + stay dedup) ----
         from viper_distill import _masked_probs
         probs = _masked_probs(self.model, obs, mask)
-        g = int(np.argmax(probs))                # deterministic greedy = masked argmax
+        ppo_g = int(np.argmax(probs))            # PPO 확률 top-K의 기준
+        if self.greedy_action_fn is None:
+            g = ppo_g
+        else:
+            g = int(self.greedy_action_fn(env.unwrapped, mask, obs))
+            if g < 0 or g >= len(mask) or not mask[g]:
+                raise ValueError(f"외부 기준정책이 무효행동을 반환: {g}")
         order = np.argsort(-probs)
         cand, seen_stay = [], False
         for x in order[:self.K]:
@@ -188,7 +203,9 @@ class TruncatedRolloutPlanner:
                     continue
                 seen_stay = True
             cand.append(x)
-        if g not in cand:                        # 안전 가드(order[0]=g 라 항상 포함이긴 함)
+        # 후보 출처 감사에서는 외부 기준정책 행동을 PPO top-K로 잘못 세지 않는다.
+        info["ppo_candidate_actions"] = tuple(int(x) for x in cand)
+        if g not in cand:                        # 외부 기준정책은 top-K 밖일 수 있다.
             cand.append(g)
         if self.extra_cand_fn is not None:       # (v11) 외부 후보 주입(MILP 등)
             for x in self.extra_cand_fn(env.unwrapped, mask):
@@ -315,6 +332,12 @@ class TruncatedRolloutPlanner:
         info["q_best_disc"] = float(qs_disc[bi]) / pv
         info["q_exec_disc"] = float(qs_disc[ai]) / pv
         info["dpdr_disc"] = (float(qs_disc[bi]) - float(qs_disc[gi])) / pv
+        # 후보 포트폴리오 감사용 진단값. 기존 평가 CSV에는 쓰지 않으므로 수치 동작 불변.
+        info["ppo_greedy_action"] = int(ppo_g)
+        info["greedy_action"] = int(g)
+        info["exec_action"] = int(a_exec)
+        info["candidate_actions"] = tuple(int(x) for x in cand)
+        info["candidate_q_pdr"] = tuple(float(x) / pv for x in qs)
         info["ms"] = (time.perf_counter() - t0) * 1e3
         self.last_info = info
         return a_exec

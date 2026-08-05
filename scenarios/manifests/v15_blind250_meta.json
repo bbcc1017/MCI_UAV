@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "role": "final_external_test_only",
+  "selection_prohibition": "모델·하이퍼파라미터·위임 임계값 선택에 사용 금지",
+  "seed": 20260804,
+  "n_sigungu": 250,
+  "n_coordinates": 250,
+  "n_unique_exclusion_coordinates": 2335,
+  "exact_overlap_with_exclusions": 0,
+  "minimum_radius_rule_km": [
+    1.0,
+    0.5,
+    0.25,
+    0.125
+  ],
+  "radius_counts": {
+    "1.0": 248,
+    "0.5": 2,
+    "0.25": 0,
+    "0.125": 0
+  },
+  "exclusion_sources": [
+    {
+      "path": "/home/ryu/MCI_UAV/scenarios/manifests/sigungu_osrm_train1000_random4_manifest.json",
+      "sha256": "4fd26ec05675d2f262277296f1a1f0b5906d7d4d70e1c0695874cb6499690b4f",
+      "coordinates_read": 1000
+    },
+    {
+      "path": "/home/ryu/MCI_UAV/scenarios/manifests/sigungu_osrm_eval250_representative_manifest.json",
+      "sha256": "deb0857455f3217f4aa594d9055ece5f1e22888b8ddd3236b5be3655e22d83e1",
+      "coordinates_read": 250
+    },
+    {
+      "path": "/home/ryu/MCI_UAV/scenarios/manifests/distill_external_test250_points.json",
+      "sha256": "b21413af8a63978ccb995c00daaa5b2edeba84c8d55d24503421f28fb7ce9525",
+      "coordinates_read": 500
+    },
+    {
+      "path": "/home/ryu/MCI_UAV/scenarios/manifests/plan1nat_eval_points.json",
+      "sha256": "0a8e8be0c4df082030135a8a09fa2c248c5907a99afcb1ee7deb07b68aec3519",
+      "coordinates_read": 85
+    },
+    {
+      "path": "/home/ryu/MCI_UAV/scenarios/manifests/sigungu_osrm_train1000_random4_points.json",
+      "sha256": "197839c6196a43171dd400a60d7ed2faa00bcf769a64b310a8656ca9efb972ec",
+      "coordinates_read": 2000
+    },
+    {
+      "path": "/home/ryu/MCI_UAV/scenarios/manifests/train_pool_points.json",
+      "sha256": "fdba9f73a136af253830b3bb2b4a9dfc3d85e0aa51e58d0fbd4b8c63589c563a",
+      "coordinates_read": 1500
+    }
+  ],
+  "points": "/home/ryu/MCI_UAV/scenarios/manifests/v15_blind250_points.json",
+  "points_sha256": "ae37180375363333352ef292fc7b99283ac34a78a7222080e5ea6c5afc4c41d4",
+  "manifest": "/home/ryu/MCI_UAV/scenarios/manifests/v15_blind250_osrm_manifest.json",
+  "manifest_sha256": "4efe2d6ba5e569dc311f5de5352e25453571bbfaaff78cddcb20e7544e92239e",
+  "scenario_params": {
+    "incident_size": 100,
+    "amb_count": 30,
+    "uav_count": 26,
+    "amb_velocity": 50,
+    "uav_velocity": 200,
+    "amb_handover_time": 5.0,
+    "uav_handover_time": 10.0,
+    "total_samples": 1000,
+    "fixed_hos_num": 47,
+    "uav_num": 26
+  },
+  "osrm_url": "http://127.0.0.1:5000",
+  "wall_seconds": 591.6444010734558
+}
