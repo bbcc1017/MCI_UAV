@@ -167,6 +167,23 @@ python tools/exp_drivers/aggregate_heur.py <manifest.json> "" <prefix>
 **64룰** = START/ReSTART × RedOnly/YellowNearest × Red 수단 4 × Yellow 수단 4 (2×2×4×4).
 **부하균형(발송상한) 규칙**(64룰보다 강한 기준선)은 `src/rl_src/loadbalance_heuristic.py` — [§4 설계](#dsn-lb).
 
+**Shin and Lee (2020)에서 비교·제안한 문헌 휴리스틱**은
+`src/sim_src/ShinHeuristics.py`에 별도 구현한다. Threshold/2Step(Jacobson 계열),
+PIH(Mills 계열을 논문에서 수정), Integrated(Shin–Lee 제안) × 공통 mode 4종
+(OnlyAMB/Both_AMBFirst/Both_UAVFirst/OnlyUAV) = 16개이며, 과거 Full64 정합성을
+위해 기본 비활성이다. 시나리오 YAML의 `rule_info`에 `include_shin: true`를 넣으면
+기존 64개 뒤에 16개가 추가된다. Shin16만 실행하려면 `include_standard: false`도
+함께 지정한다. `OnlyAMB`가 원 논문에 가장 가까운 재현이고 나머지 mode는 본 연구의
+AMB+UAV 확장이다. 병원 Tier2/3 매핑, helipad·용량 hard mask, 실제 치료율·인계시간,
+수치 특이점 폴백을 현행 시뮬에 맞췄으므로 논문에는 원 코드의 완전복제가 아니라
+`Shin–Lee adapted heuristic baselines`로 표기한다.
+
+```bash
+# 대규모 실험 전 16개 실제 episode·joint mask·기존 64개 회귀 smoke
+python tools/smoke_shin_heuristics.py \
+  --seed 0
+```
+
 <a id="pl-train"></a>
 ### 3.3 RL 학습
 
