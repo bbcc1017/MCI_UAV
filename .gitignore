@@ -260,6 +260,8 @@ results_archived*/
 # MCI_UAV generated artifacts
 # - 자동 생성 시나리오 (사고지점별 폴더, 옛 평면 구조)
 scenarios/exp_*/
+# - 한국도로공사 고속도로 사고 원자료 (58MB, 외부 검증용 입력 — 재배포 대상 아님)
+scenarios/highway_accident.csv
 # - 평가점 시나리오 생성 진행상태 매니페스트 (생성 중 매 시나리오마다 갱신)
 scenarios/plan1nat_eval_manifest.json
 # - hold-out 평가용 flatten 매니페스트 (절대경로 config 참조 — 환경 의존, 스크립트로 재생성 가능)
