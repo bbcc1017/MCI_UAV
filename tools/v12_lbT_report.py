@@ -46,8 +46,9 @@ def main() -> None:
     ap.add_argument("--out_dir", default=str(DEFAULT_DIR))
     ap.add_argument("--ref", default="lb_T4", help="비교 기준 정책명")
     ap.add_argument("--train_pe", default="",
-                   help="train1000 스윕 NPZ. 주면 시군구별 T 를 학습좌표(4점×30ep)에서 적합해 "
-                        "대표점250 에 전이한 **배포 가능** 수치를 계산한다(좌표 무중복=누수 없음).")
+                   help="train1000 스윕 NPZ(쉼표구분 다중 — p0..p3 청크 자동 병합). 주면 시군구별 "
+                        "T 를 학습좌표(시군구당 4점)에서 적합해 대표점250 에 전이한 **배포 가능** "
+                        "수치를 계산한다(좌표 무중복=누수 없음).")
     A = ap.parse_args()
     out_dir = Path(A.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -158,12 +159,25 @@ def main() -> None:
 
     # ---- 3c) train1000 적합 → 대표점250 전이 (배포 가능) ----
     transfer = None
-    if A.train_pe and os.path.exists(A.train_pe):
-        tz = np.load(A.train_pe, allow_pickle=False)
-        t_names = [str(x) for x in tz["names"]]
-        t_regions = [str(x) for x in tz["regions"]]
-        t_pdr = np.asarray(tz["pdr"], dtype=np.float64)
+    t_paths = [p for p in A.train_pe.split(",") if p.strip() and os.path.exists(p.strip())]
+    if t_paths:
+        # p0..p3 청크 병합. 정책 목록(names)과 에피소드 수가 청크 간 동일해야 한다.
+        t_names, t_regions, chunks = None, [], []
+        for p in t_paths:
+            tz = np.load(p.strip(), allow_pickle=False)
+            nm = [str(x) for x in tz["names"]]
+            if t_names is None:
+                t_names = nm
+            elif nm != t_names:
+                raise ValueError(f"청크 정책목록 불일치: {p}")
+            t_regions += [str(x) for x in tz["regions"]]
+            chunks.append(np.asarray(tz["pdr"], dtype=np.float64))
+        if len({c.shape[2] for c in chunks}) != 1:
+            raise ValueError(f"청크 에피소드 수 불일치: {[c.shape for c in chunks]}")
+        t_pdr = np.concatenate(chunks, axis=0)
         t_map = {n: i for i, n in enumerate(t_names)}
+        print(f"\n[train_pe] 청크 {len(t_paths)}개 병합 → {t_pdr.shape[0]}좌표 × "
+              f"{len(t_names)}정책 × {t_pdr.shape[2]}ep")
         # 학습 매니페스트 키 '<이름>_<sigcd>_p<k>' → sigcd 로 묶어 4점 평균
         def sigcd_of(key: str) -> str:
             digits = [t for t in key.split("_") if t.isdigit() and len(t) == 5]
@@ -248,6 +262,7 @@ def main() -> None:
     meta = out_dir / "lbT_report_meta.json"
     json.dump({
         "pe": os.path.abspath(A.pe), "csv": os.path.abspath(A.csv),
+        "train_pe": [os.path.abspath(p) for p in t_paths],
         "n_regions": len(regions), "n_eps": n_eps,
         "T_grid": ["inf" if not np.isfinite(t) else int(t) for t, _, _ in t_cols],
         "national_best_T": "inf" if not np.isfinite(Ts[best_g]) else int(Ts[best_g]),
