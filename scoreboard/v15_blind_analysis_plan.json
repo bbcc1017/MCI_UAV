@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "frozen_at_kst": "2026-08-04T02:27:57+09:00",
+  "status": "written_before_any_v15_blind_outcome_was_simulated",
+  "policy": "V15_BASE_G1",
+  "policy_invariant": {
+    "lb_t_included": false,
+    "reference_action": "I3_CONNECTED_GBDT_L63_BASE",
+    "candidate_sources": [
+      "PPO_POINTER_V10_TOP8",
+      "MILP_TOP2",
+      "I3_CONNECTED_GBDT_L63_BASE",
+      "I3_CONNECTED_GBDT_L31_BASE",
+      "I1_FIELD_GBDT_L63_BASE"
+    ],
+    "verifier": "NCRP nonclairvoyant CRN h20 m16"
+  },
+  "blind_dataset": {
+    "manifest": "scenarios/manifests/v15_blind250_osrm_manifest.json",
+    "manifest_sha256": "4efe2d6ba5e569dc311f5de5352e25453571bbfaaff78cddcb20e7544e92239e",
+    "n_regions": 250,
+    "seeds": "12000-12029",
+    "unit_of_analysis": "district coordinate",
+    "coordinate_weighting": "equal"
+  },
+  "primary_estimand": {
+    "contrast": "FINAL PDR_woG - BASE_G1 PDR_woG",
+    "interpretation": "positive values favor BASE_G1",
+    "point_estimate": "mean of 250 within-region seed means",
+    "confidence_interval": "95% district-cluster bootstrap, 20000 resamples",
+    "confirmatory_success": "95% cluster-bootstrap interval excludes zero on the positive side"
+  },
+  "secondary_confirmatory": [
+    "paired Wilcoxon signed-rank test across 250 regional means with Holm correction",
+    "within-region seed paired W/T/L using normal 95% CI",
+    "BASE_G1 versus deterministic PPO and PURE_G1 under identical coordinate/seed cube"
+  ],
+  "prespecified_heterogeneity": {
+    "difficulty": "FINAL regional mean PDR_woG, quintiles Q1-Q5",
+    "directional_hypothesis": "BASE_G1 benefit increases with FINAL difficulty",
+    "tests": [
+      "Spearman association between FINAL PDR and paired improvement",
+      "cluster-bootstrap improvement interval within each difficulty quintile"
+    ],
+    "administrative_type": "군 versus 시·구",
+    "status": "secondary/exploratory even though direction was observed on p3 development"
+  },
+  "regional_transfer_model": {
+    "status": "prespecified exploratory",
+    "inputs": "21 predecision static infrastructure features only; no policy outcome or LB-T feature",
+    "continuous_target": "FINAL regional PDR - BASE_G1 regional PDR",
+    "model": "nested province-code GroupKFold standardized Ridge with alpha in [0.1,1,10,100]",
+    "metrics": ["out-of-group Spearman", "out-of-group R2", "MAE"],
+    "high_benefit_summary": "depth-2 balanced CART for top-20% paired benefit",
+    "interpretation": "predictive regional typology, not causal mortality effect"
+  },
+  "mechanism_analysis": [
+    "switch rate from GBDT reference",
+    "novel GBDT candidate execution rate",
+    "MILP candidate execution rate",
+    "associations of candidate execution rates with regional difficulty and improvement; non-causal"
+  ],
+  "explanation_protocol": {
+    "coordinates": "random4 p3 development fold, all 250 districts",
+    "seeds": "9200-9202",
+    "roles_per_decision": ["GBDT_BASE", "PPO_GREEDY", "EXEC"],
+    "class_choice_set": "fit only when Red and Yellow are both present at site",
+    "mode_choice_set": "fit only for non-stay helipad destinations when AMB and UAV are both available",
+    "spatial_validation": "district GroupKFold with equal total fit weight per district",
+    "use": "mechanism and guideline candidates only; not final performance estimation"
+  },
+  "multiplicity": "Holm adjustment within each named reference family",
+  "missing_data": "no imputation; analysis requires the complete 250 x 30 x 4 policy grid",
+  "selection_rule": "no policy, candidate, threshold, horizon, rollout count, or seed changes after blind outcomes are inspected",
+  "claim_boundary": "generalization is within the Korean hospital database and current simulator assumptions"
+}

@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "frozen_at_kst": "2026-08-04T01:34:03+09:00",
+  "selected_policy": "V15_BASE_G1",
+  "policy_definition": {
+    "greedy_reference": "I3_CONNECTED_GBDT_L63_BASE",
+    "candidate_sources": [
+      "PPO_POINTER_V10_TOP8",
+      "MILP_TOP2",
+      "I3_CONNECTED_GBDT_L63_BASE",
+      "I3_CONNECTED_GBDT_L31_BASE",
+      "I1_FIELD_GBDT_L63_BASE"
+    ],
+    "candidate_verifier": "NCRP_NONCLAIRVOYANT_CRN",
+    "planner": {
+      "K": 8,
+      "h": 20,
+      "m": 16,
+      "switch_margin": 0.0,
+      "switch_z": 0.0,
+      "rollout_follow_policy": "PPO_POINTER_V10"
+    },
+    "lb_t_included": false
+  },
+  "development_protocol": {
+    "student_fit": "random4 p0-p2 (750 coordinates)",
+    "selection": "p3 spatial development coordinates",
+    "selected_over": [
+      "PPO",
+      "PURE_G1",
+      "PPO_NCRP_MILP_FINAL",
+      "BASEFOLLOW_G1",
+      "candidate-source ablations"
+    ],
+    "dev40_seed8100_8104_sha256": "1821bb44566996f0a0f3e5e1eb2688f65578678cea8bca49c5858cd733863e81",
+    "follow_dev40_seed8100_8101_sha256": "7d9e53911435ebd7dfbe334b85e400061849330bc884ad629c8f70e151d5edef"
+  },
+  "frozen_artifacts": {
+    "ppo_model_sha256": "5e65d2d0a614aab536d4a7c5867a04cfbfa2e91d5183aec55b5c64edf88fa349",
+    "ppo_vecnormalize_sha256": "9594251666d626a559e6fd4f8febc0f72b2d43b53ab7948b6a8256f505c05616",
+    "gbdt_g1_full1000_sha256": "b41d79977ffe33366018ebd253d94dbe99f17034ecfeeb284dcd743f42cf36b2",
+    "gbdt_g2_full1000_sha256": "e1c61022ad2ec4330fd77931b7349c822a653a11df66d77a28a8a4a1748f771b",
+    "gbdt_g3_full1000_sha256": "31de0dfcdb2990d1f66038411f5cfdc388b28cd7986f2fdaddd88f1c2585be2b",
+    "planner_policy_py_sha256": "c08b13336606efd01a1f33f920e8f03d76bdaca83e60aa0302afe8f4c4f6ae3c",
+    "portfolio_policy_py_sha256": "53f6bc453bbe36fb5aa604c4266cc8bfabd39cda1161a4590dfc3ef0aec01066",
+    "milp_policy_py_sha256": "515956672d090963824258439e7fba93f36085a1172d0aa6a4bece281967441a",
+    "tree_distill_policy_py_sha256": "3ecc29e09e108124394aad6a2ea840ed846a121a92ef02ffc4d3ad7ed16dd0a7",
+    "v15_portfolio_eval_py_sha256": "b7ab8bdee228abbba8afd56fd8387ee9df872905d85037043e790e201d5d6fb4"
+  },
+  "analysis_artifacts": {
+    "v15_portfolio_results_py_sha256": "578d4c4714b73c4f82e81bcf6f44d816ab291c9154f130b22ad880a1490ba175",
+    "v15_final_analysis_py_sha256": "c246f11f2970b788d2516bb1ebf924343ea8b4d0d3c69fb4a24961e30d16c0eb",
+    "v15_region_profile_analysis_py_sha256": "8df54d084273830dd095284312047ffd5911428d356f345265a9593d6d1028c2",
+    "v15_guideline_analysis_py_sha256": "ac07c413e68c722dc705205fb05c45145d41fb2177526dd9d5f9085e38567197"
+  },
+  "previous_external_benchmark": {
+    "manifest": "/home/ryu/MCI_UAV/scenarios/manifests/distill_external_test250_osrm_manifest.json",
+    "manifest_sha256": "2b17cf8aff39edcad19b9403190b67d29cb436ace12f6c15abdcc0e3e86a6027",
+    "n_coordinates": 250,
+    "coordinate_overlap_with_exclusions": 0,
+    "status": "not_blind_for_v15",
+    "reason": "Previously evaluated by v10 distillation experiments at seeds 10000-10009."
+  },
+  "future_blind_test": {
+    "status": "generated_after_policy_freeze_outcomes_unseen",
+    "manifest": "/home/ryu/MCI_UAV/scenarios/manifests/v15_blind250_osrm_manifest.json",
+    "manifest_sha256": "4efe2d6ba5e569dc311f5de5352e25453571bbfaaff78cddcb20e7544e92239e",
+    "analysis_plan_sha256": "7c1660bea059e306b5d7da147d523d20f1a05d71e1ab0b5f293ed789411c189f",
+    "generation_seed": 20260804,
+    "n_coordinates": 250,
+    "excluded_prior_unique_coordinates": 2335,
+    "exact_overlap_with_exclusions": 0,
+    "selection_prohibition": "Do not alter the frozen policy after inspecting this dataset."
+  }
+}

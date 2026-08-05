@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "written_at_kst": "2026-08-05T16:29:31+09:00",
+  "status": "written_before_any_v15_blind_outcome_was_simulated",
+  "evidence_of_pre_outcome": "results/scoreboard/v15/blind/ 디렉터리가 작성 시점에 존재하지 않았고 v15 blind 산출 CSV가 0건이었다",
+  "relation_to_frozen_plan": {
+    "frozen_plan": "results/scoreboard/v15/final/blind_analysis_plan.json",
+    "frozen_plan_sha256": "7c1660bea059e306b5d7da147d523d20f1a05d71e1ab0b5f293ed789411c189f",
+    "frozen_manifest_sha256": "4efe2d6ba5e569dc311f5de5352e25453571bbfaaff78cddcb20e7544e92239e",
+    "modification_policy": "동결 파일은 수정하지 않는다. 본 addendum 은 별도 파일이며 selection_freeze.json 의 해시 무결성을 유지한다(verify_v15_freeze.py PASS 유지).",
+    "authority": "본 addendum 은 사전등록의 보충이며 주평가량·정책·후보·임계값·지평·롤아웃수·seed 를 변경하지 않는다"
+  },
+
+  "deviation_1_minimum_separation": {
+    "issue": "blind250 메타의 이격 보증 문장이 사실과 다르다",
+    "declared": "v15_blind250_meta.json 의 radius_counts {1.0: 248, 0.5: 2, 0.25: 0, 0.125: 0} 및 minimum_radius_rule_km [1.0, 0.5, 0.25, 0.125]",
+    "measured": "블라인드 250점 → 기존 전 매니페스트 좌표(union 2267점, 13종 매니페스트에서 경로 파싱) 최근접 거리: min 0.448 km, 0.5 km 미만 1점, 1.0 km 미만 3점, 0.25 km 미만 0점, 중위 2.23 km",
+    "offending_coordinate": [35.537904, 129.307035],
+    "offending_nearest_source": "scenarios/manifests/plan1_manifest.json (시도17 대표점, 울산)",
+    "offending_distance_km": 0.448,
+    "root_cause": "exclusion_sources 6종에 시도17 대표점 매니페스트(plan1 / plan1nat / sido_osrm / sido_natural)가 포함되지 않았다. 선언 n_unique_exclusion_coordinates=2335 와 실측 union 사이에 시도17 17점이 빠져 있다.",
+    "leakage_assessment": "누수 아님. 시도17 대표점은 프로젝트 규약상 판정 전용 집합이며 어떤 학습·증류·튜닝에도 사용되지 않았다. 학습 좌표(train1000 random4)와의 정확중복은 0이고 최근접 거리도 규칙을 만족한다.",
+    "decision": "셋을 재생성하지 않고 각주로 정정 기재한다",
+    "decision_rationale": "블라인드 미개봉 상태이므로 재생성도 형식상 가능하지만, 얻는 것은 0.052 km 이고 잃는 것은 2026-08-04T01:34 동결 선언의 시각 무결성과 selection_freeze.json 해시 체인이다. 편차 대상이 판정 전용 집합이어서 누수 경로가 없다.",
+    "reporting_requirement": "논문 본문 또는 각주에 다음을 기재한다 — 블라인드 250점 중 1점이 시도17 판정용 대표점에서 0.448 km 거리에 있어 선언된 0.5 km 최소이격을 만족하지 않는다. 해당 집합은 학습에 사용되지 않았으므로 누수는 없다. 이 1점을 제외한 249점 민감도 분석을 부록에 함께 제시한다.",
+    "prespecified_sensitivity": "주평가량을 249점(위 좌표 제외)에서 재계산해 부록에 병기한다. 주평가량 자체는 250점 기준을 유지한다."
+  },
+
+  "deviation_2_low_n_harness": {
+    "issue": "동결 하네스에 저-N 퇴화가 있다",
+    "location": "src/rl_src/v15_portfolio_eval.py 의 pdr_woG 계산 2곳 (preventable<=0 이면 pdr_woG=0.0). src/sim_src/main.py:131-134 safe_pdr 과 동일한 처리.",
+    "impact_on_blind": "없음. 블라인드는 incident_size=100 이며 이 규모에서 이송대상(R+Y)이 0이 될 확률은 무시 가능하다. 250x30 격자에서 preventable_woG<=0 행이 발생하면 결측으로 처리하지 않고 즉시 보고한다.",
+    "constraint": "저-N(예 N=5/12/20/48) 규모 강건성 실험을 이 동결 하네스로 실행하지 않는다. 다항추출 실측으로 P(R+Y<=3) 은 N=4 에서 0.974, N=12 에서 0.226 이므로 퇴화가 즉시 발동해 PDR 이 0 으로 오염된다.",
+    "future_path": "저-N 실험은 동결 대상이 아닌 별도 스크립트에서 수행하고, preventable_woG<=0 에피소드를 0 이 아닌 결측으로 분리 집계한다. 동결 파일을 수정하면 v15_portfolio_eval_py_sha256 이 깨지므로 수정하지 않는다.",
+    "additional_caveat": "PPO(10M, N=100) · GBDT 학생 · MILP 튜닝 · NCRP 의 K/h/m 이 모두 N=100 에서 적합·선택되었다. 저-N 에서는 규칙 계열만 in-distribution 이므로 순위 변화가 규모 효과인지 분포 외 효과인지 분리되지 않는다. 저-N 주장은 규칙 계열의 규모 강건성과 학습 팔의 OOD 비대칭 보고로 한정한다."
+  },
+
+  "null_and_adverse_result_reporting": {
+    "purpose": "결과를 본 뒤 서술 방식을 고르는 것을 막기 위해, 세 가지 결과 방향의 보고 문형을 미리 확정한다",
+    "primary_estimand_restated": "FINAL PDR_woG - BASE_G1 PDR_woG, 250개 지역별 seed 평균의 평균, 95% 지역 클러스터 부트스트랩 20,000회. 양수는 BASE_G1 우세.",
+    "case_A_confirmatory_positive": {
+      "condition": "95% 클러스터 부트스트랩 구간이 0 을 양수 쪽에서 배제",
+      "report": "사전등록된 주평가량으로 BASE_G1 우세가 블라인드에서 확인되었다고 서술한다. 점추정·CI·Wilcoxon Holm·지역 W/T/L 을 함께 제시하고, 개발셋(dev40) 추정 +0.001312+-0.001221 과의 크기 비교를 명시한다."
+    },
+    "case_B_null": {
+      "condition": "95% 클러스터 부트스트랩 구간이 0 을 포함",
+      "report": "다음 문형을 사용한다 — 블라인드 250 좌표에서 BASE_G1 과 FINAL 의 차이는 검출되지 않았다(점추정 X, 95% CI [L, U]). 동결된 선택은 BASE_G1 이며 결과를 본 뒤 FINAL 로 재선택하지 않는다. 개발셋에서 관측된 +0.001312 는 블라인드에서 재현되지 않았다고 명시한다.",
+      "prohibited": "부분집단·난이도 5분위·행정유형에서 유의한 셀을 찾아 주장으로 승격하는 것을 금지한다. 이질성 분석은 사전등록대로 탐색적 지위를 유지한다.",
+      "framing_note": "null 은 실패가 아니라 결과다. 두 정책이 같은 후보풀과 같은 검증기를 공유하므로 차이가 작은 것은 구조적으로 예상 가능하며, 그 사실 자체를 보고한다."
+    },
+    "case_C_adverse": {
+      "condition": "95% 클러스터 부트스트랩 구간이 0 을 음수 쪽에서 배제(FINAL 우세)",
+      "report": "다음 문형을 사용한다 — 동결된 선택 BASE_G1 은 블라인드에서 확인되지 않았고 FINAL 이 유의하게 우세했다(점추정 X, 95% CI [L, U]). 개발셋에서 블라인드로의 방향 반전을 그대로 기재하고, 개발 선택이 개발셋 잡음에 과적합되었을 가능성을 논의한다. 사후에 BASE_G1 정의를 바꾸거나 FINAL 을 새 챔피언으로 재선택하는 추가 탐색을 하지 않는다.",
+      "framing_note": "이 경우 논문의 기여는 성능 주장에서 방법론 주장으로 이동한다 — 개발셋 선택이 동결·블라인드 검증에서 뒤집힐 수 있음을 실증한 사례로 보고한다."
+    },
+    "common_requirements": [
+      "결과 방향과 무관하게 4팔(PPO·PURE_G1·FINAL·BASE_G1) 전부의 점추정·CI·지연(ms/decision)을 표로 보고한다",
+      "학습 시드 잡음 바닥 sd 0.00114 를 함께 제시하고 효과크기를 그 배수로 환산한다",
+      "W/T/L 은 지역별 seed paired 95% CI 기준으로 계산하며, v14 계열의 지역평균 부트스트랩 기준과 혼용하지 않는다(단위 이중화 금지)",
+      "250x30x4 완전격자가 아니면 결측을 보간하지 않고 미완으로 보고한다",
+      "부분집계 CSV 로 판정하지 않는다(완료순서가 난이도와 역상관이라 진행 중 수치는 편향된다)"
+    ]
+  },
+
+  "statistical_unit_unification": {
+    "issue": "v14 산출물은 지역평균 부트스트랩 + Wilcoxon Holm 으로 W/T/L 을 내고 v10~v12 _paired 는 지역별 에피소드 95% CI 로 낸다. 같은 쌍에 두 개의 W/T/L 이 존재한다.",
+    "decision": "블라인드 주평가량은 사전등록된 지역 클러스터 부트스트랩을 정본으로 하고, W/T/L 은 지역별 seed paired 95% CI 를 정본으로 한다. 논문 본문의 모든 표를 이 두 기준으로 재계산한다.",
+    "feasibility": "원시 에피소드 값이 양쪽 모두 보존되어 있어 재계산 가능하다"
+  }
+}
