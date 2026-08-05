@@ -37,6 +37,7 @@ SIM_SRC = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, "si
 if SIM_SRC not in sys.path:
     sys.path.insert(0, SIM_SRC)
 from RuleManager import Universal_Rule  # noqa: E402
+from ShinHeuristics import ShinHeuristicRule  # noqa: E402
 
 
 @contextlib.contextmanager
@@ -53,6 +54,13 @@ def _suppress_stdout():
 
 def parse_rule(rule_name):
     p = [x.strip() for x in rule_name.split(",")]
+    if len(p) == 2 and p[0].startswith("Shin ") and p[1].startswith("Mode "):
+        return ShinHeuristicRule(
+            p[0].replace("Shin ", "", 1).strip(),
+            p[1].replace("Mode ", "", 1).strip(),
+        )
+    if len(p) != 4:
+        raise ValueError(f"알 수 없는 휴리스틱 규칙명: {rule_name}")
     return Universal_Rule(p[0], p[1], p[2].replace("Red", "", 1).strip(),
                           p[3].replace("Yellow", "", 1).strip())
 
@@ -74,7 +82,13 @@ def make_codec(H):
 
 
 # ---------------------------------------------------------------- policies
-def make_heuristic_policy(rule_name):
+def make_heuristic_policy(rule_name, policy_seed=0):
+    """규칙정책을 만든다.
+
+    ``policy_seed``는 Threshold/2Step의 0.5 병원 선택처럼 정책 내부에만 쓰며,
+    시뮬레이션 동역학 RNG와 별도 generator를 유지한다. 기본값 0은 기존 호출과
+    결과를 그대로 보존하고, 전국 paired 평가는 episode seed에서 파생한 값을 넘긴다.
+    """
     rule = parse_rule(rule_name)
     state = {"init": False, "codec": None}
 
@@ -89,7 +103,7 @@ def make_heuristic_policy(rule_name):
             H_layout = len(mask) // 4 - 1 if mode_free else len(mask) // 2 - 1
             from loadbalance_heuristic import _codec_from_mask
             state["codec"] = (None, _codec_from_mask(len(mask), H_layout))
-            rule.set_seed(np.random.default_rng(0))
+            rule.set_seed(np.random.default_rng(policy_seed))
             rule.init_with_scenario({"EntityManager": env.en_manager})
             state["init"] = True
         _, encode = state["codec"]
