@@ -39,10 +39,16 @@ event_info_path: "./src/sim_src/event_info.json"
 
 rule_info:
   isFullFactorial: True
+  include_standard: True
   priority_rule: ["START", "ReSTART"]
   hos_select_rule: ["RedOnly", "YellowNearest"] # ["RedOnly", "YellowHalf", "YellowNearest"]
   red_mode_rule: ["OnlyUAV", "Both_UAVFirst", "Both_AMBFirst", "OnlyAMB"]
   yellow_mode_rule: ["OnlyUAV", "Both_UAVFirst", "Both_AMBFirst", "OnlyAMB"]
+  # Shin and Lee (2020) 문헌 휴리스틱. 기본 false라 기존 Full64 결과와 개수 불변.
+  # true이면 아래 4방법×4 mode=16개가 추가되어 총 80개.
+  include_shin: False
+  shin_methods: ["Threshold", "2Step", "PIH", "Integrated"]
+  shin_mode_rules: ["OnlyUAV", "Both_UAVFirst", "Both_AMBFirst", "OnlyAMB"]
 
 run_setting:
   totalSamples: 30 # number of samples

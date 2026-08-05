@@ -2,6 +2,7 @@ import os
 import numpy as np
 
 from EntityManager import EntityManager
+from ShinHeuristics import SHIN_METHODS, SHIN_MODE_RULES, ShinHeuristicRule
 
 
 def _cap_gate_is_occ():
@@ -25,23 +26,45 @@ class RuleManager():
         self.scenario = scenario
         self.rules = []
         self.rule_names = []
-        if configs['isFullFactorial']:
-            for priority in ["START", "ReSTART"]:
-                # for hos_select in ["RedOnly", "YellowHalf"]:
-                for hos_select in ["RedOnly", "YellowNearest"]:
-                    for mode_R in ["OnlyUAV", "Both_UAVFirst", "Both_AMBFirst", "OnlyAMB"]:
-                        for mode_Y in ["OnlyUAV", "Both_UAVFirst", "Both_AMBFirst", "OnlyAMB"]:
-                            self.rules.append(Universal_Rule(priority, hos_select, mode_R, mode_Y))
-                            self.rules[-1].set_seed(self.rng)
-                            self.rules[-1].init_with_scenario(self.scenario)
-        else:
-            for priority in configs['priority_rule']:
-                for hos_select in configs['hos_select_rule']:
-                    for mode_R in configs['red_mode_rule']:
-                        for mode_Y in configs['yellow_mode_rule']:
-                            self.rules.append(Universal_Rule(priority, hos_select, mode_R, mode_Y))
-                            self.rules[-1].set_seed(self.rng)
-                            self.rules[-1].init_with_scenario(self.scenario)
+        include_standard = configs.get('include_standard', True)
+        if include_standard:
+            if configs['isFullFactorial']:
+                priorities = ["START", "ReSTART"]
+                hospital_rules = ["RedOnly", "YellowNearest"]
+                red_modes = ["OnlyUAV", "Both_UAVFirst", "Both_AMBFirst", "OnlyAMB"]
+                yellow_modes = ["OnlyUAV", "Both_UAVFirst", "Both_AMBFirst", "OnlyAMB"]
+            else:
+                priorities = configs['priority_rule']
+                hospital_rules = configs['hos_select_rule']
+                red_modes = configs['red_mode_rule']
+                yellow_modes = configs['yellow_mode_rule']
+            for priority in priorities:
+                for hos_select in hospital_rules:
+                    for mode_R in red_modes:
+                        for mode_Y in yellow_modes:
+                            self._append(Universal_Rule(priority, hos_select, mode_R, mode_Y))
+
+        # 기존 시나리오·scoreboard의 64룰 개수는 기본적으로 그대로 유지한다.
+        # 명시적으로 include_shin=true일 때만 4개 방법×4개 mode=16개를 추가한다.
+        if configs.get('include_shin', False):
+            methods = tuple(configs.get('shin_methods', SHIN_METHODS))
+            modes = tuple(configs.get('shin_mode_rules', SHIN_MODE_RULES))
+            unknown_methods = sorted(set(methods) - set(SHIN_METHODS))
+            unknown_modes = sorted(set(modes) - set(SHIN_MODE_RULES))
+            if unknown_methods or unknown_modes:
+                raise ValueError(
+                    f"Shin 규칙 설정 오류 methods={unknown_methods}, modes={unknown_modes}"
+                )
+            for method in methods:
+                for mode in modes:
+                    self._append(ShinHeuristicRule(method, mode))
+
+        self.rule_names = [rule.rule_name for rule in self.rules]
+
+    def _append(self, rule):
+        rule.set_seed(self.rng)
+        rule.init_with_scenario(self.scenario)
+        self.rules.append(rule)
 
     def set_seed(self, rng):
         self.rng = rng
