@@ -1,0 +1,12 @@
+{
+  "modules": {
+    "EntityManager": "f10c1691e23c4d3520c259f26226d1ebbe0c7d366af08816a40b42bc30d69937",
+    "EventManager": "1f95ae968c32359e0bdcbbef4c78f4d66230633e59b988ba5a42229fcf5889fb",
+    "MCIEnvironment_gymnasium": "2910e3b8aba7025ec239a4341102b43c98eeb59290f541ebc9499cc390676bcd",
+    "RuleManager": "70be8e04c6a8da204c41e99a45e19742ebf3d7d10847e65f8f97f1e6ac06f77a",
+    "ScenarioManager": "670b9e0e01c526523672766866f963ede7e83c2a2ffb5010b05c8aa5e8c14520",
+    "ShinAlignedHeuristics": "d3c306d8e609767455084dfe7d2cf372236570f609e24b9c3968b5d81ffda27f",
+    "ShinHeuristics": "c8514142a836824710c55a0946a69c611b07743e1dd04cf51c72c751fc48be39"
+  },
+  "note": "이 사본이 파생된 src/sim_src 파일들의 sha256. origin_sync.py --check 가 대조한다."
+}
