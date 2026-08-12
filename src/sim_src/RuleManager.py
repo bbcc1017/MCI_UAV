@@ -85,33 +85,49 @@ class Rule:
     # UAV 대수 먼저 확인
         self.K_uav = en_properties['uav']['uav_num']
         self.K_amb = en_properties['ambulance']['amb_num']
-    
-    # AMB theta 계산 (항상 계산, 3대 이상이면 위의 주석처럼 원래대로, 그 이하면 전체 평균, 공란이면 0)
-        amb_distances = en_properties['ambulance']['amb_HtoS_t'][0]
-        if len(amb_distances) >= 3:
-            self.theta_amb = np.mean(amb_distances[0:3]) * 2
-        else:
-            self.theta_amb = np.mean(amb_distances) * 2 if len(amb_distances) > 0 else 0
-    
-    # UAV theta 계산 (UAV=0 대응)
-        if self.K_uav == 0:
-            self.theta_uav = 0  # UAV가 없으면 0으로 설정
-        else:
-            uav_distances = en_properties['uav']['uav_HtoS_t'][0]
-            if len(uav_distances) >= 3:
-                self.theta_uav = np.mean(uav_distances[0:3]) * 2
-            else:
-                self.theta_uav = np.mean(uav_distances) * 2 if len(uav_distances) > 0 else 0
-
-        self.expected_R = en_properties['patient']['incident_size'] * en_properties['patient']['patient_info']['ratio'][0]
-        self.expected_Y = en_properties['patient']['incident_size'] * en_properties['patient']['patient_info']['ratio'][1]
 
         self.hos_num = en_properties['hospital']['hos_num']
         self.tier3_idx = en_properties['hospital']['hos_tier3_idx'] # Tier3 = 상급종합병원, Tier2 = 나머지
         self.tier2_idx = en_properties['hospital']['hos_tier2_idx'] # Tier3 = 상급종합병원, Tier2 = 나머지
         self.helipad_idx = en_properties['hospital'].get('hos_helipad_idx', np.array([]))
-
         self.hos_max_send = en_properties['hospital']['hos_max_send'] # 최대 보낼 수 있는 환자수 (목표치)
+
+        # ScenarioManager가 is_use_time을 이미 반영한 실제 평균 ETA를 단일 기준으로 사용한다.
+        # AMB: API duration 또는 거리/속도, UAV: 유클리드 거리/속도.
+        self.amb_eta = np.asarray(en_properties['ambulance']['amb_HtoS_t'][0], dtype=float)
+        self.uav_eta = np.asarray(en_properties['uav']['uav_HtoS_t'][0], dtype=float)
+
+        def nearest_roundtrip_mean(eta, candidates=None):
+            if candidates is not None:
+                candidates = np.asarray(candidates, dtype=int)
+                eta = eta[candidates] if candidates.size else np.array([], dtype=float)
+            if eta.size == 0:
+                return 0.0
+            n_nearest = min(3, eta.size)
+            return float(np.mean(np.sort(eta, kind='stable')[:n_nearest]) * 2)
+
+        # ReSTART theta는 병원 배열 앞 3개가 아니라 실제 ETA가 가장 짧은 3개 왕복 평균.
+        self.theta_amb = nearest_roundtrip_mean(self.amb_eta)
+
+    # UAV theta 계산 (UAV=0 대응, 헬기장 병원만 실제 후보)
+        if self.K_uav == 0:
+            self.theta_uav = 0  # UAV가 없으면 0으로 설정
+        else:
+            self.theta_uav = nearest_roundtrip_mean(self.uav_eta, self.helipad_idx)
+
+        self.expected_R = en_properties['patient']['incident_size'] * en_properties['patient']['patient_info']['ratio'][0]
+        self.expected_Y = en_properties['patient']['incident_size'] * en_properties['patient']['patient_info']['ratio'][1]
+
+    def _ordered_hospital_indices(self, candidates, mode):
+        """현재 이송수단의 실제 평균 ETA 오름차순으로 병원 후보를 반환."""
+        candidates = np.asarray(list(candidates), dtype=int)
+        if candidates.size == 0:
+            return candidates
+        eta = self.uav_eta if int(mode) == 1 else self.amb_eta
+        if eta.size != self.hos_num:
+            return candidates
+        order = np.argsort(eta[candidates], kind='stable')
+        return candidates[order]
 
 
     def set_seed(self, rng):
@@ -248,7 +264,7 @@ class Universal_Rule(Rule):
 
                 if available_UAV: action[2] = 1  # UAV
                 elif available_Amb:
-                    if yellow_exist and self.mode_R != "OnlyUAV": # Send red via AMB
+                    if red_exist and self.mode_R != "OnlyUAV": # Send red via AMB
                         action[0] = 0 # Red
                         action[2] = 0 # AMB
                     else:
@@ -288,7 +304,7 @@ class Universal_Rule(Rule):
                 cap_used = self.obs['p_sent']
             if self.hos_select == "RedOnly":
                 if action[0] == 0: # Red selected
-                    for i in self.tier3_idx:
+                    for i in self._ordered_hospital_indices(self.tier3_idx, action[2]):
                         # ★ 헬기장 체크 추가 (UAV 선택 시)
                         if action[2] == 1 and i not in self.helipad_idx:
                             continue
@@ -296,7 +312,7 @@ class Universal_Rule(Rule):
                             action[1] = i + 1
                             break
                 elif action[0] == 1: # Yellow selected
-                    for i in range(self.hos_num):
+                    for i in self._ordered_hospital_indices(range(self.hos_num), action[2]):
                         if i in self.tier3_idx:
                             continue
                         # ★ 헬기장 체크 추가 (UAV 선택 시)
@@ -337,7 +353,7 @@ class Universal_Rule(Rule):
             #                     break
             elif self.hos_select == "YellowNearest":
                 if action[0] == 0:  # Red selected
-                    for i in self.tier3_idx:
+                    for i in self._ordered_hospital_indices(self.tier3_idx, action[2]):
                         # ★ 헬기장 체크 추가 (UAV 선택 시)
                         if action[2] == 1 and i not in self.helipad_idx:
                             continue
@@ -345,7 +361,7 @@ class Universal_Rule(Rule):
                             action[1] = i + 1
                             break
                 elif action[0] == 1: # Yellow selected - 거리순으로 tier 구분 없이 선택
-                    for i in range(self.hos_num):
+                    for i in self._ordered_hospital_indices(range(self.hos_num), action[2]):
                         # ★ 헬기장 체크 추가 (UAV 선택 시)
                         if action[2] == 1 and i not in self.helipad_idx:
                             continue

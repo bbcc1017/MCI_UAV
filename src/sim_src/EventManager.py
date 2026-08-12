@@ -237,7 +237,7 @@ class EventManager():
     def default_transportation_GB(self, mode):
         # Rule1: Ver250724 (2026-07-03 정합성 수정)
         # 1. Tier3(상급종합) 병원은 제외 (tier2 우선)
-        # 2. 가까운 순서대로 이송 (현장에서부터 거리순으로 hospital index 지정됨을 가정)
+        # 2. ScenarioManager가 is_use_time을 반영한 수단별 실제 평균 ETA 순으로 이송
         # 3. 물리 입원용량(occ+in_flight < max_capa+max_queue) 여유 있는 곳만 후보
         #    ★구현이 p_sent(단조 누적 발송) 게이트였던 것을 물리용량으로 교체 —
         #    p_sent 는 퇴원에도 감소하지 않아 장기/과부하 에피소드서 전 병원 소진
@@ -252,22 +252,35 @@ class EventManager():
                 - self.status['hospital']['h_states'][:, -1]
                 - self._in_flight())
         helipad_idx = self.properties['hospital'].get('hos_helipad_idx', np.array([]))
-        for h_idx in self.properties['hospital']['hos_tier2_idx']:
+        eta_key = 'uav_HtoS_t' if mode == 1 else 'amb_HtoS_t'
+        vehicle_key = 'uav' if mode == 1 else 'ambulance'
+        eta = np.asarray(self.properties[vehicle_key][eta_key][0], dtype=float)
+        if eta.size == self.properties['hospital']['hos_num']:
+            sorted_h = np.argsort(eta, kind='stable')
+        else:
+            sorted_h = np.arange(self.properties['hospital']['hos_num'])
+        tier2_idx = set(np.asarray(self.properties['hospital']['hos_tier2_idx'], dtype=int))
+        tier3_idx = set(np.asarray(self.properties['hospital']['hos_tier3_idx'], dtype=int))
+        for h_idx in sorted_h:
+            if h_idx not in tier2_idx:
+                continue
             if mode == 1 and h_idx not in helipad_idx:
                 continue
             if room[h_idx] > 0:
                 destination = h_idx + 1
                 break
         if destination is None:
-            for h_idx in self.properties['hospital']['hos_tier3_idx']:
+            for h_idx in sorted_h:
+                if h_idx not in tier3_idx:
+                    continue
                 if mode == 1 and h_idx not in helipad_idx:
                     continue
                 if room[h_idx] > 0:
                     destination = h_idx + 1
                     break
         if destination is None:
-            # 규칙 4 폴백: 용량 무시, 등급 무관 가장 가까운(index=거리순) 병원.
-            for h_idx in range(self.properties['hospital']['hos_num']):
+            # 규칙 4 폴백: 용량 무시, 등급 무관 수단별 ETA가 가장 짧은 병원.
+            for h_idx in sorted_h:
                 if mode == 1 and h_idx not in helipad_idx:
                     continue
                 destination = h_idx + 1
@@ -647,4 +660,3 @@ class EventManager():
         """
         stop_condition = False
         return log, stop_condition
-

@@ -75,6 +75,21 @@ def _codec_from_mask(mask_len, H):
     raise ValueError(f"알 수 없는 action mask 길이 {mask_len} (H={H})")
 
 
+def _preserve_hospital_rule_eligibility(rule, patient_class, eligible):
+    """공통 hard mask 위에 원 휴리스틱의 병원 선택집합을 복원한다.
+
+    action mask의 치료가능성은 도메인 제약이라 Yellow의 Tier3 치료를 허용한다. 반면
+    Universal_Rule의 ``RedOnly``는 Yellow를 Tier3에 보내지 않는 *정책 규칙*이므로
+    공통 mask에 넣으면 PPO·YellowNearest까지 바뀐다. LB가 목적지만 다시 고를 때 이
+    정책 축을 잃지 않도록 여기서만 Tier3를 제외한다.
+    """
+    eligible = list(eligible)
+    if int(patient_class) != 1 or getattr(rule, "hos_select", None) != "RedOnly":
+        return eligible
+    tier3 = {int(i) for i in np.asarray(rule.tier3_idx).reshape(-1)}
+    return [i for i in eligible if i not in tier3]
+
+
 def select_lb_action(rule, encode, mask, env_unwrapped, T, H, eta_amb, eta_uav, dobs=None):
     """LB 코어 1스텝: rule 의 (c,d,m)에서 목적지만 'p_sent<T 최근접 적격'으로 교체.
 
@@ -99,6 +114,7 @@ def select_lb_action(rule, encode, mask, env_unwrapped, T, H, eta_amb, eta_uav, 
     eta = eta_amb if m == 0 else eta_uav
     psent = np.asarray(dobs["p_sent"], float)
     elig = [i for i in range(H) if (lambda a: a < len(mask) and mask[a])(encode(c, i + 1, m))]
+    elig = _preserve_hospital_rule_eligibility(rule, c, elig)
     if not elig:
         return fb(intended_ok=False)
     # 누적발송<T 인 적격 중 최근접(eta최소). 전부 T 이상이면 가장 덜 보낸 곳.
