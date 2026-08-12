@@ -76,10 +76,16 @@ def main():
     print(f"[bldg] {len(feats)} feature → 타일 버킷", flush=True)
 
     buckets = {}   # (x,z) -> list of "h lon lat ..." lines
-    total = holes = multi = 0
+    total = holes = multi = under = 0
     for f in feats:
         geom = f.get("geometry"); props = f.get("properties") or {}
         if not geom:
+            continue
+        # 지하 전용 구조물(지상층 0·높이 0·지하층 >0 = 지하철역사/지하상가/지하주차장)은 지상 실체가
+        # 없다 — 그대로 두면 폴백 3.5m 박스로 압출돼 **교차로 한복판에 건물**이 선다(강남 190동 실측).
+        if (int(props.get("grnd_flr") or 0) <= 0 and float(props.get("height") or 0) <= 0
+                and int(props.get("ugrnd_flr") or 0) > 0):
+            under += 1
             continue
         pl = parts(geom)
         if len(pl) > 1:
@@ -110,7 +116,9 @@ def main():
         manifest["tiles"][f"{tx}_{tz}"] = len(lines)
     json.dump(manifest, open(os.path.join(out, "buildings_manifest.json"), "w", encoding="utf-8"),
               ensure_ascii=False, indent=1)
-    print(f"[bldg] 완료 — {total}동 → {len(buckets)}타일 (홀 {holes} 미방출, MultiPolygon {multi}) → {out}", flush=True)
+    print(f"[bldg] 완료 — {total}동 → {len(buckets)}타일 (홀 {holes} 미방출, MultiPolygon {multi}, "
+          f"지하전용 {under} 제외) → {out}", flush=True)
+    print("[bldg] ⚠차도 침범 잔여분은 `tools/v2_bldg_lane_clip.py --region ... --apply` 로 후처리할 것", flush=True)
 
 
 if __name__ == "__main__":

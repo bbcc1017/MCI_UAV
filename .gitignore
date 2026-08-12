@@ -308,6 +308,8 @@ tools/nationwide/footways/
 tools/nationwide/hdmap/
 tools/nationwide/ngiiroads/
 tools/nationwide/roads2_old/
+# 건물 높이 인덱스 (vworld_buildings_batch.py 로 재생성 — 255지역 492MB)
+tools/nationwide/bldgindex/
 # v2 디지털트윈 산출물 (정사/DEM/타일 버킷 — 전부 재생성 가능; qa 리포트만 추적)
 tools/nationwide_v2/*
 !tools/nationwide_v2/qa/
