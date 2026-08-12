@@ -58,6 +58,13 @@ EVAL_MANIFEST = REPO / "scenarios/manifests/sigungu_osrm_eval250_representative_
 DEFAULT_OUT = REPO / "results/scoreboard/v10/full1000"
 KEY_RE = re.compile(r"^(?P<region>.+)_(?P<sigcd>\d{5})(?:_p(?P<point>[0-3]))?$")
 METRIC_NAMES = ("reward", "pdr", "reward_woG", "pdr_woG", "time")
+SOURCE_PATHS = (
+    REPO / "src/rl_src/loadbalance_heuristic.py",
+    REPO / "src/sim_src/RuleManager.py",
+    REPO / "src/sim_src/EventManager.py",
+    REPO / "src/sim_src/ScenarioManager.py",
+    Path(__file__).resolve(),
+)
 
 
 def all_rule_names() -> list[str]:
@@ -99,6 +106,21 @@ def sha256_file(path: str | Path) -> str:
     with open(path, "rb") as f:
         for block in iter(lambda: f.read(1024 * 1024), b""):
             h.update(block)
+    return h.hexdigest()
+
+
+def source_hashes() -> dict[str, str]:
+    """커밋되지 않은 시뮬 수정까지 실험 provenance에 봉인한다."""
+    return {str(path.relative_to(REPO)): sha256_file(path) for path in SOURCE_PATHS}
+
+
+def source_bundle_sha256(hashes: dict[str, str]) -> str:
+    h = hashlib.sha256()
+    for path, digest in sorted(hashes.items()):
+        h.update(path.encode("utf-8"))
+        h.update(b"\0")
+        h.update(digest.encode("ascii"))
+        h.update(b"\0")
     return h.hexdigest()
 
 
@@ -593,11 +615,14 @@ def main():
         entries = selected
     rules = all_rule_names()
 
+    hashes = source_hashes()
     meta = {
         "protocol": "v10_full64_t4_totalsamples1000",
         "status": "running",
         "created_at_unix": time.time(),
         "git_sha": git_sha(),
+        "source_hashes": hashes,
+        "source_bundle_sha256": source_bundle_sha256(hashes),
         "rl_training_seed": 0,
         "evaluation_seed_start": args.seed,
         "evaluation_seed_end": args.seed + args.n_eps - 1,
