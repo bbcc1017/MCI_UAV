@@ -73,6 +73,7 @@ def build_rule_policies(specs):
     from lb3_policy import make_agnostic_lb_policy
     from loadbalance_heuristic import make_cap_policy
     from fit_v10_heuristic_rules import all_rule_names
+    from v17_field_rules import make_field_card_policy
 
     out = []
     for spec in specs:
@@ -81,6 +82,12 @@ def build_rule_policies(specs):
                 out.append((f"HEUR64|{rule}", make_heuristic_policy(rule)))
             continue
         name, body = spec.split("=", 1)
+        if body.startswith("card:"):
+            toks = body[5:].split(",")
+            lam, rkm, yh = (float(x) for x in toks[:3])
+            dm = toks[3] if len(toks) > 3 else "raw"
+            out.append((name, make_field_card_policy(lam, rkm, yh, dist_mode=dm)))
+            continue
         if body == "agn":
             out.append((name, make_agnostic_lb_policy(T=3)))
         else:
