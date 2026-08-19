@@ -309,6 +309,12 @@ def tree_scores(package: dict, X_full: np.ndarray) -> np.ndarray:
 
 def make_rank_tree_policy(package: dict, h_pad: int = 47):
     """evaluate 정책 규약 ``fn(obs, mask, env_unwrapped)->action``."""
+    # v17 증강 스키마는 68열 특징을 쓴다. 키가 없는 기존 패키지는 아래 원 경로로
+    # 내려가므로 구 트리의 동작은 비트동일하다.
+    if package.get("feature_schema") == "v17_aug68":
+        from v17_tree_features import make_aug_rank_tree_policy
+
+        return make_aug_rank_tree_policy(package, h_pad=h_pad)
     builder = ActionFeatureBuilder(h_pad=h_pad)
 
     def fn(obs, mask, env_unwrapped):
