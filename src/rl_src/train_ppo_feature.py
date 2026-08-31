@@ -346,6 +346,9 @@ def parse_args():
     p.add_argument("--learning_rate", type=float, default=3e-4)
     p.add_argument("--ent_coef", type=float, default=0.01)
     p.add_argument("--checkpoint_freq", type=int, default=20_000)
+    p.add_argument("--save_vecnormalize", action="store_true",
+                   help="체크포인트마다 VecNormalize 통계도 저장(중간 체크포인트 평가용). "
+                        "기본 False = 구 동작")
     p.add_argument("--vec", choices=["dummy", "subproc"], default="dummy")
     p.add_argument("--extractor",
                    choices=["mlp", "deepsets", "pointer", "pointer_joint3",
@@ -700,10 +703,13 @@ def main():
                   f"신규 파라미터={incompatible.missing_keys or '(없음; control)'}")
 
     _write_run_meta(args, model, status="training")
+    # save_vecnormalize 기본 False = 구 동작. 중간 체크포인트를 평가하려면 그 시점의
+    # 정규화 통계가 함께 있어야 한다(최종 통계를 초기 체크포인트에 쓰면 불일치).
     ckpt_cb = CheckpointCallback(
         save_freq=max(args.checkpoint_freq // args.n_envs, 1),
         save_path=os.path.join(args.log_dir, "checkpoints"),
         name_prefix="ppo_feature",
+        save_vecnormalize=bool(getattr(args, "save_vecnormalize", False)),
     )
 
     # resume 시 reset_num_timesteps=False → total_timesteps 는 '추가' 스텝(이어서 카운트·체크포인트 번호 연속).
