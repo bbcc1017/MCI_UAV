@@ -1,0 +1,6 @@
+{
+ "성동구_11200_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_성동구_11200_osrm/(37.544976,127.021985)/config_(37.544976,127.021985).yaml",
+ "성동구_11200_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_성동구_11200_osrm/(37.568671,127.050142)/config_(37.568671,127.050142).yaml",
+ "성동구_11200_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_성동구_11200_osrm/(37.53874,127.033168)/config_(37.53874,127.033168).yaml",
+ "성동구_11200_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_성동구_11200_osrm/(37.555929,127.062894)/config_(37.555929,127.062894).yaml"
+}

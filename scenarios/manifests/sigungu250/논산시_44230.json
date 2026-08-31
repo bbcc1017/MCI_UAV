@@ -1,0 +1,6 @@
+{
+ "논산시_44230_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_논산시_44230_osrm/(36.096498,127.183884)/config_(36.096498,127.183884).yaml",
+ "논산시_44230_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_논산시_44230_osrm/(36.32032,127.10006)/config_(36.32032,127.10006).yaml",
+ "논산시_44230_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_논산시_44230_osrm/(36.151234,127.1261)/config_(36.151234,127.1261).yaml",
+ "논산시_44230_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_논산시_44230_osrm/(36.195977,127.215228)/config_(36.195977,127.215228).yaml"
+}

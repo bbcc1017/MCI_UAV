@@ -1,0 +1,6 @@
+{
+ "여수시_46130_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_여수시_46130_osrm/(34.819936,127.688222)/config_(34.819936,127.688222).yaml",
+ "여수시_46130_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_여수시_46130_osrm/(34.776566,127.693767)/config_(34.776566,127.693767).yaml",
+ "여수시_46130_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_여수시_46130_osrm/(34.656105,127.587992)/config_(34.656105,127.587992).yaml",
+ "여수시_46130_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_여수시_46130_osrm/(34.059724,127.296084)/config_(34.059724,127.296084).yaml"
+}

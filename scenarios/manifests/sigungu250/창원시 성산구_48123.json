@@ -1,0 +1,6 @@
+{
+ "창원시 성산구_48123_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_창원시_성산구_48123_osrm/(35.178795,128.596862)/config_(35.178795,128.596862).yaml",
+ "창원시 성산구_48123_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_창원시_성산구_48123_osrm/(35.206621,128.668284)/config_(35.206621,128.668284).yaml",
+ "창원시 성산구_48123_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_창원시_성산구_48123_osrm/(35.202097,128.705358)/config_(35.202097,128.705358).yaml",
+ "창원시 성산구_48123_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_창원시_성산구_48123_osrm/(35.188873,128.616037)/config_(35.188873,128.616037).yaml"
+}

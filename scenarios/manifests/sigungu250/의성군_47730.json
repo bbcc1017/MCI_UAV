@@ -1,0 +1,6 @@
+{
+ "의성군_47730_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_의성군_47730_osrm/(36.435068,128.667535)/config_(36.435068,128.667535).yaml",
+ "의성군_47730_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_의성군_47730_osrm/(36.324058,128.580384)/config_(36.324058,128.580384).yaml",
+ "의성군_47730_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_의성군_47730_osrm/(36.331969,128.840703)/config_(36.331969,128.840703).yaml",
+ "의성군_47730_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_의성군_47730_osrm/(36.21666,128.852178)/config_(36.21666,128.852178).yaml"
+}

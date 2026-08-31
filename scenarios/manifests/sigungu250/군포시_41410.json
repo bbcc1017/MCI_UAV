@@ -1,0 +1,6 @@
+{
+ "군포시_41410_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_군포시_41410_osrm/(37.328933,126.915453)/config_(37.328933,126.915453).yaml",
+ "군포시_41410_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_군포시_41410_osrm/(37.339522,126.90707)/config_(37.339522,126.90707).yaml",
+ "군포시_41410_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_군포시_41410_osrm/(37.34067,126.900837)/config_(37.34067,126.900837).yaml",
+ "군포시_41410_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_군포시_41410_osrm/(37.341567,126.890792)/config_(37.341567,126.890792).yaml"
+}

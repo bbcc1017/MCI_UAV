@@ -1,0 +1,5 @@
+{
+ "양구군_51800_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_양구군_51800_osrm/(38.251528,127.939194)/config_(38.251528,127.939194).yaml",
+ "양구군_51800_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_양구군_51800_osrm/(38.238541,128.049441)/config_(38.238541,128.049441).yaml",
+ "양구군_51800_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_양구군_51800_osrm/(38.295913,127.904867)/config_(38.295913,127.904867).yaml"
+}

@@ -1,0 +1,5 @@
+{
+ "전주시 덕진구_45113_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_전주시_덕진구_45113_osrm/(35.864654,127.072013)/config_(35.864654,127.072013).yaml",
+ "전주시 덕진구_45113_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_전주시_덕진구_45113_osrm/(35.850572,127.187778)/config_(35.850572,127.187778).yaml",
+ "전주시 덕진구_45113_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_전주시_덕진구_45113_osrm/(35.889883,127.136727)/config_(35.889883,127.136727).yaml"
+}

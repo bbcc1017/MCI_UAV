@@ -1,0 +1,6 @@
+{
+ "군산시_45130_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_군산시_45130_osrm/(36.019298,126.751791)/config_(36.019298,126.751791).yaml",
+ "군산시_45130_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_군산시_45130_osrm/(35.924721,126.691347)/config_(35.924721,126.691347).yaml",
+ "군산시_45130_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_군산시_45130_osrm/(36.007625,126.835764)/config_(36.007625,126.835764).yaml",
+ "군산시_45130_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_군산시_45130_osrm/(35.945832,126.683652)/config_(35.945832,126.683652).yaml"
+}

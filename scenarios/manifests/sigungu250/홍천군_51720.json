@@ -1,0 +1,6 @@
+{
+ "홍천군_51720_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_홍천군_51720_osrm/(37.735483,127.778556)/config_(37.735483,127.778556).yaml",
+ "홍천군_51720_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_홍천군_51720_osrm/(37.613161,127.791542)/config_(37.613161,127.791542).yaml",
+ "홍천군_51720_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_홍천군_51720_osrm/(37.675352,127.68631)/config_(37.675352,127.68631).yaml",
+ "홍천군_51720_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_홍천군_51720_osrm/(37.845276,128.546481)/config_(37.845276,128.546481).yaml"
+}

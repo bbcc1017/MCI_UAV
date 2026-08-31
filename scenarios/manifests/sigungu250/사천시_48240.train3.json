@@ -1,0 +1,5 @@
+{
+ "사천시_48240_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_사천시_48240_osrm/(35.104374,127.912359)/config_(35.104374,127.912359).yaml",
+ "사천시_48240_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_사천시_48240_osrm/(34.951732,128.045549)/config_(34.951732,128.045549).yaml",
+ "사천시_48240_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_사천시_48240_osrm/(34.990469,128.140061)/config_(34.990469,128.140061).yaml"
+}

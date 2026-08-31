@@ -1,0 +1,6 @@
+{
+ "부안군_45800_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_부안군_45800_osrm/(35.601893,126.712462)/config_(35.601893,126.712462).yaml",
+ "부안군_45800_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_부안군_45800_osrm/(35.703483,126.758618)/config_(35.703483,126.758618).yaml",
+ "부안군_45800_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_부안군_45800_osrm/(35.634338,126.541902)/config_(35.634338,126.541902).yaml",
+ "부안군_45800_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_부안군_45800_osrm/(35.67313,126.60674)/config_(35.67313,126.60674).yaml"
+}

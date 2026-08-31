@@ -1,0 +1,6 @@
+{
+ "철원군_51780_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_철원군_51780_osrm/(38.238924,127.225213)/config_(38.238924,127.225213).yaml",
+ "철원군_51780_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_철원군_51780_osrm/(38.116375,127.428086)/config_(38.116375,127.428086).yaml",
+ "철원군_51780_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_철원군_51780_osrm/(38.212658,127.188078)/config_(38.212658,127.188078).yaml",
+ "철원군_51780_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_철원군_51780_osrm/(38.278613,127.531586)/config_(38.278613,127.531586).yaml"
+}

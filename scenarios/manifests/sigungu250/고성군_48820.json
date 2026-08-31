@@ -1,0 +1,6 @@
+{
+ "고성군_48820_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_고성군_48820_osrm/(35.015712,128.363435)/config_(35.015712,128.363435).yaml",
+ "고성군_48820_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_고성군_48820_osrm/(35.074537,128.34356)/config_(35.074537,128.34356).yaml",
+ "고성군_48820_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_고성군_48820_osrm/(34.961931,128.343324)/config_(34.961931,128.343324).yaml",
+ "고성군_48820_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_고성군_48820_osrm/(34.995842,128.473716)/config_(34.995842,128.473716).yaml"
+}

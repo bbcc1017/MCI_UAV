@@ -1,0 +1,6 @@
+{
+ "마포구_11440_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_마포구_11440_osrm/(37.572943,126.865975)/config_(37.572943,126.865975).yaml",
+ "마포구_11440_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_마포구_11440_osrm/(37.550239,126.943318)/config_(37.550239,126.943318).yaml",
+ "마포구_11440_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_마포구_11440_osrm/(37.571496,126.896053)/config_(37.571496,126.896053).yaml",
+ "마포구_11440_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_마포구_11440_osrm/(37.581613,126.877347)/config_(37.581613,126.877347).yaml"
+}

@@ -1,0 +1,6 @@
+{
+ "남원시_45190_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_남원시_45190_osrm/(35.461147,127.359909)/config_(35.461147,127.359909).yaml",
+ "남원시_45190_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_남원시_45190_osrm/(35.489251,127.405389)/config_(35.489251,127.405389).yaml",
+ "남원시_45190_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_남원시_45190_osrm/(35.44393,127.60296)/config_(35.44393,127.60296).yaml",
+ "남원시_45190_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_남원시_45190_osrm/(35.385962,127.52126)/config_(35.385962,127.52126).yaml"
+}

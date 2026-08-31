@@ -1,0 +1,6 @@
+{
+ "고령군_47830_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_고령군_47830_osrm/(35.778973,128.200832)/config_(35.778973,128.200832).yaml",
+ "고령군_47830_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_고령군_47830_osrm/(35.777516,128.259374)/config_(35.777516,128.259374).yaml",
+ "고령군_47830_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_고령군_47830_osrm/(35.721158,128.424445)/config_(35.721158,128.424445).yaml",
+ "고령군_47830_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_고령군_47830_osrm/(35.729202,128.338729)/config_(35.729202,128.338729).yaml"
+}

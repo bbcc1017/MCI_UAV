@@ -1,0 +1,6 @@
+{
+ "제주시_50110_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_제주시_50110_osrm/(33.493449,126.841511)/config_(33.493449,126.841511).yaml",
+ "제주시_50110_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_제주시_50110_osrm/(33.469128,126.532485)/config_(33.469128,126.532485).yaml",
+ "제주시_50110_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_제주시_50110_osrm/(33.412122,126.579154)/config_(33.412122,126.579154).yaml",
+ "제주시_50110_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_제주시_50110_osrm/(33.364512,126.504024)/config_(33.364512,126.504024).yaml"
+}

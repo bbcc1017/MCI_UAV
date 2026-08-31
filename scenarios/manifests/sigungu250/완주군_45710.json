@@ -1,0 +1,6 @@
+{
+ "완주군_45710_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_완주군_45710_osrm/(35.724239,127.096399)/config_(35.724239,127.096399).yaml",
+ "완주군_45710_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_완주군_45710_osrm/(36.110684,127.317292)/config_(36.110684,127.317292).yaml",
+ "완주군_45710_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_완주군_45710_osrm/(35.672708,127.102664)/config_(35.672708,127.102664).yaml",
+ "완주군_45710_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_완주군_45710_osrm/(36.048238,127.15655)/config_(36.048238,127.15655).yaml"
+}

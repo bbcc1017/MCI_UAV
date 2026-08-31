@@ -1,0 +1,5 @@
+{
+ "태백시_51190_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_태백시_51190_osrm/(37.249528,128.971319)/config_(37.249528,128.971319).yaml",
+ "태백시_51190_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_태백시_51190_osrm/(37.142285,129.050341)/config_(37.142285,129.050341).yaml",
+ "태백시_51190_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_태백시_51190_osrm/(37.128597,128.890316)/config_(37.128597,128.890316).yaml"
+}

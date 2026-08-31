@@ -1,0 +1,6 @@
+{
+ "거제시_48310_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_거제시_48310_osrm/(34.904727,128.681022)/config_(34.904727,128.681022).yaml",
+ "거제시_48310_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_거제시_48310_osrm/(34.879496,128.625223)/config_(34.879496,128.625223).yaml",
+ "거제시_48310_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_거제시_48310_osrm/(34.846798,128.556933)/config_(34.846798,128.556933).yaml",
+ "거제시_48310_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_거제시_48310_osrm/(34.759604,128.604996)/config_(34.759604,128.604996).yaml"
+}

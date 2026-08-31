@@ -1,0 +1,5 @@
+{
+ "성남시 중원구_41133_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_성남시_중원구_41133_osrm/(37.432287,127.136422)/config_(37.432287,127.136422).yaml",
+ "성남시 중원구_41133_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_성남시_중원구_41133_osrm/(37.414798,127.156457)/config_(37.414798,127.156457).yaml",
+ "성남시 중원구_41133_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_성남시_중원구_41133_osrm/(37.450127,127.17012)/config_(37.450127,127.17012).yaml"
+}

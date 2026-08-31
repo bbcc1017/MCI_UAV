@@ -1,0 +1,6 @@
+{
+ "평택시_41220_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_평택시_41220_osrm/(37.00838,127.145633)/config_(37.00838,127.145633).yaml",
+ "평택시_41220_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_평택시_41220_osrm/(36.951456,126.915173)/config_(36.951456,126.915173).yaml",
+ "평택시_41220_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_평택시_41220_osrm/(36.996157,126.863982)/config_(36.996157,126.863982).yaml",
+ "평택시_41220_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_평택시_41220_osrm/(36.924782,126.88619)/config_(36.924782,126.88619).yaml"
+}

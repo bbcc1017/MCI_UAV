@@ -1,0 +1,6 @@
+{
+ "강진군_46810_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_강진군_46810_osrm/(34.638098,126.851098)/config_(34.638098,126.851098).yaml",
+ "강진군_46810_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_강진군_46810_osrm/(34.741508,126.754836)/config_(34.741508,126.754836).yaml",
+ "강진군_46810_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_강진군_46810_osrm/(34.474353,126.698259)/config_(34.474353,126.698259).yaml",
+ "강진군_46810_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_강진군_46810_osrm/(34.624524,126.825239)/config_(34.624524,126.825239).yaml"
+}

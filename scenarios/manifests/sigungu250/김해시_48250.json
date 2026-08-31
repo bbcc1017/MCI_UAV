@@ -1,0 +1,6 @@
+{
+ "김해시_48250_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_김해시_48250_osrm/(35.269233,128.776153)/config_(35.269233,128.776153).yaml",
+ "김해시_48250_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_김해시_48250_osrm/(35.254324,129.000724)/config_(35.254324,129.000724).yaml",
+ "김해시_48250_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_김해시_48250_osrm/(35.205937,128.839876)/config_(35.205937,128.839876).yaml",
+ "김해시_48250_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_김해시_48250_osrm/(35.298306,128.767466)/config_(35.298306,128.767466).yaml"
+}

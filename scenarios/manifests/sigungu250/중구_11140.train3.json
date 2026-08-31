@@ -1,0 +1,5 @@
+{
+ "중구_11140_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_중구_11140_osrm/(37.565007,127.006071)/config_(37.565007,127.006071).yaml",
+ "중구_11140_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_중구_11140_osrm/(37.567647,126.992829)/config_(37.567647,126.992829).yaml",
+ "중구_11140_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_중구_11140_osrm/(37.564933,126.974959)/config_(37.564933,126.974959).yaml"
+}

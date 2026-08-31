@@ -1,0 +1,6 @@
+{
+ "서귀포시_50130_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_서귀포시_50130_osrm/(33.346573,126.646354)/config_(33.346573,126.646354).yaml",
+ "서귀포시_50130_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_서귀포시_50130_osrm/(33.274574,126.202456)/config_(33.274574,126.202456).yaml",
+ "서귀포시_50130_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_서귀포시_50130_osrm/(33.300497,126.559968)/config_(33.300497,126.559968).yaml",
+ "서귀포시_50130_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_서귀포시_50130_osrm/(33.308218,126.390527)/config_(33.308218,126.390527).yaml"
+}

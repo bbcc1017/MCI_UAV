@@ -1,0 +1,6 @@
+{
+ "성주군_47840_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_성주군_47840_osrm/(35.842826,128.169681)/config_(35.842826,128.169681).yaml",
+ "성주군_47840_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_성주군_47840_osrm/(35.936005,128.108364)/config_(35.936005,128.108364).yaml",
+ "성주군_47840_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_성주군_47840_osrm/(35.832777,128.132617)/config_(35.832777,128.132617).yaml",
+ "성주군_47840_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_성주군_47840_osrm/(35.892836,128.312251)/config_(35.892836,128.312251).yaml"
+}

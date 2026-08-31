@@ -62,14 +62,14 @@ def rollout(factory, policy, seed: int):
 
 
 def worker(job):
-    region, cfg, model_dir, n_eps, seed0 = job
+    region, cfg, model_dir, n_eps, seed0, policy_name, obs_variant = job
     try:
         import torch as th
 
         th.set_num_threads(1)
         os.environ.update(
             MCI_CAP_GATE="occ",
-            MCI_OBS_VARIANT="essential+load+valid",
+            MCI_OBS_VARIANT=obs_variant,
             MCI_H_PAD="47",
             MCI_REWARD_MODE="woG",
         )
@@ -91,7 +91,7 @@ def worker(job):
                 reward, pdr, sim_time, n_dec, ms = rollout(factory, policy, seed)
                 rows.append({
                     "region": region,
-                    "policy": "PPO_POINTER_V10",
+                    "policy": policy_name,
                     "info_level": "PPO",
                     "complexity": "-",
                     "episode": ep,
@@ -118,6 +118,10 @@ def main() -> None:
     p.add_argument("--n_eps", type=int, default=30)
     p.add_argument("--seed0", type=int, default=0)
     p.add_argument("--workers", type=int, default=48)
+    p.add_argument("--obs_variant", default="essential+load+valid",
+                   help="학습 때와 반드시 일치. v18 raw 인코딩 모델은 essential+load+valid+raw")
+    p.add_argument("--policy_name", default="PPO_POINTER_V10",
+                   help="CSV policy 열 이름. 여러 시드/아키텍처를 한 표로 모을 때 지정")
     p.add_argument("--out", required=True)
     args = p.parse_args()
 
@@ -127,7 +131,7 @@ def main() -> None:
         if len(manifest) != 250 or any(k.endswith(("_p0", "_p1", "_p2", "_p3")) for k in manifest):
             raise ValueError("대표점250 manifest 구조 오류")
     keys = [k for k in args.regions.split(",") if k in manifest] if args.regions else list(manifest)
-    cases = ["PPO_POINTER_V10"]
+    cases = [args.policy_name]
     model_dir = str(Path(args.model_dir).resolve())
 
     out = Path(args.out).resolve()
@@ -137,6 +141,10 @@ def main() -> None:
         existing = {}
         with open(out, encoding="utf-8") as f:
             for row in csv.DictReader(f):
+                # ⚠️ 정책 인지 필터. 없으면 같은 --out 에 다른 모델을 이어 쓸 때
+                #    앞 모델 행이 "완료"로 잡혀 뒤 모델이 통째로 skip 된다(v18 에서 실측).
+                if row["policy"] != args.policy_name:
+                    continue
                 existing.setdefault(row["region"], set()).add(
                     (row["policy"], int(row["episode"]), int(row["seed"]))
                 )
@@ -146,7 +154,8 @@ def main() -> None:
         if incomplete:
             raise RuntimeError(f"부분 기록 지역 발견(수동 정리 필요): {sorted(incomplete)[:3]}")
     jobs = [
-        (key, manifest[key], model_dir, args.n_eps, args.seed0)
+        (key, manifest[key], model_dir, args.n_eps, args.seed0, args.policy_name,
+         args.obs_variant)
         for key in keys if key not in done_regions
     ]
     print(

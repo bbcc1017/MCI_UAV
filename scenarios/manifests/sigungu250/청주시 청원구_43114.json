@@ -1,0 +1,6 @@
+{
+ "청주시 청원구_43114_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_청주시_청원구_43114_osrm/(36.725914,127.519707)/config_(36.725914,127.519707).yaml",
+ "청주시 청원구_43114_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_청주시_청원구_43114_osrm/(36.741538,127.41958)/config_(36.741538,127.41958).yaml",
+ "청주시 청원구_43114_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_청주시_청원구_43114_osrm/(36.769703,127.460796)/config_(36.769703,127.460796).yaml",
+ "청주시 청원구_43114_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_청주시_청원구_43114_osrm/(36.694395,127.486914)/config_(36.694395,127.486914).yaml"
+}

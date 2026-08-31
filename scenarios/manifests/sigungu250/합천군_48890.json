@@ -1,0 +1,6 @@
+{
+ "합천군_48890_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_합천군_48890_osrm/(35.770626,128.051418)/config_(35.770626,128.051418).yaml",
+ "합천군_48890_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_합천군_48890_osrm/(35.383364,128.122063)/config_(35.383364,128.122063).yaml",
+ "합천군_48890_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_합천군_48890_osrm/(35.630223,128.135722)/config_(35.630223,128.135722).yaml",
+ "합천군_48890_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_합천군_48890_osrm/(35.570146,128.280125)/config_(35.570146,128.280125).yaml"
+}

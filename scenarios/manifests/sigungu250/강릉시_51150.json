@@ -1,0 +1,6 @@
+{
+ "강릉시_51150_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_강릉시_51150_osrm/(37.716389,128.842408)/config_(37.716389,128.842408).yaml",
+ "강릉시_51150_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_강릉시_51150_osrm/(37.7128,128.773296)/config_(37.7128,128.773296).yaml",
+ "강릉시_51150_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_강릉시_51150_osrm/(37.628699,129.039263)/config_(37.628699,129.039263).yaml",
+ "강릉시_51150_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_강릉시_51150_osrm/(37.621858,129.049833)/config_(37.621858,129.049833).yaml"
+}

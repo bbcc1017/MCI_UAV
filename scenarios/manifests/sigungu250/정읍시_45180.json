@@ -1,0 +1,6 @@
+{
+ "정읍시_45180_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_정읍시_45180_osrm/(35.713851,126.877925)/config_(35.713851,126.877925).yaml",
+ "정읍시_45180_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_정읍시_45180_osrm/(35.600331,127.066229)/config_(35.600331,127.066229).yaml",
+ "정읍시_45180_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_정읍시_45180_osrm/(35.61436,126.969545)/config_(35.61436,126.969545).yaml",
+ "정읍시_45180_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_정읍시_45180_osrm/(35.486466,126.931823)/config_(35.486466,126.931823).yaml"
+}

@@ -1,0 +1,6 @@
+{
+ "진도군_46900_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_진도군_46900_osrm/(34.413935,126.304271)/config_(34.413935,126.304271).yaml",
+ "진도군_46900_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_진도군_46900_osrm/(34.489797,126.216783)/config_(34.489797,126.216783).yaml",
+ "진도군_46900_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_진도군_46900_osrm/(34.517425,126.224362)/config_(34.517425,126.224362).yaml",
+ "진도군_46900_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_진도군_46900_osrm/(34.269867,125.985371)/config_(34.269867,125.985371).yaml"
+}

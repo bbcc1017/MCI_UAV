@@ -1,0 +1,6 @@
+{
+ "장수군_45740_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_장수군_45740_osrm/(35.658318,127.615591)/config_(35.658318,127.615591).yaml",
+ "장수군_45740_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_장수군_45740_osrm/(35.707824,127.4965)/config_(35.707824,127.4965).yaml",
+ "장수군_45740_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_장수군_45740_osrm/(35.710875,127.53307)/config_(35.710875,127.53307).yaml",
+ "장수군_45740_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_장수군_45740_osrm/(35.711197,127.521101)/config_(35.711197,127.521101).yaml"
+}

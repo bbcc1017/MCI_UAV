@@ -1,0 +1,6 @@
+{
+ "종로구_11110_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_종로구_11110_osrm/(37.570332,126.986942)/config_(37.570332,126.986942).yaml",
+ "종로구_11110_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_종로구_11110_osrm/(37.579109,127.008583)/config_(37.579109,127.008583).yaml",
+ "종로구_11110_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_종로구_11110_osrm/(37.6091,126.957112)/config_(37.6091,126.957112).yaml",
+ "종로구_11110_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_종로구_11110_osrm/(37.575686,126.963033)/config_(37.575686,126.963033).yaml"
+}

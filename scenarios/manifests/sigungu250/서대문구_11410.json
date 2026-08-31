@@ -1,0 +1,6 @@
+{
+ "서대문구_11410_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_서대문구_11410_osrm/(37.572535,126.917039)/config_(37.572535,126.917039).yaml",
+ "서대문구_11410_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_서대문구_11410_osrm/(37.579178,126.929222)/config_(37.579178,126.929222).yaml",
+ "서대문구_11410_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_서대문구_11410_osrm/(37.5614,126.959531)/config_(37.5614,126.959531).yaml",
+ "서대문구_11410_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_서대문구_11410_osrm/(37.583666,126.950156)/config_(37.583666,126.950156).yaml"
+}

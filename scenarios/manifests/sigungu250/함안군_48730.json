@@ -1,0 +1,6 @@
+{
+ "함안군_48730_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_함안군_48730_osrm/(35.322705,128.309963)/config_(35.322705,128.309963).yaml",
+ "함안군_48730_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_함안군_48730_osrm/(35.359489,128.487811)/config_(35.359489,128.487811).yaml",
+ "함안군_48730_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_함안군_48730_osrm/(35.282369,128.434338)/config_(35.282369,128.434338).yaml",
+ "함안군_48730_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_함안군_48730_osrm/(35.252721,128.413975)/config_(35.252721,128.413975).yaml"
+}

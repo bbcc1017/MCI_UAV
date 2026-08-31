@@ -1,0 +1,6 @@
+{
+ "강남구_11680_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_강남구_11680_osrm/(37.498971,127.055379)/config_(37.498971,127.055379).yaml",
+ "강남구_11680_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_강남구_11680_osrm/(37.503305,127.026853)/config_(37.503305,127.026853).yaml",
+ "강남구_11680_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_강남구_11680_osrm/(37.513968,127.045171)/config_(37.513968,127.045171).yaml",
+ "강남구_11680_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_강남구_11680_osrm/(37.525935,127.035931)/config_(37.525935,127.035931).yaml"
+}

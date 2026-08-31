@@ -1,0 +1,6 @@
+{
+ "중랑구_11260_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_중랑구_11260_osrm/(37.583152,127.076835)/config_(37.583152,127.076835).yaml",
+ "중랑구_11260_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_중랑구_11260_osrm/(37.60649,127.09046)/config_(37.60649,127.09046).yaml",
+ "중랑구_11260_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_중랑구_11260_osrm/(37.61297,127.094608)/config_(37.61297,127.094608).yaml",
+ "중랑구_11260_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_중랑구_11260_osrm/(37.609133,127.081672)/config_(37.609133,127.081672).yaml"
+}

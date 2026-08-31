@@ -1,0 +1,5 @@
+{
+ "안양시 동안구_41173_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_안양시_동안구_41173_osrm/(37.3944,126.952131)/config_(37.3944,126.952131).yaml",
+ "안양시 동안구_41173_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_안양시_동안구_41173_osrm/(37.420824,126.961334)/config_(37.420824,126.961334).yaml",
+ "안양시 동안구_41173_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_안양시_동안구_41173_osrm/(37.412057,126.972448)/config_(37.412057,126.972448).yaml"
+}

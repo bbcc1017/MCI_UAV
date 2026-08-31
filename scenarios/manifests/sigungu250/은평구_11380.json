@@ -1,0 +1,6 @@
+{
+ "은평구_11380_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_은평구_11380_osrm/(37.615247,126.931013)/config_(37.615247,126.931013).yaml",
+ "은평구_11380_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_은평구_11380_osrm/(37.601532,126.908044)/config_(37.601532,126.908044).yaml",
+ "은평구_11380_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_은평구_11380_osrm/(37.594007,126.911584)/config_(37.594007,126.911584).yaml",
+ "은평구_11380_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_은평구_11380_osrm/(37.643508,126.919668)/config_(37.643508,126.919668).yaml"
+}

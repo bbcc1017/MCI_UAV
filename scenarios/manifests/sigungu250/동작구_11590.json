@@ -1,0 +1,6 @@
+{
+ "동작구_11590_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_동작구_11590_osrm/(37.496252,126.941778)/config_(37.496252,126.941778).yaml",
+ "동작구_11590_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_동작구_11590_osrm/(37.50906,126.96735)/config_(37.50906,126.96735).yaml",
+ "동작구_11590_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_동작구_11590_osrm/(37.495519,126.947684)/config_(37.495519,126.947684).yaml",
+ "동작구_11590_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_동작구_11590_osrm/(37.506523,126.958358)/config_(37.506523,126.958358).yaml"
+}

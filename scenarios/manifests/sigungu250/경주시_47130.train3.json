@@ -1,0 +1,5 @@
+{
+ "경주시_47130_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_경주시_47130_osrm/(35.786559,129.256096)/config_(35.786559,129.256096).yaml",
+ "경주시_47130_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_경주시_47130_osrm/(35.816802,129.298491)/config_(35.816802,129.298491).yaml",
+ "경주시_47130_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_경주시_47130_osrm/(36.046981,129.151433)/config_(36.046981,129.151433).yaml"
+}

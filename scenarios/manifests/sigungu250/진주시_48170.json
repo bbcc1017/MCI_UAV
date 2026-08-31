@@ -1,0 +1,6 @@
+{
+ "진주시_48170_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_진주시_48170_osrm/(35.214909,128.121369)/config_(35.214909,128.121369).yaml",
+ "진주시_48170_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_진주시_48170_osrm/(35.206094,128.135624)/config_(35.206094,128.135624).yaml",
+ "진주시_48170_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_진주시_48170_osrm/(35.159043,128.168592)/config_(35.159043,128.168592).yaml",
+ "진주시_48170_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_진주시_48170_osrm/(35.258469,128.067052)/config_(35.258469,128.067052).yaml"
+}

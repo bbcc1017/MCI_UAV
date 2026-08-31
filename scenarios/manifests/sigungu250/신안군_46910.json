@@ -1,0 +1,6 @@
+{
+ "신안군_46910_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_신안군_46910_osrm/(35.059715,126.08176)/config_(35.059715,126.08176).yaml",
+ "신안군_46910_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_신안군_46910_osrm/(34.885571,126.065476)/config_(34.885571,126.065476).yaml",
+ "신안군_46910_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_신안군_46910_osrm/(34.873917,126.040308)/config_(34.873917,126.040308).yaml",
+ "신안군_46910_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_신안군_46910_osrm/(35.097954,126.078102)/config_(35.097954,126.078102).yaml"
+}

@@ -1,0 +1,6 @@
+{
+ "전주시 완산구_45111_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_전주시_완산구_45111_osrm/(35.785544,127.164966)/config_(35.785544,127.164966).yaml",
+ "전주시 완산구_45111_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_전주시_완산구_45111_osrm/(35.814409,127.13537)/config_(35.814409,127.13537).yaml",
+ "전주시 완산구_45111_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_전주시_완산구_45111_osrm/(35.76531,127.11134)/config_(35.76531,127.11134).yaml",
+ "전주시 완산구_45111_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_전주시_완산구_45111_osrm/(35.744476,127.089243)/config_(35.744476,127.089243).yaml"
+}

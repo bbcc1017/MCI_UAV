@@ -1,0 +1,6 @@
+{
+ "서산시_44210_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_서산시_44210_osrm/(36.71835,126.557688)/config_(36.71835,126.557688).yaml",
+ "서산시_44210_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_서산시_44210_osrm/(36.987367,126.36986)/config_(36.987367,126.36986).yaml",
+ "서산시_44210_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_서산시_44210_osrm/(36.886931,126.407704)/config_(36.886931,126.407704).yaml",
+ "서산시_44210_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_서산시_44210_osrm/(36.946505,126.383516)/config_(36.946505,126.383516).yaml"
+}

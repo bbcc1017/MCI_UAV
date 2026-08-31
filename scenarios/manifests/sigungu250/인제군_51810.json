@@ -1,0 +1,6 @@
+{
+ "인제군_51810_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_인제군_51810_osrm/(38.243539,128.160907)/config_(38.243539,128.160907).yaml",
+ "인제군_51810_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_인제군_51810_osrm/(38.161344,128.220426)/config_(38.161344,128.220426).yaml",
+ "인제군_51810_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_인제군_51810_osrm/(38.06916,128.30639)/config_(38.06916,128.30639).yaml",
+ "인제군_51810_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_인제군_51810_osrm/(37.880156,128.394043)/config_(37.880156,128.394043).yaml"
+}

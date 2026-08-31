@@ -1,0 +1,5 @@
+{
+ "성남시 분당구_41135_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_성남시_분당구_41135_osrm/(37.356133,127.102887)/config_(37.356133,127.102887).yaml",
+ "성남시 분당구_41135_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_성남시_분당구_41135_osrm/(37.379893,127.119659)/config_(37.379893,127.119659).yaml",
+ "성남시 분당구_41135_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_성남시_분당구_41135_osrm/(37.390873,127.042882)/config_(37.390873,127.042882).yaml"
+}

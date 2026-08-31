@@ -1,0 +1,6 @@
+{
+ "울주군_31710_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_울주군_31710_osrm/(35.416499,129.219572)/config_(35.416499,129.219572).yaml",
+ "울주군_31710_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_울주군_31710_osrm/(35.352224,129.291581)/config_(35.352224,129.291581).yaml",
+ "울주군_31710_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_울주군_31710_osrm/(35.356455,129.355934)/config_(35.356455,129.355934).yaml",
+ "울주군_31710_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_울주군_31710_osrm/(35.588756,129.049415)/config_(35.588756,129.049415).yaml"
+}

@@ -1,0 +1,6 @@
+{
+ "안동시_47170_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_안동시_47170_osrm/(36.547237,128.925312)/config_(36.547237,128.925312).yaml",
+ "안동시_47170_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_안동시_47170_osrm/(36.691234,128.765104)/config_(36.691234,128.765104).yaml",
+ "안동시_47170_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_안동시_47170_osrm/(36.562629,128.613165)/config_(36.562629,128.613165).yaml",
+ "안동시_47170_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_안동시_47170_osrm/(36.507859,128.813078)/config_(36.507859,128.813078).yaml"
+}

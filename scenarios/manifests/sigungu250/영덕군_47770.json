@@ -1,0 +1,6 @@
+{
+ "영덕군_47770_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_영덕군_47770_osrm/(36.4394,129.393368)/config_(36.4394,129.393368).yaml",
+ "영덕군_47770_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_영덕군_47770_osrm/(36.53696,129.3677)/config_(36.53696,129.3677).yaml",
+ "영덕군_47770_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_영덕군_47770_osrm/(36.400572,129.246417)/config_(36.400572,129.246417).yaml",
+ "영덕군_47770_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_영덕군_47770_osrm/(36.673189,129.270142)/config_(36.673189,129.270142).yaml"
+}

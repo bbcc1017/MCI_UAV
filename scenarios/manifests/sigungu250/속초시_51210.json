@@ -1,0 +1,6 @@
+{
+ "속초시_51210_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_속초시_51210_osrm/(38.172611,128.543951)/config_(38.172611,128.543951).yaml",
+ "속초시_51210_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_속초시_51210_osrm/(38.184995,128.535549)/config_(38.184995,128.535549).yaml",
+ "속초시_51210_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_속초시_51210_osrm/(38.18954,128.498715)/config_(38.18954,128.498715).yaml",
+ "속초시_51210_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_속초시_51210_osrm/(38.183007,128.433007)/config_(38.183007,128.433007).yaml"
+}

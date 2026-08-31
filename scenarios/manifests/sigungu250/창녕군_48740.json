@@ -1,0 +1,6 @@
+{
+ "창녕군_48740_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_창녕군_48740_osrm/(35.626465,128.504949)/config_(35.626465,128.504949).yaml",
+ "창녕군_48740_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_창녕군_48740_osrm/(35.456659,128.536116)/config_(35.456659,128.536116).yaml",
+ "창녕군_48740_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_창녕군_48740_osrm/(35.469137,128.477613)/config_(35.469137,128.477613).yaml",
+ "창녕군_48740_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_창녕군_48740_osrm/(35.557495,128.405913)/config_(35.557495,128.405913).yaml"
+}

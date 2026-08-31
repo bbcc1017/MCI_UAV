@@ -1,0 +1,6 @@
+{
+ "울릉군_47940_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_울릉군_47940_osrm/(37.49362,130.812758)/config_(37.49362,130.812758).yaml",
+ "울릉군_47940_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_울릉군_47940_osrm/(37.525726,130.841943)/config_(37.525726,130.841943).yaml",
+ "울릉군_47940_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_울릉군_47940_osrm/(37.510827,130.874535)/config_(37.510827,130.874535).yaml",
+ "울릉군_47940_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_울릉군_47940_osrm/(37.519568,130.857167)/config_(37.519568,130.857167).yaml"
+}

@@ -1,0 +1,6 @@
+{
+ "양주시_41630_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_양주시_41630_osrm/(37.748318,126.979602)/config_(37.748318,126.979602).yaml",
+ "양주시_41630_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_양주시_41630_osrm/(37.853021,127.032875)/config_(37.853021,127.032875).yaml",
+ "양주시_41630_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_양주시_41630_osrm/(37.827557,126.940954)/config_(37.827557,126.940954).yaml",
+ "양주시_41630_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_양주시_41630_osrm/(37.786581,127.042022)/config_(37.786581,127.042022).yaml"
+}

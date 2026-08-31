@@ -1,0 +1,6 @@
+{
+ "수원시 장안구_41111_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_수원시_장안구_41111_osrm/(37.295223,126.992565)/config_(37.295223,126.992565).yaml",
+ "수원시 장안구_41111_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_수원시_장안구_41111_osrm/(37.325554,126.969408)/config_(37.325554,126.969408).yaml",
+ "수원시 장안구_41111_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_수원시_장안구_41111_osrm/(37.294337,126.973859)/config_(37.294337,126.973859).yaml",
+ "수원시 장안구_41111_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_수원시_장안구_41111_osrm/(37.302084,126.974519)/config_(37.302084,126.974519).yaml"
+}

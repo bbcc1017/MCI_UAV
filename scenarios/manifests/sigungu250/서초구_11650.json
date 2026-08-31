@@ -1,0 +1,6 @@
+{
+ "서초구_11650_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_서초구_11650_osrm/(37.433452,127.07104)/config_(37.433452,127.07104).yaml",
+ "서초구_11650_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_서초구_11650_osrm/(37.436154,127.063911)/config_(37.436154,127.063911).yaml",
+ "서초구_11650_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_서초구_11650_osrm/(37.500323,126.9913)/config_(37.500323,126.9913).yaml",
+ "서초구_11650_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_서초구_11650_osrm/(37.461569,127.010219)/config_(37.461569,127.010219).yaml"
+}

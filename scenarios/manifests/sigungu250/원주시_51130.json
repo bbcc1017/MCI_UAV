@@ -1,0 +1,6 @@
+{
+ "원주시_51130_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_원주시_51130_osrm/(37.29032,127.851595)/config_(37.29032,127.851595).yaml",
+ "원주시_51130_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_원주시_51130_osrm/(37.234068,127.830917)/config_(37.234068,127.830917).yaml",
+ "원주시_51130_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_원주시_51130_osrm/(37.389978,127.981011)/config_(37.389978,127.981011).yaml",
+ "원주시_51130_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_원주시_51130_osrm/(37.230293,127.911304)/config_(37.230293,127.911304).yaml"
+}

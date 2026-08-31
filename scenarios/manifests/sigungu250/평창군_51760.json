@@ -1,0 +1,6 @@
+{
+ "평창군_51760_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_평창군_51760_osrm/(37.531583,128.536742)/config_(37.531583,128.536742).yaml",
+ "평창군_51760_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_평창군_51760_osrm/(37.701389,128.514563)/config_(37.701389,128.514563).yaml",
+ "평창군_51760_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_평창군_51760_osrm/(37.783589,128.55472)/config_(37.783589,128.55472).yaml",
+ "평창군_51760_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_평창군_51760_osrm/(37.646517,128.31262)/config_(37.646517,128.31262).yaml"
+}

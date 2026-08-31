@@ -1,0 +1,6 @@
+{
+ "동두천시_41250_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_동두천시_41250_osrm/(37.901672,127.08105)/config_(37.901672,127.08105).yaml",
+ "동두천시_41250_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_동두천시_41250_osrm/(37.947674,127.095458)/config_(37.947674,127.095458).yaml",
+ "동두천시_41250_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_동두천시_41250_osrm/(37.943557,127.062786)/config_(37.943557,127.062786).yaml",
+ "동두천시_41250_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_동두천시_41250_osrm/(37.955795,127.033468)/config_(37.955795,127.033468).yaml"
+}

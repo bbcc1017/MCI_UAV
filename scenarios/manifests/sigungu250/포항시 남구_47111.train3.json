@@ -1,0 +1,5 @@
+{
+ "포항시 남구_47111_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_포항시_남구_47111_osrm/(35.944849,129.450398)/config_(35.944849,129.450398).yaml",
+ "포항시 남구_47111_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_포항시_남구_47111_osrm/(35.945632,129.353393)/config_(35.945632,129.353393).yaml",
+ "포항시 남구_47111_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_포항시_남구_47111_osrm/(36.037103,129.528556)/config_(36.037103,129.528556).yaml"
+}

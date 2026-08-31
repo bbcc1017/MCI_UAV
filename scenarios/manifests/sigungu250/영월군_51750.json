@@ -1,0 +1,6 @@
+{
+ "영월군_51750_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_영월군_51750_osrm/(37.176054,128.617675)/config_(37.176054,128.617675).yaml",
+ "영월군_51750_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_영월군_51750_osrm/(37.251088,128.490912)/config_(37.251088,128.490912).yaml",
+ "영월군_51750_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_영월군_51750_osrm/(37.309447,128.159305)/config_(37.309447,128.159305).yaml",
+ "영월군_51750_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_영월군_51750_osrm/(37.116785,128.773188)/config_(37.116785,128.773188).yaml"
+}

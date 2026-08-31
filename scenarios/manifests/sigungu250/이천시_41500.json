@@ -1,0 +1,6 @@
+{
+ "이천시_41500_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_이천시_41500_osrm/(37.082791,127.53782)/config_(37.082791,127.53782).yaml",
+ "이천시_41500_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_이천시_41500_osrm/(37.063092,127.547286)/config_(37.063092,127.547286).yaml",
+ "이천시_41500_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_이천시_41500_osrm/(37.260449,127.402153)/config_(37.260449,127.402153).yaml",
+ "이천시_41500_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_이천시_41500_osrm/(37.320882,127.503425)/config_(37.320882,127.503425).yaml"
+}

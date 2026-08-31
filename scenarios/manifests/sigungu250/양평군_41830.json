@@ -1,0 +1,6 @@
+{
+ "양평군_41830_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_양평군_41830_osrm/(37.440763,127.668612)/config_(37.440763,127.668612).yaml",
+ "양평군_41830_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_양평군_41830_osrm/(37.432464,127.627259)/config_(37.432464,127.627259).yaml",
+ "양평군_41830_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_양평군_41830_osrm/(37.537746,127.507349)/config_(37.537746,127.507349).yaml",
+ "양평군_41830_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_양평군_41830_osrm/(37.431296,127.797457)/config_(37.431296,127.797457).yaml"
+}

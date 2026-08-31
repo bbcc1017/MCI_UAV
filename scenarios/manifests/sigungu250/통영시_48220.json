@@ -1,0 +1,6 @@
+{
+ "통영시_48220_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_통영시_48220_osrm/(34.880774,128.4511)/config_(34.880774,128.4511).yaml",
+ "통영시_48220_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_통영시_48220_osrm/(34.96165,128.427378)/config_(34.96165,128.427378).yaml",
+ "통영시_48220_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_통영시_48220_osrm/(34.81605,128.423706)/config_(34.81605,128.423706).yaml",
+ "통영시_48220_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_통영시_48220_osrm/(34.887069,128.339507)/config_(34.887069,128.339507).yaml"
+}

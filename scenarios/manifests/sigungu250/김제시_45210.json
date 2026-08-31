@@ -1,0 +1,6 @@
+{
+ "김제시_45210_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_김제시_45210_osrm/(35.753813,126.903007)/config_(35.753813,126.903007).yaml",
+ "김제시_45210_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_김제시_45210_osrm/(35.720288,126.830534)/config_(35.720288,126.830534).yaml",
+ "김제시_45210_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_김제시_45210_osrm/(35.852597,126.831074)/config_(35.852597,126.831074).yaml",
+ "김제시_45210_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_김제시_45210_osrm/(35.891282,126.948919)/config_(35.891282,126.948919).yaml"
+}

@@ -443,7 +443,12 @@ def report_silent(Xd, yd, gd, mask):
 
 
 # ------------------------------------------------------------- 현장 규칙집 정책
-FIELD_CARD_DEFAULT = {"lam_km_per_patient": 6.0, "red_uav_km": 12.0, "yellow_hold": 14.0}
+# 두 파라미터 집합을 명시적으로 분리한다. 혼동이 v17 발표자료의 카드 오기를 낳았다.
+#   BEHAVIOUR = 교사 행동을 가장 잘 재현하는 추정치 (조건부 로짓 / BA 컷 / 등급 트리)
+#   ADOPTED   = dev40 폐루프 PDR argmin. 실제로 평가·배포된 구성.
+# 둘은 다르다 — 특히 yellow_hold 는 14(행동) vs 0(성능)로 갈린다.
+FIELD_CARD_BEHAVIOUR = {"lam_km_per_patient": 6.4, "red_uav_km": 11.75, "yellow_hold": 14.0}
+FIELD_CARD_ADOPTED = {"lam_km_per_patient": 12.0, "red_uav_km": 12.0, "yellow_hold": 0.0}
 
 
 def make_field_card_policy(lam_km_per_patient: float = 6.0,
@@ -452,6 +457,11 @@ def make_field_card_policy(lam_km_per_patient: float = 6.0,
                            h_pad: int = H_PAD,
                            dist_mode: str = "raw"):
     """교사 결정 1,000좌표 37,000건에서 통계적으로 도출한 3단 현장 규칙집.
+
+    ⚠️ **이 함수의 기본 인자는 채택값이 아니라 행동추정치에 가깝다.** 폐루프에서 평가·보고된
+    구성은 ``FIELD_CARD_ADOPTED`` = (lam 12.0, red_uav_km 12.0, **yellow_hold 0.0**) 이다.
+    특히 ``yellow_hold`` 는 행동추정 14 와 dev40 성능최적 0 이 갈린다(등급 규칙은 폐루프
+    성능에 기여하지 않는다 — 항상 Yellow 우선이 최적). 기본값에 의존하지 말고 명시할 것.
 
     1단 등급 : Yellow 현장대기가 `yellow_hold` 명 이하이고 UAV 가 현장에 있으면 Red,
                그 밖에는 Yellow. (등급자유 구간 재현율 0.842)

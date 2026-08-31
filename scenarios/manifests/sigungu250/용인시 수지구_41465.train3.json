@@ -1,0 +1,5 @@
+{
+ "용인시 수지구_41465_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_용인시_수지구_41465_osrm/(37.331337,127.088569)/config_(37.331337,127.088569).yaml",
+ "용인시 수지구_41465_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_용인시_수지구_41465_osrm/(37.356296,127.017666)/config_(37.356296,127.017666).yaml",
+ "용인시 수지구_41465_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_용인시_수지구_41465_osrm/(37.345577,127.03743)/config_(37.345577,127.03743).yaml"
+}

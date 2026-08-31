@@ -1,0 +1,6 @@
+{
+ "구로구_11530_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_구로구_11530_osrm/(37.490351,126.822251)/config_(37.490351,126.822251).yaml",
+ "구로구_11530_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_구로구_11530_osrm/(37.489932,126.825087)/config_(37.489932,126.825087).yaml",
+ "구로구_11530_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_구로구_11530_osrm/(37.501599,126.863118)/config_(37.501599,126.863118).yaml",
+ "구로구_11530_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_구로구_11530_osrm/(37.492565,126.840641)/config_(37.492565,126.840641).yaml"
+}

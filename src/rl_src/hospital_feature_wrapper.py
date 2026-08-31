@@ -156,9 +156,22 @@ class HospitalFeatureWrapper(gym.Wrapper):
             eta_uav = d_euc * 60.0 / (float(uavp.get('uav_v', 80)) or 80.0)
         # 시나리오 최소 ETA 로 정규화(>0 기준, 최근접=1) → 지역간 스케일 제거.
         # + 외곽 병원 이상치 클립(최근접의 MCI_ETA_CLIP 배, 기본 10) → VecNorm std 왜곡 방지.
-        eta_clip = float(os.environ.get("MCI_ETA_CLIP", "10.0"))
-        self._eta_amb = np.minimum(self._norm_by_min(eta_amb), eta_clip).astype(np.float32)
-        self._eta_uav = np.minimum(self._norm_by_min(eta_uav), eta_clip).astype(np.float32)
+        #
+        # ★ raw 토큰(v18 E6): 좌표별 정규화를 끄고 **전역 상수**로만 나눈다.
+        #   v17 진단 — 좌표별 정규화가 거리의 절대 크기를 지워 전국 단일 정책이
+        #   "환자 1명 = N km" 교환율을 표현할 수 없다(손실의 92%). 전역 상수 나눗셈은
+        #   좌표 간 상대 스케일을 보존하므로 VecNormalize 의 러닝 통계가 전국 공통 축이 된다.
+        #   열 구성·차원은 그대로라 아키텍처·dim 은 불변이고 인코딩만 바뀐다.
+        raw_eta = "raw" in _parse_variant()
+        if raw_eta:
+            eta_clip = float(os.environ.get("MCI_ETA_RAW_CLIP", "10.0"))
+            div = float(os.environ.get("MCI_ETA_RAW_NORM", "60.0"))   # 분 → 시간 스케일
+            self._eta_amb = np.minimum(eta_amb / div, eta_clip).astype(np.float32)
+            self._eta_uav = np.minimum(eta_uav / div, eta_clip).astype(np.float32)
+        else:
+            eta_clip = float(os.environ.get("MCI_ETA_CLIP", "10.0"))
+            self._eta_amb = np.minimum(self._norm_by_min(eta_amb), eta_clip).astype(np.float32)
+            self._eta_uav = np.minimum(self._norm_by_min(eta_uav), eta_clip).astype(np.float32)
         # (v6) 정적 특징 패딩: 패딩 병원 = "무한 원거리 무용 병원"(tier3/용량 0, eta=클립상한
         # — eta=0 은 "초근접" 오독이라 금지). _helipad 는 이미 H_pad 사이즈 zeros 로 생성됨.
         if self.H > self._H_real:
@@ -239,6 +252,16 @@ class HospitalFeatureWrapper(gym.Wrapper):
                                  "variant 문자열만으로 env 재현(H_pad=실H 여도 명시 설정 요구)")
             self._cols = self._cols + ["valid"]
             var_label = "essential+load+valid"
+        # (v18 E6) raw 토큰: 열 구성·차원 불변, eta 인코딩만 물리단위(분/MCI_ETA_RAW_NORM)로.
+        self._raw_eta = raw_eta
+        if self._raw_eta:
+            if not self._load:
+                raise ValueError(f"raw 토큰은 essential+load 기반만 지원 "
+                                 f"(got MCI_OBS_VARIANT={toks})")
+            if self._ctx:
+                raise ValueError(f"raw 토큰은 ctx 와 동시 사용 불가 "
+                                 f"(got MCI_OBS_VARIANT={toks})")
+            var_label = var_label + "+raw"
         self._F = len(self._cols)
         # load 스케일 노브(전 신규열 사전 유계 → VecNorm 러닝 std 유의미)
         self._ps_clip = float(os.environ.get("MCI_PSENT_CLIP", "32"))

@@ -1,0 +1,6 @@
+{
+ "해운대구_26350_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_해운대구_26350_osrm/(35.221143,129.125658)/config_(35.221143,129.125658).yaml",
+ "해운대구_26350_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_해운대구_26350_osrm/(35.214098,129.142048)/config_(35.214098,129.142048).yaml",
+ "해운대구_26350_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_해운대구_26350_osrm/(35.239093,129.150985)/config_(35.239093,129.150985).yaml",
+ "해운대구_26350_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_해운대구_26350_osrm/(35.204775,129.131114)/config_(35.204775,129.131114).yaml"
+}

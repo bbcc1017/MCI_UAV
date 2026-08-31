@@ -1,0 +1,6 @@
+{
+ "구리시_41310_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_구리시_41310_osrm/(37.601557,127.143535)/config_(37.601557,127.143535).yaml",
+ "구리시_41310_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_구리시_41310_osrm/(37.576526,127.106983)/config_(37.576526,127.106983).yaml",
+ "구리시_41310_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_구리시_41310_osrm/(37.597505,127.139291)/config_(37.597505,127.139291).yaml",
+ "구리시_41310_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_구리시_41310_osrm/(37.63561,127.136859)/config_(37.63561,127.136859).yaml"
+}

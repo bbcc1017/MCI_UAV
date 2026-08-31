@@ -1,0 +1,6 @@
+{
+ "예천군_47900_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_예천군_47900_osrm/(36.650691,128.528735)/config_(36.650691,128.528735).yaml",
+ "예천군_47900_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_예천군_47900_osrm/(36.740607,128.540603)/config_(36.740607,128.540603).yaml",
+ "예천군_47900_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_예천군_47900_osrm/(36.716456,128.367024)/config_(36.716456,128.367024).yaml",
+ "예천군_47900_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_예천군_47900_osrm/(36.715418,128.381022)/config_(36.715418,128.381022).yaml"
+}

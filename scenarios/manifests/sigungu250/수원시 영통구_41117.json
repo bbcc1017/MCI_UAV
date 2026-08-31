@@ -1,0 +1,6 @@
+{
+ "수원시 영통구_41117_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_수원시_영통구_41117_osrm/(37.289536,127.082961)/config_(37.289536,127.082961).yaml",
+ "수원시 영통구_41117_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_수원시_영통구_41117_osrm/(37.308955,127.042667)/config_(37.308955,127.042667).yaml",
+ "수원시 영통구_41117_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_수원시_영통구_41117_osrm/(37.273916,127.062421)/config_(37.273916,127.062421).yaml",
+ "수원시 영통구_41117_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_수원시_영통구_41117_osrm/(37.306807,127.03575)/config_(37.306807,127.03575).yaml"
+}

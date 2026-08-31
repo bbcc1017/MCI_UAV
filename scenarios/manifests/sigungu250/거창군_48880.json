@@ -1,0 +1,6 @@
+{
+ "거창군_48880_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_거창군_48880_osrm/(35.622142,127.902099)/config_(35.622142,127.902099).yaml",
+ "거창군_48880_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_거창군_48880_osrm/(35.584165,127.950904)/config_(35.584165,127.950904).yaml",
+ "거창군_48880_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_거창군_48880_osrm/(35.69611,128.005053)/config_(35.69611,128.005053).yaml",
+ "거창군_48880_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_거창군_48880_osrm/(35.711476,127.827604)/config_(35.711476,127.827604).yaml"
+}

@@ -1,0 +1,5 @@
+{
+ "고양시 일산동구_41285_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_고양시_일산동구_41285_osrm/(37.699308,126.790546)/config_(37.699308,126.790546).yaml",
+ "고양시 일산동구_41285_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_고양시_일산동구_41285_osrm/(37.716406,126.781525)/config_(37.716406,126.781525).yaml",
+ "고양시 일산동구_41285_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_고양시_일산동구_41285_osrm/(37.676247,126.821247)/config_(37.676247,126.821247).yaml"
+}

@@ -1,0 +1,5 @@
+{
+ "청주시 상당구_43111_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_청주시_상당구_43111_osrm/(36.581435,127.585396)/config_(36.581435,127.585396).yaml",
+ "청주시 상당구_43111_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_청주시_상당구_43111_osrm/(36.612568,127.506144)/config_(36.612568,127.506144).yaml",
+ "청주시 상당구_43111_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_청주시_상당구_43111_osrm/(36.659225,127.691683)/config_(36.659225,127.691683).yaml"
+}

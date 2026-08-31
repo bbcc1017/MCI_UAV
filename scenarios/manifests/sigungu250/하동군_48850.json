@@ -1,0 +1,6 @@
+{
+ "하동군_48850_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_하동군_48850_osrm/(35.233124,127.65898)/config_(35.233124,127.65898).yaml",
+ "하동군_48850_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_하동군_48850_osrm/(35.169747,127.737519)/config_(35.169747,127.737519).yaml",
+ "하동군_48850_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_하동군_48850_osrm/(35.059433,127.777901)/config_(35.059433,127.777901).yaml",
+ "하동군_48850_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_하동군_48850_osrm/(35.168207,127.697436)/config_(35.168207,127.697436).yaml"
+}

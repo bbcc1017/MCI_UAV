@@ -1,0 +1,5 @@
+{
+ "창원시 진해구_48129_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_창원시_진해구_48129_osrm/(35.158375,128.718499)/config_(35.158375,128.718499).yaml",
+ "창원시 진해구_48129_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_창원시_진해구_48129_osrm/(35.156707,128.636492)/config_(35.156707,128.636492).yaml",
+ "창원시 진해구_48129_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_창원시_진해구_48129_osrm/(35.118796,128.819381)/config_(35.118796,128.819381).yaml"
+}

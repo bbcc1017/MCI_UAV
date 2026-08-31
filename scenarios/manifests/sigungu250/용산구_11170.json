@@ -1,0 +1,6 @@
+{
+ "용산구_11170_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_용산구_11170_osrm/(37.552193,126.983871)/config_(37.552193,126.983871).yaml",
+ "용산구_11170_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_용산구_11170_osrm/(37.526834,126.966786)/config_(37.526834,126.966786).yaml",
+ "용산구_11170_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_용산구_11170_osrm/(37.537848,126.989309)/config_(37.537848,126.989309).yaml",
+ "용산구_11170_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_용산구_11170_osrm/(37.529982,126.977818)/config_(37.529982,126.977818).yaml"
+}

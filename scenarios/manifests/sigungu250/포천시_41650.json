@@ -1,0 +1,6 @@
+{
+ "포천시_41650_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_포천시_41650_osrm/(37.953076,127.225883)/config_(37.953076,127.225883).yaml",
+ "포천시_41650_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_포천시_41650_osrm/(37.815042,127.133395)/config_(37.815042,127.133395).yaml",
+ "포천시_41650_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_포천시_41650_osrm/(38.07935,127.419502)/config_(38.07935,127.419502).yaml",
+ "포천시_41650_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_포천시_41650_osrm/(37.986785,127.341957)/config_(37.986785,127.341957).yaml"
+}

@@ -1,0 +1,6 @@
+{
+ "군위군_27720_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_군위군_27720_osrm/(36.132113,128.555639)/config_(36.132113,128.555639).yaml",
+ "군위군_27720_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_군위군_27720_osrm/(36.159081,128.737152)/config_(36.159081,128.737152).yaml",
+ "군위군_27720_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_군위군_27720_osrm/(36.212943,128.824343)/config_(36.212943,128.824343).yaml",
+ "군위군_27720_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_군위군_27720_osrm/(36.03482,128.681906)/config_(36.03482,128.681906).yaml"
+}

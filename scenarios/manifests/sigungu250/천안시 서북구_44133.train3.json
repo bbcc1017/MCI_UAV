@@ -1,0 +1,5 @@
+{
+ "천안시 서북구_44133_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_천안시_서북구_44133_osrm/(36.941985,127.173473)/config_(36.941985,127.173473).yaml",
+ "천안시 서북구_44133_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_천안시_서북구_44133_osrm/(36.889096,127.258739)/config_(36.889096,127.258739).yaml",
+ "천안시 서북구_44133_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_천안시_서북구_44133_osrm/(36.900932,127.12849)/config_(36.900932,127.12849).yaml"
+}

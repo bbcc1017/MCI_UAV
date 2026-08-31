@@ -1,0 +1,6 @@
+{
+ "남구_29155_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_남구_29155_osrm/(35.146686,126.904842)/config_(35.146686,126.904842).yaml",
+ "남구_29155_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_남구_29155_osrm/(35.136581,126.90639)/config_(35.136581,126.90639).yaml",
+ "남구_29155_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_남구_29155_osrm/(35.090451,126.801098)/config_(35.090451,126.801098).yaml",
+ "남구_29155_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_남구_29155_osrm/(35.062535,126.773802)/config_(35.062535,126.773802).yaml"
+}

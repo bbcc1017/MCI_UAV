@@ -1,0 +1,6 @@
+{
+ "임실군_45750_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_임실군_45750_osrm/(35.601865,127.336334)/config_(35.601865,127.336334).yaml",
+ "임실군_45750_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_임실군_45750_osrm/(35.524119,127.288334)/config_(35.524119,127.288334).yaml",
+ "임실군_45750_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_임실군_45750_osrm/(35.600252,127.136007)/config_(35.600252,127.136007).yaml",
+ "임실군_45750_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_임실군_45750_osrm/(35.561672,127.256481)/config_(35.561672,127.256481).yaml"
+}

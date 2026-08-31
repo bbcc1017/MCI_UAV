@@ -1,0 +1,6 @@
+{
+ "태안군_44825_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_태안군_44825_osrm/(36.592553,126.201132)/config_(36.592553,126.201132).yaml",
+ "태안군_44825_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_태안군_44825_osrm/(36.471679,126.36865)/config_(36.471679,126.36865).yaml",
+ "태안군_44825_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_태안군_44825_osrm/(36.839762,126.193902)/config_(36.839762,126.193902).yaml",
+ "태안군_44825_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_태안군_44825_osrm/(36.683004,126.189058)/config_(36.683004,126.189058).yaml"
+}

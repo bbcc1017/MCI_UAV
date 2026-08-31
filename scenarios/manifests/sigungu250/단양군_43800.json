@@ -1,0 +1,6 @@
+{
+ "단양군_43800_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_단양군_43800_osrm/(37.077351,128.312777)/config_(37.077351,128.312777).yaml",
+ "단양군_43800_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_단양군_43800_osrm/(36.889892,128.369424)/config_(36.889892,128.369424).yaml",
+ "단양군_43800_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_단양군_43800_osrm/(36.857396,128.383416)/config_(36.857396,128.383416).yaml",
+ "단양군_43800_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_단양군_43800_osrm/(37.015233,128.477758)/config_(37.015233,128.477758).yaml"
+}

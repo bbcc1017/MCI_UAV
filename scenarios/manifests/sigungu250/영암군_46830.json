@@ -1,0 +1,6 @@
+{
+ "영암군_46830_p1": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_영암군_46830_osrm/(34.713369,126.513969)/config_(34.713369,126.513969).yaml",
+ "영암군_46830_p0": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_영암군_46830_osrm/(34.756511,126.427634)/config_(34.756511,126.427634).yaml",
+ "영암군_46830_p3": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_영암군_46830_osrm/(34.760422,126.565572)/config_(34.760422,126.565572).yaml",
+ "영암군_46830_p2": "/home/ryu/MCI_UAV/scenarios/exp_eval_holdout/osrm_영암군_46830_osrm/(34.816108,126.546738)/config_(34.816108,126.546738).yaml"
+}
