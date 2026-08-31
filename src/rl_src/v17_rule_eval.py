@@ -67,13 +67,13 @@ def rollout(factory, policy, seed: int):
     return reward, pdr, float(info.get("time", np.nan)), n_dec, policy_sec * 1000 / max(n_dec, 1)
 
 
-def build_rule_policies(specs):
+def build_rule_policies(specs, region: str | None = None):
     """(이름, 정책fn) 목록. 규칙 이름은 sim_src.RuleManager 의 정본 문자열."""
     from distill_policy import make_heuristic_policy
     from lb3_policy import make_agnostic_lb_policy
     from loadbalance_heuristic import make_cap_policy
     from fit_v10_heuristic_rules import all_rule_names
-    from v17_field_rules import make_field_card_policy
+    from v17_field_rules import make_field_card_policy, make_field_card_policy_local
 
     out = []
     for spec in specs:
@@ -82,6 +82,20 @@ def build_rule_policies(specs):
                 out.append((f"HEUR64|{rule}", make_heuristic_policy(rule)))
             continue
         name, body = spec.split("=", 1)
+        if body.startswith("cardloc:"):
+            # cardloc:<params.json>[,dist_mode[,load_term]] — 지역별 파라미터표 조회
+            toks = body[len("cardloc:"):].split(",")
+            with open(toks[0], encoding="utf-8") as fh:
+                params = json.load(fh)
+            dm = toks[1] if len(toks) > 1 else "raw"
+            lt = toks[2] if len(toks) > 2 else "load"
+            if region is None:
+                # main() 의 이름 수집 단계 — 정책 자체는 워커에서 지역과 함께 만든다
+                out.append((name, None))
+            else:
+                out.append((name, make_field_card_policy_local(
+                    params, region, dist_mode=dm, load_term=lt)))
+            continue
         if body.startswith("card:"):
             # card:lam,red_km,yhold[,dist_mode[,load_term]]
             # 4·5번째 토큰 미지정 시 기본값 = 구 동작 비트동일.
@@ -115,7 +129,7 @@ def worker(job):
 
         rows = []
         with _suppress_stdout():
-            policies = build_rule_policies(specs)
+            policies = build_rule_policies(specs, region=region)
             factory = make_feature_env(cfg, None)
             for ep in range(n_eps):
                 seed = seed0 + ep

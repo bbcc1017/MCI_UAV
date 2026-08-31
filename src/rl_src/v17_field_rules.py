@@ -607,6 +607,44 @@ def make_field_card_policy(lam_km_per_patient: float = 6.0,
     return fn
 
 
+def sigcd_of(region_key: str) -> str:
+    """매니페스트 지역키 → 시군구 법정코드 5자리.
+
+    대표점250 은 ``종로구_11110``, train1000 은 ``종로구_11110_p0`` 라 접미가 다르다.
+    두 형태 모두에서 같은 코드를 뽑아야 지역별 파라미터표가 학습·평가 양쪽에 붙는다.
+    """
+    parts = str(region_key).split("_")
+    for tok in reversed(parts):
+        if tok.isdigit() and len(tok) == 5:
+            return tok
+    raise ValueError(f"시군구 코드를 못 찾음: {region_key}")
+
+
+def make_field_card_policy_local(params: dict, region_key: str, h_pad: int = H_PAD,
+                                 dist_mode: str = "raw", load_term: str = "load"):
+    """지역별 파라미터를 쓰는 CARD (v18 E4).
+
+    ``params`` 는 ``{"_default": {...}, "<sigcd>": {...}}`` 형태이고 각 값은
+    ``{"lam":..., "red_km":..., "yhold":...}`` 이다. 지역이 표에 없으면 ``_default`` 로
+    떨어진다 — leave-province-out 이나 미보유 지역에서 조용히 실패하지 않게 하기 위함이다.
+
+    ⚠️ 전국 단일 파라미터를 쓰는 기존 경로(`make_field_card_policy`)는 그대로 두었다.
+    이 함수는 지역 인자를 받는 별도 진입점이라 구 경로 동작에 영향이 없다.
+    """
+    d = dict(params.get("_default") or {})
+    try:
+        d.update(params.get(sigcd_of(region_key)) or {})
+    except ValueError:
+        pass
+    if not d:
+        raise ValueError(f"{region_key}: 파라미터도 _default 도 없다")
+    fn = make_field_card_policy(float(d["lam"]), float(d["red_km"]), float(d["yhold"]),
+                                h_pad=h_pad, dist_mode=dist_mode, load_term=load_term)
+    fn.policy_name = (f"FIELD_CARD_LOCAL[{dist_mode}/{load_term}] {region_key} "
+                      f"lam={d['lam']:g} red_km={d['red_km']:g} yhold={d['yhold']:g}")
+    return fn
+
+
 # =========================================================== mine (v18 E1)
 # v17 의 임계값 3개는 서로 다른 절차로 나왔고 그중 둘은 생성 코드가 커밋되지 않았다.
 # 방법론 절로 승격하려면 절차가 재현 가능해야 하므로 흩어진 조각을 여기로 모은다.
