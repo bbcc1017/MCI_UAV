@@ -77,13 +77,13 @@ def build(args) -> None:
     idx = json.load(open(args.index, encoding="utf-8"))
     bins, edges = terrain_bins(idx, args.n_bins)
     sw["bin"] = sw.sigcd.map(bins)
-    sido = {sigcd_of(r): v["stratum"] and idx["regions"][r].get("sido") for r, v in idx["regions"].items()}
-    # _index.json 에 sido 가 없으면 매니페스트 points 에서 받아온다
-    if any(v is None for v in sido.values()):
-        pts = json.load(open(REPO / "scenarios/manifests/sigungu_osrm_train1000_random4_points.json",
-                             encoding="utf-8"))
-        sido = {sigcd_of(k): v["sido"] for k, v in pts.items()}
+    # 시도는 좌표 원장에만 있다(_index.json 은 지형 특징만 담는다)
+    pts = json.load(open(REPO / "scenarios/manifests/sigungu_osrm_train1000_random4_points.json",
+                         encoding="utf-8"))
+    sido = {sigcd_of(k): v["sido"] for k, v in pts.items()}
     sw["sido"] = sw.sigcd.map(sido)
+    if sw.sido.isna().any():
+        raise ValueError(f"시도 미매핑 {sorted(sw.sigcd[sw.sido.isna()].unique())[:3]}")
 
     out = {"generated": "v18_localize_report.build", "sweep": str(Path(args.sweep).resolve()),
            "n_sigcd": int(sw.sigcd.nunique()), "n_arms": int(len(sw.groupby(["lam", "red"]))),
