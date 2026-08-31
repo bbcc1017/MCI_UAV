@@ -83,10 +83,13 @@ def build_rule_policies(specs):
             continue
         name, body = spec.split("=", 1)
         if body.startswith("card:"):
+            # card:lam,red_km,yhold[,dist_mode[,load_term]]
+            # 4·5번째 토큰 미지정 시 기본값 = 구 동작 비트동일.
             toks = body[5:].split(",")
             lam, rkm, yh = (float(x) for x in toks[:3])
             dm = toks[3] if len(toks) > 3 else "raw"
-            out.append((name, make_field_card_policy(lam, rkm, yh, dist_mode=dm)))
+            lt = toks[4] if len(toks) > 4 else "load"
+            out.append((name, make_field_card_policy(lam, rkm, yh, dist_mode=dm, load_term=lt)))
             continue
         if body == "agn":
             out.append((name, make_agnostic_lb_policy(T=3)))

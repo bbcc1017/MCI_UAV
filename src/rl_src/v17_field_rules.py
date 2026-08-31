@@ -291,13 +291,30 @@ def table_main(args) -> None:
 # ------------------------------------------------------- 조건부 로짓 (목적지)
 LOGIT_FEATURES = ["d_km", "p_sent", "in_flight", "occ_ratio", "is_tier3"]
 
+# ★ CARD 함수형과 정합한 2특징 집합 (v18 E1).
+#   CARD 는 `거리 + λ × (occ + in_flight)` 인데 위 5특징 적합은 부하를 p_sent/in_flight/
+#   occ_ratio 로 쪼개 넣어 함수형이 어긋난다. λ 를 산출할 때는 반드시 이쪽을 쓴다.
+LOGIT_FEATURES_CARD = ["d_km", "load"]
 
-def _logit_design(args):
+_FEAT_FN = {
+    "d_km":       lambda dist, hh, xs, tier: dist[hh],
+    "p_sent":     lambda dist, hh, xs, tier: xs[_COL["cand_p_sent"]],
+    "in_flight":  lambda dist, hh, xs, tier: xs[_COL["cand_in_flight"]],
+    "occ":        lambda dist, hh, xs, tier: xs[_COL["cand_occ"]],
+    "occ_ratio":  lambda dist, hh, xs, tier: xs[_COL["cand_occ_ratio"]],
+    "cap_remain": lambda dist, hh, xs, tier: xs[_COL["cand_cap_remain"]],
+    "load":       lambda dist, hh, xs, tier: xs[_COL["cand_occ"]] + xs[_COL["cand_in_flight"]],
+    "is_tier3":   lambda dist, hh, xs, tier: float(tier[hh] == 3),
+}
+
+
+def _logit_design(args, features=None):
     """교사의 (등급, 수단) 을 고정한 뒤 목적지 선택만 남긴 후보 단위 설계행렬.
 
     이렇게 조건화하면 tier3·헬기장·용량 마스크가 이미 반영된 선택집합 안에서의
     '어느 병원' 결정만 남으므로, 계수비가 곧 물리 단위 교환율이 된다.
     """
+    feats = list(features or LOGIT_FEATURES)
     st = np.load(args.static, allow_pickle=False)
     skeys = {str(k): i for i, k in enumerate(st["keys"])}
     z = np.load(args.decisions, allow_pickle=False)
@@ -319,11 +336,10 @@ def _logit_design(args):
                for (c, dd, m) in [dec[int(act)]] if c == tc and m == tm and dd > 0]
         if len(sel) < 2:
             continue
-        blk = np.empty((len(sel), len(LOGIT_FEATURES)))
+        blk = np.empty((len(sel), len(feats)))
         yy = np.zeros(len(sel), dtype=np.int8)
         for i, (j, hh) in enumerate(sel):
-            blk[i] = (dist[hh], Xs[j, _COL["cand_p_sent"]], Xs[j, _COL["cand_in_flight"]],
-                      Xs[j, _COL["cand_occ_ratio"]], float(tier[hh] == 3))
+            blk[i] = [_FEAT_FN[f](dist, hh, Xs[j], tier) for f in feats]
             if hh == td - 1:
                 yy[i] = 1
         if yy.sum() != 1:
@@ -331,7 +347,8 @@ def _logit_design(args):
         rows.append(blk)
         ys.append(yy)
         grp.append(len(sel))
-        meta.append((str(keys[s_]).rsplit("_", 2)[-2], tc, tm))
+        meta.append((str(keys[s_]).rsplit("_", 2)[-2], tc, tm,
+                     str(keys[s_]).rsplit("_", 1)[-1]))
     Xd = np.vstack(rows)
     yd = np.concatenate(ys)
     gd = np.asarray(grp, int)
@@ -451,11 +468,40 @@ FIELD_CARD_BEHAVIOUR = {"lam_km_per_patient": 6.4, "red_uav_km": 11.75, "yellow_
 FIELD_CARD_ADOPTED = {"lam_km_per_patient": 12.0, "red_uav_km": 12.0, "yellow_hold": 0.0}
 
 
+# 부하항 후보 (v18 E3 변수선택 어블레이션).
+#   "load" 가 CARD 채택값 = 입원 census + 이송 중. 나머지는 "RL 이 고른 변수가 맞는가"를
+#   묻는 대조군이다 — 특히 p_sent 는 LB-T3 계열이 쓰는 축이고, in_flight 단독은 병원
+#   실시간 연계 없이 현장에서 셀 수 있는(I1) 신호다.
+LOAD_TERMS = ("load", "p_sent", "in_flight", "occ", "occ_ratio", "cap_deficit", "zero")
+
+
+def _load_vector(ctx, term: str, base):
+    o = np.asarray(ctx["occ"], float)
+    f = np.asarray(ctx["in_flight"], float)
+    if term == "load":
+        return o + f
+    if term == "occ":
+        return o
+    if term == "in_flight":
+        return f
+    if term == "p_sent":
+        return np.asarray(ctx["p_sent"], float)
+    if term == "occ_ratio":                # build_ctx 는 비율을 주지 않는다 → 여기서 계산
+        ms = np.maximum(np.asarray(base["max_send"], float), 1.0)
+        return (o + f) / ms
+    if term == "cap_deficit":          # 남은 여력이 적을수록 벌점 (여력의 음수)
+        return -np.asarray(ctx["cap_remain"], float)
+    if term == "zero":
+        return np.zeros_like(o)
+    raise ValueError(f"미지 load_term: {term}")
+
+
 def make_field_card_policy(lam_km_per_patient: float = 6.0,
                            red_uav_km: float = 12.0,
                            yellow_hold: float = 14.0,
                            h_pad: int = H_PAD,
-                           dist_mode: str = "raw"):
+                           dist_mode: str = "raw",
+                           load_term: str = "load"):
     """교사 결정 1,000좌표 37,000건에서 통계적으로 도출한 3단 현장 규칙집.
 
     ⚠️ **이 함수의 기본 인자는 채택값이 아니라 행동추정치에 가깝다.** 폐루프에서 평가·보고된
@@ -479,6 +525,8 @@ def make_field_card_policy(lam_km_per_patient: float = 6.0,
     """
     if dist_mode not in ("raw", "norm", "normclip"):
         raise ValueError(dist_mode)
+    if load_term not in LOAD_TERMS:
+        raise ValueError(f"load_term 은 {LOAD_TERMS} 중 하나 (got {load_term})")
     from aggregate_obs import AggregateObsWrapper
     from loadbalance_heuristic import _codec_from_mask
     from score_features import build_ctx, compute_static
@@ -511,7 +559,7 @@ def make_field_card_policy(lam_km_per_patient: float = 6.0,
         dobs = u.en_manager.get_full_obs()
         dobs["time"] = u.ev_manager.time
         ctx = build_ctx(u, static=st["base"], dobs=dobs)
-        load = np.asarray(ctx["occ"], float) + np.asarray(ctx["in_flight"], float)
+        load = _load_vector(ctx, load_term, st["base"])
         pa = AggregateObsWrapper._patient_agg(np.asarray(dobs["p_states"]))[:10]
         red_wait, yellow_wait = float(pa[1]), float(pa[6])
 
@@ -554,9 +602,226 @@ def make_field_card_policy(lam_km_per_patient: float = 6.0,
         best = cand[int(np.argmin(score))]
         return int(encode(c, int(best) + 1, m))
 
-    fn.policy_name = (f"FIELD_CARD[{dist_mode}] lam={lam_km_per_patient:g} "
+    fn.policy_name = (f"FIELD_CARD[{dist_mode}/{load_term}] lam={lam_km_per_patient:g} "
                       f"red_km={red_uav_km:g} yhold={yellow_hold:g}")
     return fn
+
+
+# =========================================================== mine (v18 E1)
+# v17 의 임계값 3개는 서로 다른 절차로 나왔고 그중 둘은 생성 코드가 커밋되지 않았다.
+# 방법론 절로 승격하려면 절차가 재현 가능해야 하므로 흩어진 조각을 여기로 모은다.
+#   lambda : (거리, 부하) 2특징 조건부 로짓  — CARD 함수형과 정합 (5특징 적합은 어긋난다)
+#   redkm  : 자유선택 Red 부분집합의 균형정확도 컷 스윕
+#   yhold  : 자유선택 등급 부분집합의 균형정확도 컷 스윕
+# 부트스트랩은 **정식** 클러스터 부트스트랩이다. v17 구현은 복원추출 후 np.unique 로
+# 중복을 지워 사실상 63% 서브샘플 반복이었다(CI 폭 왜곡).
+
+def cluster_boot_index(groups, rng, idx_of=None):
+    """클러스터 복원추출 → 행 인덱스. 중복 클러스터는 **중복 그대로** 포함한다."""
+    codes = np.unique(groups)
+    if idx_of is None:
+        idx_of = {k: np.flatnonzero(groups == k) for k in codes}
+    pick = rng.choice(codes, size=len(codes), replace=True)
+    return np.concatenate([idx_of[k] for k in pick]), idx_of
+
+
+def ba_cut(x, y, ge_is_positive=True):
+    """균형정확도 최대 임계. 반환 (cut, ba, n_pos, n_neg).
+
+    ge_is_positive=True  : x >= cut 을 양성(1)으로 예측  — Red 의 UAV 전환(먼 곳일수록 UAV)
+    ge_is_positive=False : x <= cut 을 양성(1)으로 예측  — 등급(Yellow 가 적을수록 Red)
+    """
+    x = np.asarray(x, float); y = np.asarray(y, int)
+    P, N = int(y.sum()), int(len(y) - y.sum())
+    if P == 0 or N == 0:
+        return float("nan"), float("nan"), P, N
+    best = (float("nan"), -1.0)
+    for c in np.unique(x):
+        pr = (x >= c) if ge_is_positive else (x <= c)
+        ba = 0.5 * ((pr & (y == 1)).sum() / P + ((~pr) & (y == 0)).sum() / N)
+        if ba > best[1]:
+            best = (float(c), float(ba))
+    return best[0], best[1], P, N
+
+
+def _read_table(path):
+    import pandas as pd
+    d = pd.read_csv(path, encoding="utf-8-sig")
+    d["sigcd"] = d["sigcd"].astype(str)
+    return d
+
+
+def _lambda_fit(Xd, yd, gd, feats):
+    """계수비 = 부하 1명이 몇 km 에 해당하는가."""
+    beta, _, _ = _cond_logit(Xd, yd, gd)
+    bd = beta[feats.index("d_km")]
+    if abs(bd) < 1e-12:
+        return float("nan"), beta
+    return float(beta[feats.index("load")] / bd), beta
+
+
+def _topk_acc(Xd, yd, gd, beta):
+    o = np.concatenate([[0], np.cumsum(gd)])
+    v = Xd @ beta
+    hit = sum(int(yd[int(o[k]):int(o[k + 1])][int(np.argmax(v[int(o[k]):int(o[k + 1])]))] == 1)
+              for k in range(len(gd)))
+    return hit / len(gd), float(np.mean(1.0 / gd))
+
+
+def mine_main(args) -> None:
+    t0 = time.time()
+    res = {"date": time.strftime("%Y-%m-%d"), "what": args.what,
+           "decisions": getattr(args, "decisions", None), "table": getattr(args, "table", None),
+           "min_n": args.min_n, "bootstrap": args.bootstrap}
+    rng = np.random.default_rng(args.seed)
+
+    # ---------------------------------------------------------------- lambda
+    if args.what in ("lambda", "stability"):
+        feats = LOGIT_FEATURES_CARD
+        Xd, yd, gd, meta = _logit_design(args, features=feats)
+        sig = np.asarray([m[0] for m in meta])
+        cls = np.asarray([m[1] for m in meta])
+        pnt = np.asarray([m[3] for m in meta])
+        print(f"[mine.lambda] 선택집합 {len(gd)} · 후보행 {len(Xd)} · 특징 {feats} "
+              f"({time.time()-t0:.0f}s)", flush=True)
+
+        def fit(mask):
+            rm = np.repeat(mask, gd)
+            return _lambda_fit(Xd[rm], yd[rm], gd[mask], feats)
+
+        lam_all, beta_all = fit(np.ones(len(gd), bool))
+        acc, chance = _topk_acc(Xd, yd, gd, beta_all)
+        lam = {"all": lam_all, "beta": [float(b) for b in beta_all],
+               "top1_acc": acc, "chance": chance, "n_choice_sets": int(len(gd))}
+        for lab, mask in (("p0p1", np.isin(pnt, ["p0", "p1"])),
+                          ("p2p3", np.isin(pnt, ["p2", "p3"])),
+                          ("Red", cls == 0), ("Yellow", cls == 1)):
+            if mask.sum() >= args.min_n:
+                lam[lab] = fit(mask)[0]
+        if args.bootstrap:
+            idx_of, vals = None, []
+            off = np.concatenate([[0], np.cumsum(gd)])
+            for _ in range(args.bootstrap):
+                sel, idx_of = cluster_boot_index(sig, rng, idx_of)
+                # 정식 클러스터 부트: 중복 선택된 클러스터의 행을 **중복 그대로** 넣는다
+                rm = np.concatenate([np.arange(off[i], off[i + 1]) for i in sel])
+                try:
+                    v, _ = _lambda_fit(Xd[rm], yd[rm], gd[sel], feats)
+                    if np.isfinite(v):
+                        vals.append(v)
+                except Exception:
+                    pass
+            if vals:
+                lam["cluster_boot95"] = [float(np.percentile(vals, 2.5)),
+                                         float(np.percentile(vals, 97.5))]
+                lam["cluster_boot_n"] = len(vals)
+        # 지역별
+        by = {}
+        for code in np.unique(sig):
+            m = sig == code
+            if m.sum() >= args.min_n:
+                v = fit(m)[0]
+                if np.isfinite(v):
+                    by[str(code)] = float(v)
+        if by:
+            vv = np.array(list(by.values()))
+            lam["by_district"] = {"n": len(by), "median": float(np.median(vv)),
+                                  "q25": float(np.percentile(vv, 25)),
+                                  "q75": float(np.percentile(vv, 75)),
+                                  "values": by if args.dump_groups else None}
+        res["lambda"] = lam
+        print(f"  λ 전체 {lam_all:.4f} km/명 · top-1 {acc:.4f}(우연 {chance:.4f})"
+              + (f" · 부트 95% [{lam['cluster_boot95'][0]:.2f}, {lam['cluster_boot95'][1]:.2f}]"
+                 if "cluster_boot95" in lam else "")
+              + (f" · 시군구 {lam['by_district']['n']}곳 중위 {lam['by_district']['median']:.2f}"
+                 if "by_district" in lam else ""), flush=True)
+
+    # ------------------------------------------------------------ redkm/yhold
+    if args.what in ("redkm", "yhold", "stability"):
+        d = _read_table(args.table)
+
+    if args.what in ("redkm", "stability"):
+        f2 = d[(d.free_mode == 1) & (d.cls == 0)]
+        x, y = np.asarray(f2.near_R_amb_km, float), np.asarray(f2["mode"], int)
+        cut, ba, P, N = ba_cut(x, y, ge_is_positive=True)
+        rk = {"n": int(len(f2)), "n_uav": P, "n_amb": N, "cut_km": cut, "ba": ba}
+        # 좌표군 교차검증
+        rk["split"] = []
+        for fitp, tstp in (("p0p1", "p2p3"), ("p2p3", "p0p1")):
+            grp = {"p0p1": ["p0", "p1"], "p2p3": ["p2", "p3"]}
+            fm = f2.point.isin(grp[fitp])
+            tm = f2.point.isin(grp[tstp])
+            if fm.sum() < args.min_n or tm.sum() < args.min_n:
+                continue
+            c, b, _, _ = ba_cut(x[fm.to_numpy()], y[fm.to_numpy()], True)
+            xt, yt = x[tm.to_numpy()], y[tm.to_numpy()]
+            pr = xt >= c
+            Pt, Nt = int(yt.sum()), int(len(yt) - yt.sum())
+            bt = 0.5 * ((pr & (yt == 1)).sum() / max(Pt, 1) + ((~pr) & (yt == 0)).sum() / max(Nt, 1))
+            rk["split"].append({"fit": fitp, "cut_km": c, "ba_fit": b,
+                                "test": tstp, "n_test": int(tm.sum()), "ba_test": float(bt)})
+        # 클러스터 부트
+        if args.bootstrap:
+            sg = np.asarray(f2.sigcd)
+            idx_of, vals = None, []
+            for _ in range(args.bootstrap):
+                sel, idx_of = cluster_boot_index(sg, rng, idx_of)
+                c, b, P2, N2 = ba_cut(x[sel], y[sel], True)
+                if np.isfinite(c):
+                    vals.append(c)
+            if vals:
+                rk["cluster_boot95"] = [float(np.percentile(vals, 2.5)),
+                                        float(np.percentile(vals, 97.5))]
+        # 지역별
+        cuts = {}
+        for sgc, gg in f2.groupby("sigcd"):
+            if len(gg) >= args.min_n and gg["mode"].nunique() == 2:
+                c, b, _, _ = ba_cut(gg.near_R_amb_km, gg["mode"], True)
+                if np.isfinite(c):
+                    cuts[str(sgc)] = float(c)
+        if cuts:
+            cv = np.array(list(cuts.values()))
+            rk["by_district"] = {"n": len(cuts), "median": float(np.median(cv)),
+                                 "q25": float(np.percentile(cv, 25)),
+                                 "q75": float(np.percentile(cv, 75)),
+                                 "q10": float(np.percentile(cv, 10)),
+                                 "q90": float(np.percentile(cv, 90)),
+                                 "values": cuts if args.dump_groups else None}
+        res["red_km"] = rk
+        print(f"  red_km 전역 {cut:.2f} km (BA {ba:.4f}, 자유선택 {len(f2)}건)"
+              + (f" · 시군구 {rk['by_district']['n']}곳 중위 {rk['by_district']['median']:.2f}"
+                 if "by_district" in rk else ""), flush=True)
+
+    if args.what in ("yhold", "stability"):
+        fc = d[d.free_class == 1]
+        x, y = np.asarray(fc.yellow_at_site, float), (np.asarray(fc.cls, int) == 0).astype(int)
+        cut, ba, P, N = ba_cut(x, y, ge_is_positive=False)     # Yellow 적을수록 Red
+        yh = {"n": int(len(fc)), "n_red": P, "n_yellow": N, "cut": cut, "ba": ba,
+              "acc_at_cut": float(((x <= cut).astype(int) == y).mean()),
+              "acc_always_yellow": float((y == 0).mean())}
+        # 카드 규칙(등급 임계 ∧ UAV 현장대기) 재현율
+        pred = ((x <= cut) & (np.asarray(fc.uav_available, float) > 0)).astype(int)
+        yh["acc_with_uav_gate"] = float((pred == y).mean())
+        cuts = {}
+        for sgc, gg in fc.groupby("sigcd"):
+            if len(gg) >= args.min_n and gg.cls.nunique() == 2:
+                c, b, _, _ = ba_cut(gg.yellow_at_site, (gg.cls == 0).astype(int), False)
+                if np.isfinite(c):
+                    cuts[str(sgc)] = float(c)
+        if cuts:
+            cv = np.array(list(cuts.values()))
+            yh["by_district"] = {"n": len(cuts), "median": float(np.median(cv)),
+                                 "q25": float(np.percentile(cv, 25)),
+                                 "q75": float(np.percentile(cv, 75)),
+                                 "values": cuts if args.dump_groups else None}
+        res["yhold"] = yh
+        print(f"  yhold 전역 {cut:.0f}명 (BA {ba:.4f}) · 재현율 {yh['acc_at_cut']:.4f} "
+              f"(항상 Yellow {yh['acc_always_yellow']:.4f}, UAV 게이트 결합 "
+              f"{yh['acc_with_uav_gate']:.4f}) · 등급자유 {len(fc)}건", flush=True)
+
+    res["wall_min"] = round((time.time() - t0) / 60, 2)
+    Path(args.out).write_text(json.dumps(res, ensure_ascii=False, indent=1), encoding="utf-8")
+    print(f"[mine] 저장 {args.out}  wall={res['wall_min']}분", flush=True)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -578,12 +843,25 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--decisions", default=str(DECISIONS))
     g.add_argument("--bootstrap", type=int, default=0)
     g.add_argument("--out", required=True)
+
+    # ---- mine (v18 E1): 임계값 도출 절차를 코드로 고정 ----
+    m = sub.add_parser("mine", help="임계값 추정(λ 조건부로짓 · red_km/yhold BA 컷 · 안정성)")
+    m.add_argument("what", choices=["lambda", "redkm", "yhold", "stability"])
+    m.add_argument("--static", default=str(REPO / "results/scoreboard/v17/fieldrules/static_train1000.npz"))
+    m.add_argument("--decisions", default=str(DECISIONS))
+    m.add_argument("--table", default=str(REPO / "results/scoreboard/v17/fieldrules/decisions_train1000.csv"))
+    m.add_argument("--bootstrap", type=int, default=0, help="시군구 클러스터 부트스트랩 반복수")
+    m.add_argument("--min_n", type=int, default=15, help="지역별·분할별 추정 최소 표본")
+    m.add_argument("--seed", type=int, default=0)
+    m.add_argument("--dump_groups", action="store_true", help="지역별 개별 추정값을 JSON 에 포함")
+    m.add_argument("--out", required=True)
     return p
 
 
 def main() -> None:
     args = build_parser().parse_args()
-    {"static": static_main, "table": table_main, "logit": logit_main}[args.cmd](args)
+    {"static": static_main, "table": table_main, "logit": logit_main,
+     "mine": mine_main}[args.cmd](args)
 
 
 if __name__ == "__main__":
