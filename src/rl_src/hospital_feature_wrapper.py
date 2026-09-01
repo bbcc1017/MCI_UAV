@@ -14,6 +14,9 @@
 병원당 특징 F (MCI_OBS_VARIANT 로 토글):
   essential(기본): [is_tier3, cap_remain, eta_amb, eta_uav] — 중복 제거 최소핵심(F=4).
   essential+load+valid(v6 A3): essential+load(F=7) + valid(1=실병원/0=패딩) 8열 — MCI_H_PAD
+  essential+load+valid+raw(v18 E6): 위와 **차원 402 동일**, 인코딩만 물리단위 —
+    eta_amb/uav = 분/MCI_ETA_RAW_NORM(60) (좌표별 정규화 없음, 전역 상수만),
+    occ_ratio → load_raw = clip(census+in_flight, 0, MCI_LOAD_CLIP=32) 명수.
     병원패딩 시 포인터 마스크드 풀링이 패딩 행을 식별(PadAwareVecNormalize 로 valid 열 정규화 면제).
   full(ablation):  [is_tier3, helipad, eta_amb, eta_uav, idle, queue, occ, cap_remain] (F=8).
   local/comms(ablation): 위 8열을 정적4/실시간4 로 분리.
@@ -252,7 +255,13 @@ class HospitalFeatureWrapper(gym.Wrapper):
                                  "variant 문자열만으로 env 재현(H_pad=실H 여도 명시 설정 요구)")
             self._cols = self._cols + ["valid"]
             var_label = "essential+load+valid"
-        # (v18 E6) raw 토큰: 열 구성·차원 불변, eta 인코딩만 물리단위(분/MCI_ETA_RAW_NORM)로.
+        # (v18 E6) raw 토큰: 차원 402 불변, **인코딩만** 물리단위로.
+        #   eta_amb/uav : 좌표별 정규화 → 분 / MCI_ETA_RAW_NORM(60)  ※ 전역 상수라 좌표 간 스케일 보존
+        #   occ_ratio   → load_raw = clip(census + in_flight, 0, MCI_LOAD_CLIP=32)  ※ 명수
+        # 두 번째 교체가 핵심이다 — 현장 규칙집이 이기는 수식이 `거리(km) + λ × 부하(명)` 인데
+        # 비율형 occ_ratio 로는 정책이 "부하 몇 명"을 직접 만들 수 없다(max_send 가 obs 에 없어
+        # cap_remain/(1-occ_ratio) 나눗셈이 필요하고 occ_ratio→1 에서 발산). load_raw 로 바꾸면
+        # max_send = cap_remain + load 라 덧셈으로 복원되므로 정보가 오히려 늘어난다.
         self._raw_eta = raw_eta
         if self._raw_eta:
             if not self._load:
@@ -261,6 +270,7 @@ class HospitalFeatureWrapper(gym.Wrapper):
             if self._ctx:
                 raise ValueError(f"raw 토큰은 ctx 와 동시 사용 불가 "
                                  f"(got MCI_OBS_VARIANT={toks})")
+            self._cols = [("load_raw" if c == "occ_ratio" else c) for c in self._cols]
             var_label = var_label + "+raw"
         self._F = len(self._cols)
         # load 스케일 노브(전 신규열 사전 유계 → VecNorm 러닝 std 유의미)
@@ -367,6 +377,10 @@ class HospitalFeatureWrapper(gym.Wrapper):
             "cap_remain_c": np.minimum(dyn["cap_remain"], self._cr_clip),
             "p_sent_c": np.minimum(dyn["p_sent"], self._ps_clip),
             "in_flight": dyn["in_flight"].astype(np.float32),
+            # occ_ratio 와 같은 통신 계층(census 포함)이라 psent 시 동일하게 0 마스킹한다.
+            "load_raw": (np.minimum(h[:, 2] + dyn["in_flight"],
+                                    float(os.environ.get("MCI_LOAD_CLIP", "32"))).astype(np.float32)
+                         if comms else z),
             "occ_ratio": (np.clip((h[:, 2] + dyn["in_flight"]) / np.maximum(self._max_send, 1.0),
                                   0.0, self._or_clip) if comms else z),
             "valid": self._valid_vec,   # (v6 A3) 정적 패딩 식별자 — comms 무관 무조건 노출(1/0)

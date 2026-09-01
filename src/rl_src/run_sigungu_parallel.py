@@ -43,10 +43,15 @@ PYBIN = os.environ.get("MCI_PYBIN", "/home/ryu/anaconda3/envs/UAV/bin/python")
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--index", default=str(INDEX))
+    p.add_argument("--manifest_key", default="",
+                   help="sigungu30 _index.json 의 manifests 키(train24/train16/train8/train4). "
+                        "미지정이면 구 sigungu250 스키마로 동작")
     p.add_argument("--wave", type=int, default=0, help="0=전체, 1/2=_index.json 의 wave")
     p.add_argument("--regions", default="", help="쉼표 구분. 주면 wave 무시")
+    p.add_argument("--offset", type=int, default=0, help="정렬된 지역 목록에서 건너뛸 개수(배치 분할용)")
+    p.add_argument("--limit", type=int, default=0, help="이번 배치에서 처리할 지역 수(0=전부)")
     p.add_argument("--holdout_train3", action="store_true",
-                   help="p3 를 뺀 3좌표 매니페스트로 학습(Wave1 스텝예산 내부검증용)")
+                   help="(구 스키마) p3 를 뺀 3좌표 매니페스트로 학습")
     p.add_argument("--total_timesteps", type=int, default=10_000_000)
     p.add_argument("--checkpoint_freq", type=int, default=5_000_000)
     p.add_argument("--n_envs", type=int, default=8)
@@ -58,6 +63,8 @@ def parse_args():
                    help="1분 loadavg 가 이 값을 넘으면 새 런을 띄우지 않는다")
     p.add_argument("--gpu", action="store_true", help="CUDA 허용(기본은 CPU 강제)")
     p.add_argument("--poll", type=float, default=10.0)
+    p.add_argument("--obs_variant", default="essential+load+valid",
+                   help="v18 물리단위 학습은 essential+load+valid+raw")
     p.add_argument("--dry_run", action="store_true")
     return p.parse_args()
 
@@ -91,10 +98,12 @@ def main() -> None:
     else:
         keys = list(regs)
     keys.sort()
+    if a.offset or a.limit:
+        keys = keys[a.offset:(a.offset + a.limit) if a.limit else None]
     if not keys:
         raise SystemExit("실행할 지역이 없다")
 
-    if a.holdout_train3 and not idx.get("holdout_coord"):
+    if a.holdout_train3 and not a.manifest_key and not idx.get("holdout_coord"):
         raise SystemExit("_index.json 에 holdout 좌표가 없다 — split 을 --holdout p3 로 다시 돌려라")
 
     root = Path(a.log_root) / a.tag
@@ -102,8 +111,9 @@ def main() -> None:
 
     # 학습 환경 — MCI_OBS_VARIANT 는 train_ppo_feature 가 스스로 설정하지 않는다(호출자 책임).
     env = os.environ.copy()
+    env_obs_variant = a.obs_variant
     env.update(PYTHONIOENCODING="utf-8",
-               MCI_OBS_VARIANT="essential+load+valid", MCI_H_PAD="47", MCI_CAP_GATE="occ")
+               MCI_OBS_VARIANT=env_obs_variant, MCI_H_PAD="47", MCI_CAP_GATE="occ")
     if not a.gpu:
         env["CUDA_VISIBLE_DEVICES"] = ""
     for k in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
@@ -111,15 +121,23 @@ def main() -> None:
 
     jobs = []
     for r in keys:
-        man = regs[r]["manifest_train3"] if a.holdout_train3 else regs[r]["manifest"]
+        if a.manifest_key:
+            mm = regs[r].get("manifests") or {}
+            if a.manifest_key not in mm:
+                raise SystemExit(f"{r}: manifests 에 '{a.manifest_key}' 없음 (있는 키: {sorted(mm)})")
+            man = mm[a.manifest_key]
+        else:
+            man = regs[r]["manifest_train3"] if a.holdout_train3 else regs[r]["manifest"]
         log_dir = str(root / r)
         if (Path(log_dir) / "final_model.zip").exists():
             continue                                   # skip-done (재개 가능)
         jobs.append({"region": r, "manifest": man, "log_dir": log_dir})
 
-    print(f"[sigungu] wave={a.wave or 'all'} 대상 {len(keys)} · 남은 잡 {len(jobs)} · "
+    print(f"[sigungu] 대상 {len(keys)}(offset {a.offset}) · 남은 잡 {len(jobs)} · "
           f"steps={a.total_timesteps:,} · max_jobs={a.max_jobs} · "
-          f"device={'GPU' if a.gpu else 'CPU강제'} · train3={a.holdout_train3}")
+          f"device={'GPU' if a.gpu else 'CPU강제'} · "
+          f"manifest={a.manifest_key or ('train3' if a.holdout_train3 else 'full')} · "
+          f"obs={env_obs_variant}")
     if a.dry_run:
         for j in jobs[:3]:
             print("  ", " ".join(build_cmd(j["manifest"], j["log_dir"], a)))
