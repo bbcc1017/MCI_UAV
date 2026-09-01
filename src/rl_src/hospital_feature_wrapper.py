@@ -96,6 +96,35 @@ _CTX_GLOBAL_EXTRA = 6
 # 좌표별 적응 스케일러 역할도 하므로(E6 에서 전역 상수 나눗셈이 0.2109 로 대실패),
 # 정규화는 그대로 두고 앵커 2개만 노출해 둘 다 취하는 것이 이 팔의 가설이다.
 _ANCHOR_GLOBAL_EXTRA = 2
+# ================= (v19) field — 현장 관측 수준 obs =================
+# 설계 원칙: "현장 지휘소가 무전 보고 시점에 갱신하는 장부 + 사전 배포된 명부 + 라우팅 표"
+# 만 관측한다. Yan et al.(2026) TRE §4.1 이 RL 상태에서 미래정보를 배제한 것과 같은 층위다.
+#
+# 병원당 7열:
+#   is_tier3 · n_or(수술실수) · n_bed(병상수)      정적 사전지식(병원 명부)
+#   eta_amb  · eta_uav                            라우팅 표 + **고정 핸드오버 가산**
+#   in_flight· delivered(=p_sent-in_flight)       지휘소 장부
+# 글로벌 13열:
+#   R_현장대기 Y_현장대기                          트리아지 완료분(현장 직접 셈)
+#   이송중 등급×수단 2×2                           장부
+#   amb/uav {최초출동중, 현장대기, 복귀중}          무전 보고 국면
+#   t_norm                                        시계
+#
+# ★관측에서 제외한 것과 사유(전부 실측 확인):
+#  1) 차량별 실시간 잔여시간 — `EventManager.py:68` 이 이미 뽑힌 lognormal(CV 0.40) 난수를
+#     감산해 보여준다 = 미래정보. Yan 의 `t_a^i` 배제와 동일.
+#  2) 병원 실시간(n_idle/n_queue/n_occupied, cap_remain, occ_ratio) — 병원 연계 필요.
+#     대신 정적 n_or/n_bed 를 주어 정책이 스스로 여력을 추정하게 한다(구 cap_remain 은
+#     앵커가 max_send 중위 14 인데 실제 서비스 슬롯은 수술실수 중위 2 = 7배 과대였다).
+#  3) **미구조 환자의 등급** — 트리아지 전이라 알 수 없다. 게다가 구조시각 Beta 가 등급별로
+#     달라(Red α6β5 평균 0.545 / Yellow α2β13 0.133 / Green α1β22 0.043) Red 가 구조적으로
+#     늦게 나오므로, R_미구조 열은 "Red 가 N명 더 나온다"는 미래 라벨을 알려준다(실측
+#     R_미구조>0 스텝 86.5%). 미구조 총계도 넣지 않는다 — 유일한 용도인 보류(withhold)가
+#     교사 37,000 결정에서 **0회**로 죽은 행동이기 때문이다.
+#  4) 완전중복 열 — 운행=가용의 여집합·frac=가용의 아핀(|ρ|=1.0000), time=t_norm(|ρ|=1.0000),
+#     위중=Y_이송중(|ρ|=0.93), uavN_frac(상수).
+_FIELD_COLS = ["is_tier3", "n_or", "n_bed", "eta_amb", "eta_uav", "in_flight", "delivered"]
+_FIELD_GLOBAL_DIM = 13
 
 
 def _parse_variant():
@@ -182,6 +211,18 @@ class HospitalFeatureWrapper(gym.Wrapper):
         #   "환자 1명 = N km" 교환율을 표현할 수 없다(손실의 92%). 전역 상수 나눗셈은
         #   좌표 간 상대 스케일을 보존하므로 VecNormalize 의 러닝 통계가 전국 공통 축이 된다.
         #   열 구성·차원은 그대로라 아키텍처·dim 은 불변이고 인코딩만 바뀐다.
+        # (v19 field) 정적 사전지식: 수술실수(=서비스 슬롯, h_states 초기 n_idle)·병상수(대기 용량).
+        self._n_or = np.asarray(hp['hos_max_capa'], dtype=np.float32).reshape(-1)
+        self._n_bed = np.asarray(hp['hos_max_queue'], dtype=np.float32).reshape(-1)
+        # (v19 field) 핸드오버 가산: 보상은 `p_admit` 시각(=병원도착+핸드오버+큐대기)의 생존확률
+        # (`EventManager.py:471`)이라 정책이 비교해야 할 시간에 고정 핸드오버가 포함돼야 한다.
+        # AMB 5분 / UAV 10분 → UAV 손익분기점이 도로 5.56km 로 생긴다(가산 전엔 5km 서도
+        # UAV 가 4.5분 빨라 보이지만 실제로는 0.5분 느리다).
+        self._field = "field" in _parse_variant()
+        if self._field:
+            eta_amb = eta_amb + float(ambp.get('amb_handover_time', 0.0) or 0.0)
+            eta_uav = eta_uav + float(uavp.get('uav_handover_time', 0.0) or 0.0)
+
         # (v19) 절대 스케일 앵커 — 인코딩 전 **원시 분** 에서 계산한다.
         _an = float(os.environ.get("MCI_ANCHOR_NORM", "30.0"))
         _ac = float(os.environ.get("MCI_ANCHOR_CLIP", "4.0"))
@@ -220,6 +261,8 @@ class HospitalFeatureWrapper(gym.Wrapper):
             z = np.zeros(pn, dtype=np.float32)
             self._is_tier3 = np.concatenate([self._is_tier3, z])
             self._max_send = np.concatenate([self._max_send, z])
+            self._n_or = np.concatenate([self._n_or, z])
+            self._n_bed = np.concatenate([self._n_bed, z])
             self._eta_amb = np.concatenate([self._eta_amb, np.full(pn, eta_clip, dtype=np.float32)])
             self._eta_uav = np.concatenate([self._eta_uav, np.full(pn, eta_clip, dtype=np.float32)])
 
@@ -281,7 +324,9 @@ class HospitalFeatureWrapper(gym.Wrapper):
         # PadAwareVecNormalize 의 견고한 패딩 인지 근거. essential+load 필수·ctx 배타·
         # MCI_H_PAD 명시 필수(판정 하네스가 variant 문자열만으로 env 재현 원칙).
         self._valid = "valid" in toks
-        if self._valid:
+        if self._valid and self._field:
+            pass          # field 는 아래에서 valid 열을 직접 붙인다(가드도 거기서)
+        elif self._valid:
             if not self._load:
                 raise ValueError(f"valid 토큰은 essential+load 기반만 지원 "
                                  f"(got MCI_OBS_VARIANT={toks})")
@@ -306,8 +351,8 @@ class HospitalFeatureWrapper(gym.Wrapper):
             raise ValueError("raw 와 sat 는 같은 ETA 축의 배타 인코딩이다 — 하나만 지정")
         if self._raw_eta or self._sat_eta:
             tk = "raw" if self._raw_eta else "sat"
-            if not self._load:
-                raise ValueError(f"{tk} 토큰은 essential+load 기반만 지원 "
+            if not (self._load or self._field):
+                raise ValueError(f"{tk} 토큰은 essential+load 또는 field 기반만 지원 "
                                  f"(got MCI_OBS_VARIANT={toks})")
             if self._ctx:
                 raise ValueError(f"{tk} 토큰은 ctx 와 동시 사용 불가 "
@@ -333,7 +378,18 @@ class HospitalFeatureWrapper(gym.Wrapper):
         # ⚠️cap_remain_c 를 버려도 되는 근거: diversion 게이트(occ>=max_send)가 교사
         #   37,000결정에서 0.00% 발동 = 죽은 열. 반대로 idle 은 미사용 병원에서 n_rooms
         #   (1~3, 병원 서비스 규모)와 같아 정적 정보까지 겸한다.
-        self._anchor = "anchor" in toks
+        if self._field:
+            if self._ctx or ("slot" in toks) or ("anchor" in toks):
+                raise ValueError(f"field 토큰은 ctx/slot/anchor 와 배타 — field 가 열 집합을 "
+                                 f"통째로 정의한다 (got MCI_OBS_VARIANT={toks})")
+            if self.H > self._H_real and "valid" not in toks:
+                raise ValueError("field + H 패딩을 쓰려면 valid 토큰이 필요하다 "
+                                 "(포인터 마스크드 풀링이 패딩 식별에 valid 열을 쓴다)")
+            self._cols = list(_FIELD_COLS) + (["valid"] if "valid" in toks else [])
+            var_label = "field" + ("+valid" if "valid" in toks else "")
+            if self._raw_eta: var_label += "+raw"
+            if self._sat_eta: var_label += "+sat"
+        self._anchor = "anchor" in toks and not self._field
         if self._anchor:
             if not self._load:
                 raise ValueError(f"anchor 토큰은 essential+load 기반만 지원 "
@@ -342,7 +398,7 @@ class HospitalFeatureWrapper(gym.Wrapper):
                 raise ValueError(f"anchor 토큰은 ctx 와 동시 사용 불가(ctx 가 이미 포함) "
                                  f"(got MCI_OBS_VARIANT={toks})")
             var_label = var_label + "+anchor"
-        self._slot = "slot" in toks
+        self._slot = "slot" in toks and not self._field
         if self._slot:
             if not self._load:
                 raise ValueError(f"slot 토큰은 essential+load 기반만 지원 "
@@ -364,9 +420,14 @@ class HospitalFeatureWrapper(gym.Wrapper):
         self._uav_num = uav_num
 
         # ---------- 4) obs space ----------
-        self._gdim = (_GLOBAL_DIM + (_LOAD_GLOBAL_EXTRA if self._load else 0)
-                      + (_CTX_GLOBAL_EXTRA if self._ctx else 0)
-                      + (_ANCHOR_GLOBAL_EXTRA if self._anchor else 0))
+        self._gdim = (_FIELD_GLOBAL_DIM if self._field else
+                      (_GLOBAL_DIM + (_LOAD_GLOBAL_EXTRA if self._load else 0)
+                       + (_CTX_GLOBAL_EXTRA if self._ctx else 0)
+                       + (_ANCHOR_GLOBAL_EXTRA if self._anchor else 0)))
+        # (v19 field) 차량 국면 추적: 최초출동중(기지→현장)과 복귀중(병원→현장)이 sim obs 에서
+        # 똑같이 (dest=0, sev=0, time>0) 으로 찍힌다(예정시간은 각각 기지-현장 표와 병원-현장
+        # 표에서 나와 스케일이 다르다). 차량별 단조 플래그 하나로 구분한다 — sim_src 무수정.
+        self._ever_at_site = {"amb": None, "uav": None}
         self._flat_dim = self.H * self._F + self._gdim
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(self._flat_dim,), dtype=np.float32,
@@ -465,6 +526,10 @@ class HospitalFeatureWrapper(gym.Wrapper):
             "occ_ratio": (np.clip((h[:, 2] + dyn["in_flight"]) / np.maximum(self._max_send, 1.0),
                                   0.0, self._or_clip) if comms else z),
             "valid": self._valid_vec,   # (v6 A3) 정적 패딩 식별자 — comms 무관 무조건 노출(1/0)
+            # (v19 field) 정적 사전지식 · 지휘소 장부
+            "n_or": self._n_or,
+            "n_bed": self._n_bed,
+            "delivered": np.maximum(dyn["p_sent"] - dyn["in_flight"], 0.0).astype(np.float32),
         }
         if self._ctx:
             col_map.update({"eta_rank_amb": self._eta_rank_amb,
@@ -472,7 +537,53 @@ class HospitalFeatureWrapper(gym.Wrapper):
                             "arrive_min": dyn["arrive_min"]})
         return np.stack([col_map[c] for c in self._cols], axis=1).astype(np.float32)  # (H, F)
 
+    def _vehicle_phases(self, obs: dict) -> np.ndarray:
+        """(v19 field) 등급×수단 이송중 4 + 수단별 3국면 6 = 10.
+
+        sim 표현 ``(dest, time, severity)``:
+          dest>=1 & sev>0                     이송중(핸드오버 전). sev 1=Red 2=Yellow 3=Green
+          dest==0 & time==0                   현장 대기
+          dest==0 & time>0 & 현장 이력 없음     최초 출동중 (기지→현장)
+          dest==0 & time>0 & 현장 이력 있음     복귀중 (핸드오버+병원→현장)
+        `time` 자체는 실현 난수라 obs 에 싣지 않는다 — 국면 카운트만 쓴다.
+        """
+        out = []
+        carry = {}
+        for key, tag in (("amb_states", "amb"), ("uav_states", "uav")):
+            st = np.asarray(obs.get(key, ()), dtype=np.float32).reshape(-1, 3)
+            n = st.shape[0]
+            flag = self._ever_at_site[tag]
+            if flag is None or flag.shape[0] != n:
+                flag = np.zeros(n, dtype=bool)
+            if n:
+                dest, tr, sev = st[:, 0], st[:, 1], st[:, 2]
+                flag |= (tr <= 0.0) | (dest >= 1) | (sev > 0)   # 단조: 한 번 서면 유지
+                carrying = (dest >= 1) & (sev > 0)
+                carry[tag] = (int(((sev == 1) & carrying).sum()),   # Red
+                              int(((sev == 2) & carrying).sum()))   # Yellow
+                at_site = (dest == 0) & (tr <= 0.0)
+                moving_site = (dest == 0) & (tr > 0.0)
+                out.append([float((moving_site & ~flag).sum()),     # 최초 출동중
+                            float(at_site.sum()),                   # 현장 대기
+                            float((moving_site & flag).sum())])     # 복귀중
+            else:
+                carry[tag] = (0, 0)
+                out.append([0.0, 0.0, 0.0])
+            self._ever_at_site[tag] = flag
+        return np.array([carry["amb"][0], carry["uav"][0],      # [R·AMB] [R·UAV]
+                         carry["amb"][1], carry["uav"][1]]      # [Y·AMB] [Y·UAV]
+                        + out[0] + out[1], dtype=np.float32)
+
     def _globals(self, obs: dict, dyn: dict) -> np.ndarray:
+        if self._field:
+            # 트리아지 완료분만 — 미구조는 등급 미상이라 넣지 않는다(위 _FIELD_COLS 주석 3).
+            pa = AggregateObsWrapper._patient_agg(np.asarray(obs['p_states']))
+            t_norm = min(float(np.asarray(obs['time']).reshape(-1)[0]) / self._t_norm_div, 2.0)
+            return np.concatenate([
+                np.array([pa[1], pa[6]], dtype=np.float32),   # R/Y 현장 대기 (stage1)
+                self._vehicle_phases(obs),                    # 이송중 2x2 + 국면 6
+                np.array([t_norm], dtype=np.float32),
+            ]).astype(np.float32)
         # patient_agg 4등급×5단계(20) 중 R/Y(앞 2등급=10)만 — Green/Black 은 행동대상 아님(자동일괄).
         pa = AggregateObsWrapper._patient_agg(np.asarray(obs['p_states']))[:10]       # (10,) R/Y
         va = np.concatenate([
@@ -515,6 +626,7 @@ class HospitalFeatureWrapper(gym.Wrapper):
 
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
+        self._ever_at_site = {"amb": None, "uav": None}   # (v19 field) 국면 플래그 리셋
         return self._flat_obs(obs), info
 
     # ---------- action mask (env_wrapper.action_masks 와 동치: joint + tier) ----------
