@@ -17,6 +17,16 @@
   essential+load+valid+raw(v18 E6): 위와 **차원 402 동일**, 인코딩만 물리단위 —
     eta_amb/uav = 분/MCI_ETA_RAW_NORM(60) (좌표별 정규화 없음, 전역 상수만),
     occ_ratio → load_raw = clip(census+in_flight, 0, MCI_LOAD_CLIP=32) 명수.
+  essential+load+valid+sat(v19): raw 의 ETA 축만 교체. eta = t/(t+MCI_ETA_SAT_T0(30)).
+    raw 의 결함 = 헬기장 26칸(AMB 중위 264분)의 꼬리가 동적범위를 먹어 결정 밴드
+    (교사 선택 p99 105분) 해상도가 0.086σ 로 구 정규화 0.156σ 보다도 나쁘다.
+    포화형은 같은 밴드 0.620σ(7.2배)·동률 0%·꼬리 순위 보존. 부하열은 raw 와 동일.
+  essential+load+valid+{raw|sat}+slot(v19): 용량축 교체(차원 402 불변).
+    cap_remain_c → idle(빈 수술실 수) · load_raw → queue(대기 인원).
+    근거: 실제 서비스 슬롯은 수술실수(중위 2)인데 obs 앵커는 max_send(중위 14)=7배 과대,
+    diversion 게이트는 교사 37,000결정서 0.00% 발동(cap_remain 사실상 死열).
+    부하항 제거 시 활동 병원 82% 가 n_idle==0(대기열 최대 15) → PDR 0.3028,
+    CARD 켜면 36%(최대 3) → 0.1464. 부하항의 가치 = 수술실을 비워 두는 것.
     병원패딩 시 포인터 마스크드 풀링이 패딩 행을 식별(PadAwareVecNormalize 로 valid 열 정규화 면제).
   full(ablation):  [is_tier3, helipad, eta_amb, eta_uav, idle, queue, occ, cap_remain] (F=8).
   local/comms(ablation): 위 8열을 정적4/실시간4 로 분리.
@@ -79,6 +89,13 @@ _LOAD_GLOBAL_EXTRA = 5
 # uav_adv_frac(raw 분 기준 UAV 가 빠른 병원 비율) + min(최근접 raw ETA/MCI_ETA_MIN_NORM(30), 2)
 # (정규화 eta 가 지운 절대 스케일=도농 신호 복원).
 _CTX_GLOBAL_EXTRA = 6
+# (v19) anchor 글로벌 확장(+2): 좌표별 정규화가 지운 **절대 스케일**만 되살린다.
+# [최근접 AMB ETA(분)/MCI_ANCHOR_NORM(30), 최근접 UAV ETA(분)/동] clip MCI_ANCHOR_CLIP(4).
+# 근거: 정규화 obs 의 "1.0"(최근접)이 좌표에 따라 1.4분~40.9분 = 29배로 달라, 전국 단일
+# 정책이 "환자 1명 = N 분" 교환율을 표현할 수 없다(v17 진단). 다만 정규화 자체는
+# 좌표별 적응 스케일러 역할도 하므로(E6 에서 전역 상수 나눗셈이 0.2109 로 대실패),
+# 정규화는 그대로 두고 앵커 2개만 노출해 둘 다 취하는 것이 이 팔의 가설이다.
+_ANCHOR_GLOBAL_EXTRA = 2
 
 
 def _parse_variant():
@@ -165,8 +182,29 @@ class HospitalFeatureWrapper(gym.Wrapper):
         #   "환자 1명 = N km" 교환율을 표현할 수 없다(손실의 92%). 전역 상수 나눗셈은
         #   좌표 간 상대 스케일을 보존하므로 VecNormalize 의 러닝 통계가 전국 공통 축이 된다.
         #   열 구성·차원은 그대로라 아키텍처·dim 은 불변이고 인코딩만 바뀐다.
+        # (v19) 절대 스케일 앵커 — 인코딩 전 **원시 분** 에서 계산한다.
+        _an = float(os.environ.get("MCI_ANCHOR_NORM", "30.0"))
+        _ac = float(os.environ.get("MCI_ANCHOR_CLIP", "4.0"))
+        _pa, _pu = eta_amb[eta_amb > 0], eta_uav[eta_uav > 0]
+        self._anchor_vec = np.array([
+            min((float(_pa.min()) if _pa.size else 0.0) / _an, _ac),
+            min((float(_pu.min()) if _pu.size else 0.0) / _an, _ac),
+        ], dtype=np.float32)
+
         raw_eta = "raw" in _parse_variant()
-        if raw_eta:
+        sat_eta = "sat" in _parse_variant()
+        if sat_eta:
+            # ★ v19 A4: 포화형 t/(t+T0). raw(분/60, clip 600분)의 결함 교정 —
+            #   raw 는 좌표별 정규화는 없앴지만 헬기장 26칸의 200~900분 꼬리가
+            #   동적범위를 먹어 **결정 밴드(교사 선택 p99=105분) 해상도가 0.086σ** 로
+            #   구 정규화(0.156σ)보다도 나쁘다. t/(t+30)은 같은 밴드에서 0.620σ(7.2배)이고
+            #   동률 0%·꼬리 순위 보존(264분 대 480분 = 0.176σ)이라 원거리 좌표서도 랭킹된다.
+            #   유계 [0,1) 라 클립 불요, 좌표 간 스케일 보존은 raw 와 동일.
+            t0 = float(os.environ.get("MCI_ETA_SAT_T0", "30.0"))
+            eta_clip = 1.0                       # 패딩 병원 = 무한원거리 점근값
+            self._eta_amb = (eta_amb / (eta_amb + t0)).astype(np.float32)
+            self._eta_uav = (eta_uav / (eta_uav + t0)).astype(np.float32)
+        elif raw_eta:
             eta_clip = float(os.environ.get("MCI_ETA_RAW_CLIP", "10.0"))
             div = float(os.environ.get("MCI_ETA_RAW_NORM", "60.0"))   # 분 → 시간 스케일
             self._eta_amb = np.minimum(eta_amb / div, eta_clip).astype(np.float32)
@@ -263,15 +301,57 @@ class HospitalFeatureWrapper(gym.Wrapper):
         # cap_remain/(1-occ_ratio) 나눗셈이 필요하고 occ_ratio→1 에서 발산). load_raw 로 바꾸면
         # max_send = cap_remain + load 라 덧셈으로 복원되므로 정보가 오히려 늘어난다.
         self._raw_eta = raw_eta
-        if self._raw_eta:
+        self._sat_eta = sat_eta
+        if self._raw_eta and self._sat_eta:
+            raise ValueError("raw 와 sat 는 같은 ETA 축의 배타 인코딩이다 — 하나만 지정")
+        if self._raw_eta or self._sat_eta:
+            tk = "raw" if self._raw_eta else "sat"
             if not self._load:
-                raise ValueError(f"raw 토큰은 essential+load 기반만 지원 "
+                raise ValueError(f"{tk} 토큰은 essential+load 기반만 지원 "
                                  f"(got MCI_OBS_VARIANT={toks})")
             if self._ctx:
-                raise ValueError(f"raw 토큰은 ctx 와 동시 사용 불가 "
+                raise ValueError(f"{tk} 토큰은 ctx 와 동시 사용 불가 "
                                  f"(got MCI_OBS_VARIANT={toks})")
+            # 부하열은 두 인코딩이 공통으로 물리단위(명수)를 쓴다 — occ_ratio 는 앵커가
+            # max_send(중위 14)라 실제 병목(수술실수 중위 2)과 7배 어긋난다.
             self._cols = [("load_raw" if c == "occ_ratio" else c) for c in self._cols]
-            var_label = var_label + "+raw"
+            var_label = var_label + "+" + tk
+        # ---- (v19) slot 토큰: 용량축을 '실제 병목'으로 교체 ----
+        # 실측 근거(v19 진단):
+        #   * 서비스 슬롯 = 수술실수, 중위 **2개**(범위 1~3). 치료 지수분포 평균 Red 40분·
+        #     Yellow 20분. 반면 obs 의 cap_remain/occ_ratio 앵커는 max_send=수술실수+병상수
+        #     (중위 14) = **7배 과대**. 게다가 실제 diversion 게이트(occ>=max_send)는
+        #     교사 결정 37,000건에서 **0.00%** 발동 = cap_remain 은 사실상 죽은 열이다.
+        #   * 부하항을 끄면(lam=0) 활동중 병원의 **82%가 n_idle==0**, 대기열 최대 15명,
+        #     PDR 0.3028. CARD(lam=12)를 켜면 36%·최대 3명·PDR 0.1464.
+        #     즉 부하항의 가치 전부가 "수술실을 비워 두는 것"인데 그 상태변수가 obs 에 없다.
+        #   * n_idle·n_queue 는 이미 sim obs 의 h_states[:,0:2] 에 있다(추가 계산 0).
+        # 교체: cap_remain_c → idle(빈 수술실 수) **한 열만**. F·차원 불변(402).
+        # ⚠️n_queue 는 넣지 않는다 — 스모크 실측에서 고유값 1(항상 0)이라 load_raw(고유값 17)
+        #   를 갈아치우면 정보가 준다. 대기열은 이미 발생한 실패이고, 막아야 할 선행지표는
+        #   idle(지금 빌 자리)과 in_flight(도착 예정, 부하의 68%)다.
+        # ⚠️cap_remain_c 를 버려도 되는 근거: diversion 게이트(occ>=max_send)가 교사
+        #   37,000결정에서 0.00% 발동 = 죽은 열. 반대로 idle 은 미사용 병원에서 n_rooms
+        #   (1~3, 병원 서비스 규모)와 같아 정적 정보까지 겸한다.
+        self._anchor = "anchor" in toks
+        if self._anchor:
+            if not self._load:
+                raise ValueError(f"anchor 토큰은 essential+load 기반만 지원 "
+                                 f"(got MCI_OBS_VARIANT={toks})")
+            if self._ctx:
+                raise ValueError(f"anchor 토큰은 ctx 와 동시 사용 불가(ctx 가 이미 포함) "
+                                 f"(got MCI_OBS_VARIANT={toks})")
+            var_label = var_label + "+anchor"
+        self._slot = "slot" in toks
+        if self._slot:
+            if not self._load:
+                raise ValueError(f"slot 토큰은 essential+load 기반만 지원 "
+                                 f"(got MCI_OBS_VARIANT={toks})")
+            if self._ctx:
+                raise ValueError(f"slot 토큰은 ctx 와 동시 사용 불가 "
+                                 f"(got MCI_OBS_VARIANT={toks})")
+            self._cols = [("idle" if c == "cap_remain_c" else c) for c in self._cols]
+            var_label = var_label + "+slot"
         self._F = len(self._cols)
         # load 스케일 노브(전 신규열 사전 유계 → VecNorm 러닝 std 유의미)
         self._ps_clip = float(os.environ.get("MCI_PSENT_CLIP", "32"))
@@ -285,7 +365,8 @@ class HospitalFeatureWrapper(gym.Wrapper):
 
         # ---------- 4) obs space ----------
         self._gdim = (_GLOBAL_DIM + (_LOAD_GLOBAL_EXTRA if self._load else 0)
-                      + (_CTX_GLOBAL_EXTRA if self._ctx else 0))
+                      + (_CTX_GLOBAL_EXTRA if self._ctx else 0)
+                      + (_ANCHOR_GLOBAL_EXTRA if self._anchor else 0))
         self._flat_dim = self.H * self._F + self._gdim
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(self._flat_dim,), dtype=np.float32,
@@ -414,6 +495,8 @@ class HospitalFeatureWrapper(gym.Wrapper):
                 self._uav_num / self._uav_max,          # 함대 규모 신호(UAV 대수축)
                 t_norm,
             ], dtype=np.float32))
+        if self._anchor:
+            parts.append(self._anchor_vec)   # (v19) 절대 스케일 2개 — reset 간 불변(정적)
         return np.concatenate(parts).astype(np.float32)
 
     def _flat_obs(self, obs: dict) -> np.ndarray:

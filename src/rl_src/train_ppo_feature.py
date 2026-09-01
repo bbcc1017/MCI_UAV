@@ -298,15 +298,28 @@ def mask_fn(env):
     return env.action_masks()
 
 
+# 워커 샤딩 최소 지역수. 기본 501 = 구 동작(`n_regions > 500`). v18 시군구 24좌표 학습은
+# `MCI_SHARD_MIN_REGIONS=2` 로 켜서 워커당 env 를 24→3 으로 줄인다(합집합은 24 불변).
+_SHARD_MIN = int(os.environ.get("MCI_SHARD_MIN_REGIONS", "501"))
+
+
 def make_env_fn(config_path: str, seed: int = 0, rank: int = 0, n_envs: int = 1,
-                region_weights: "str | None" = None):
-    """rank/n_envs: 매니페스트 지역수 > 500 일 때만 워커별 shard=(rank, n_envs) 활성
-    (RSS 절감 훅). 기존 250 지역 매니페스트·단일 yaml 은 동작 완전 불변."""
+                region_weights: "str | None" = None, shard_min_regions: int = 501):
+    """rank/n_envs: 매니페스트 지역수 >= shard_min_regions 일 때 워커별 shard=(rank, n_envs).
+
+    기본 501 = 구 동작(`n_regions > 500`)과 **완전 동일**. 기존 250/1000 지역 매니페스트·
+    단일 yaml 경로는 불변.
+
+    ⚠️v18 실측: 소형 매니페스트(시군구 24좌표)는 샤딩이 안 걸려 **워커 8개가 각각 24 env 를
+    전부 빌드**한다(런당 192 env). 동시 118런이면 22,656 env 가 L3 를 두들겨 총 처리량이
+    64런(4,352 steps/s)보다 오히려 낮아졌다(3,186). 샤딩하면 워커당 3 env 로 8배 줄고
+    **워커 합집합은 여전히 24 전량**이라 커버리지가 같다 — `MCI_SHARD_MIN_REGIONS=2` 로 활성.
+    """
     def _f():
         if config_path.endswith(".json"):
             with open(config_path, encoding="utf-8") as f:
                 n_regions = len(json.load(f))
-            shard = (rank, n_envs) if n_regions > 500 else None
+            shard = (rank, n_envs) if n_regions >= shard_min_regions else None
             env = FeatureMultiRegionEnv(config_path, seed=seed, shard=shard,
                                         weights_csv=region_weights)
         else:
@@ -527,7 +540,7 @@ def main():
           f"n_attn_blocks={args.n_attn_blocks}")
 
     env_fns = [make_env_fn(args.config_path, seed=args.seed + i, rank=i, n_envs=args.n_envs,
-                           region_weights=args.region_weights)
+                           shard_min_regions=_SHARD_MIN, region_weights=args.region_weights)
                for i in range(args.n_envs)]
     vec_cls = SubprocVecEnv if args.vec == "subproc" else DummyVecEnv
     venv = vec_cls(env_fns)
