@@ -125,6 +125,23 @@ _ANCHOR_GLOBAL_EXTRA = 2
 #     위중=Y_이송중(|ρ|=0.93), uavN_frac(상수).
 _FIELD_COLS = ["is_tier3", "n_or", "n_bed", "eta_amb", "eta_uav", "in_flight", "delivered"]
 _FIELD_GLOBAL_DIM = 13
+# ★ field 는 병원당 7열을 **VecNormalize 차원별 정규화에서 면제**하고 전역 상수로만 나눈다.
+#
+# 이유(실측): VecNormalize 는 `RunningMeanStd(shape=obs.shape)` 로 **차원별** 정규화한다.
+# obs 는 47×F 평탄 벡터라 47 슬롯 각각이 자기 (μ,σ)를 갖는데, 병원 슬롯은 현장 도로거리순
+# 정렬(슬롯 인덱스~ETA Spearman 0.995)이라 μ 가 슬롯 0 = 14.9분 … 슬롯 46 = 565.9분으로
+# 갈린다. 그런데 포인터 head 는 순열등변이라 47 슬롯을 **같은 scorer** 로 읽는다
+# (`hospital_set_extractor.py:45` 가 (B,H,F) 로 reshape). 결과: 같은 물리량 20분이
+# 슬롯 0 에선 +0.27σ, 슬롯 30 에선 −2.15σ, 슬롯 46 에선 −4.42σ 로 찍힌다(폭 6.5σ).
+# 47개를 하나의 자로 비교해야 하는데 눈금이 슬롯마다 달랐다 — v18 E6(raw 분) 가
+# 0.2109 로 무너진 진짜 원인이 이것이고, 클립·곡선 변환은 증상 치료였다.
+# 면제하면 47 슬롯이 같은 눈금을 쓴다 = CARD 가 47 병원의 km 를 하나의 자로 비교하는 것과 동일.
+#
+# 스케일 상수는 **선형이라 무해하다** — 첫 레이어 가중치가 흡수하므로 학습 결과 불변이고,
+# 역할은 입력을 O(1) 근처로 두어 최적화 조건수를 챙기는 것뿐이다. 클립·곡선처럼 함수
+# 모양을 바꿔 정보를 버리지 않는다.
+_FIELD_SCALE = {"is_tier3": 1.0, "n_or": 3.0, "n_bed": 30.0,
+                "eta_amb": 60.0, "eta_uav": 60.0, "in_flight": 5.0, "delivered": 5.0}
 
 
 def _parse_variant():
@@ -234,7 +251,14 @@ class HospitalFeatureWrapper(gym.Wrapper):
 
         raw_eta = "raw" in _parse_variant()
         sat_eta = "sat" in _parse_variant()
-        if sat_eta:
+        if self._field:
+            # field: 좌표별 정규화도 클립도 하지 않는다. 전역 상수 나눗셈뿐(위 _FIELD_SCALE).
+            if raw_eta or sat_eta:
+                raise ValueError("field 는 ETA 인코딩을 자체 정의한다 — raw/sat 토큰과 배타")
+            eta_clip = float("inf")
+            self._eta_amb = eta_amb.astype(np.float32)     # 분 (핸드오버 포함)
+            self._eta_uav = eta_uav.astype(np.float32)
+        elif sat_eta:
             # ★ v19 A4: 포화형 t/(t+T0). raw(분/60, clip 600분)의 결함 교정 —
             #   raw 는 좌표별 정규화는 없앴지만 헬기장 26칸의 200~900분 꼬리가
             #   동적범위를 먹어 **결정 밴드(교사 선택 p99=105분) 해상도가 0.086σ** 로
@@ -263,8 +287,10 @@ class HospitalFeatureWrapper(gym.Wrapper):
             self._max_send = np.concatenate([self._max_send, z])
             self._n_or = np.concatenate([self._n_or, z])
             self._n_bed = np.concatenate([self._n_bed, z])
-            self._eta_amb = np.concatenate([self._eta_amb, np.full(pn, eta_clip, dtype=np.float32)])
-            self._eta_uav = np.concatenate([self._eta_uav, np.full(pn, eta_clip, dtype=np.float32)])
+            pad_a = (float(self._eta_amb.max()) * 2.0 if self._field else eta_clip)
+            pad_u = (float(self._eta_uav.max()) * 2.0 if self._field else eta_clip)
+            self._eta_amb = np.concatenate([self._eta_amb, np.full(pn, pad_a, dtype=np.float32)])
+            self._eta_uav = np.concatenate([self._eta_uav, np.full(pn, pad_u, dtype=np.float32)])
 
         # (v6 A3) valid 열 벡터: 실병원 1.0 / 패딩 0.0. 무조건 생성(값싸고 스모크·포인터
         # 마스크드 풀링 계약에 유용) — obs 에는 essential+load+valid variant 에서만 실린다.
@@ -351,8 +377,8 @@ class HospitalFeatureWrapper(gym.Wrapper):
             raise ValueError("raw 와 sat 는 같은 ETA 축의 배타 인코딩이다 — 하나만 지정")
         if self._raw_eta or self._sat_eta:
             tk = "raw" if self._raw_eta else "sat"
-            if not (self._load or self._field):
-                raise ValueError(f"{tk} 토큰은 essential+load 또는 field 기반만 지원 "
+            if not self._load:
+                raise ValueError(f"{tk} 토큰은 essential+load 기반만 지원 "
                                  f"(got MCI_OBS_VARIANT={toks})")
             if self._ctx:
                 raise ValueError(f"{tk} 토큰은 ctx 와 동시 사용 불가 "
@@ -535,7 +561,12 @@ class HospitalFeatureWrapper(gym.Wrapper):
             col_map.update({"eta_rank_amb": self._eta_rank_amb,
                             "uav_timesave": self._uav_timesave,
                             "arrive_min": dyn["arrive_min"]})
-        return np.stack([col_map[c] for c in self._cols], axis=1).astype(np.float32)  # (H, F)
+        E = np.stack([col_map[c] for c in self._cols], axis=1).astype(np.float32)  # (H, F)
+        if self._field:
+            # 전역 상수 스케일 — 슬롯 무관 동일 눈금 (VecNormalize 면제와 짝)
+            sc = np.array([_FIELD_SCALE.get(c, 1.0) for c in self._cols], dtype=np.float32)
+            E = E / sc
+        return E
 
     def _vehicle_phases(self, obs: dict) -> np.ndarray:
         """(v19 field) 등급×수단 이송중 4 + 수단별 3국면 6 = 10.

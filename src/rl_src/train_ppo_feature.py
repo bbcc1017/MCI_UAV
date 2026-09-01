@@ -578,9 +578,10 @@ def main():
         # 산출(exempt_idx 구성). deepsets 는 무마스크 mean pooling 이 패딩 행을 오염 → valid 배타.
         # 비-valid·mlp 경로는 H/F 산출을 건너뛰어 기존 동작 완전 보존(probe env 불생성).
         valid_variant = "valid" in _parse_variant()
+        field_variant = "field" in _parse_variant()
         H = F = gdim = None
         if (args.extractor in ("deepsets", "gopt_bilinear")
-                or args.extractor.startswith("pointer") or valid_variant):
+                or args.extractor.startswith("pointer") or valid_variant or field_variant):
             H, F, gdim = _entity_dims(args.config_path, args.seed)
         if valid_variant and args.extractor == "deepsets":
             raise ValueError("deepsets 추출기는 valid variant 미지원 — 무마스크 mean pooling 이 "
@@ -599,6 +600,19 @@ def main():
             venv.norm_reward = args.norm_reward
             print(f"[feature] init vecnormalize from {init_vn} "
                   f"(optimizer/lr/step은 신규)")
+        elif field_variant:
+            # ★ field: 병원당 **전 열**을 정규화 면제한다(v19). VecNormalize 는 차원별이라
+            # 47 슬롯이 각자 (μ,σ)를 갖는데, 슬롯이 거리순 정렬(Spearman 0.995)이고
+            # 포인터 head 는 순열등변이라 같은 scorer 가 47칸을 읽는다 → 같은 물리량이
+            # 슬롯마다 다른 z 로 들어간다(20분: 슬롯0 +0.27σ ~ 슬롯46 −4.42σ, 폭 6.5σ).
+            # 면제하면 47칸이 같은 눈금(전역 상수 스케일)을 쓴다. 글로벌 열은 슬롯 공유가
+            # 없으므로 정규화를 그대로 받는다.
+            exempt = list(range(H * F))
+            venv = pad_vecnorm.PadAwareVecNormalize(
+                venv, exempt_idx=exempt, norm_obs=True, norm_reward=args.norm_reward,
+                clip_obs=10.0, gamma=args.gamma)
+            print(f"[feature] PadAwareVecNormalize(field): 병원 블록 전체 정규화 면제 "
+                  f"H={H} F={F} exempt={len(exempt)}열 / 글로벌 {gdim}열은 정규화")
         elif valid_variant:
             # valid 열(각 병원 flat idx i*F+(F-1))을 정규화 면제 — 0/1 보존(아핀변환 붕괴 방지).
             exempt = [i * F + (F - 1) for i in range(H)]
