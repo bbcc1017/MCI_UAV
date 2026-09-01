@@ -123,7 +123,8 @@ _ANCHOR_GLOBAL_EXTRA = 2
 #     교사 37,000 결정에서 **0회**로 죽은 행동이기 때문이다.
 #  4) 완전중복 열 — 운행=가용의 여집합·frac=가용의 아핀(|ρ|=1.0000), time=t_norm(|ρ|=1.0000),
 #     위중=Y_이송중(|ρ|=0.93), uavN_frac(상수).
-_FIELD_COLS = ["is_tier3", "n_or", "n_bed", "eta_amb", "eta_uav", "in_flight", "delivered"]
+_FIELD_COLS = ["is_tier3", "n_or", "n_bed", "eta_amb", "eta_uav",
+               "in_flight_amb", "in_flight_uav", "delivered"]
 _FIELD_GLOBAL_DIM = 13
 # ★ field 는 병원당 7열을 **VecNormalize 차원별 정규화에서 면제**하고 전역 상수로만 나눈다.
 #
@@ -140,8 +141,17 @@ _FIELD_GLOBAL_DIM = 13
 # 스케일 상수는 **선형이라 무해하다** — 첫 레이어 가중치가 흡수하므로 학습 결과 불변이고,
 # 역할은 입력을 O(1) 근처로 두어 최적화 조건수를 챙기는 것뿐이다. 클립·곡선처럼 함수
 # 모양을 바꿔 정보를 버리지 않는다.
-_FIELD_SCALE = {"is_tier3": 1.0, "n_or": 3.0, "n_bed": 30.0,
-                "eta_amb": 60.0, "eta_uav": 60.0, "in_flight": 5.0, "delivered": 5.0}
+# 상수 선정 근거 (실측):
+#   eta_*  /60  분 → 시간. **필수** — 안 나누면 무작위 초기화 상태에서 슬롯 점수폭이 114.5,
+#               한 병원에 확률 74.5% 가 몰린다(균등 2.1%). 자연 단위 변환이라 자의성 없음.
+#   n_bed  /31  7,500좌표 × 47병원 = 352,500 쌍 **전수 실측 최대 = 31**. 안 나누면 최대확률
+#               12.1% 로 나빠진다.
+#   나머지 /1   수술실수(1~3)·이송중(0~5)·인계(0~9)는 이미 O(1) 이고, 나눠도 초기 엔트로피
+#               차이가 3.784 vs 3.769 로 잡음 수준이라 **자연 단위(개·대·명) 그대로 둔다.**
+#               obs 값이 물리량과 1:1 이라 규칙 추출·해석에도 유리하다.
+_FIELD_SCALE = {"is_tier3": 1.0, "n_or": 1.0, "n_bed": 31.0,
+                "eta_amb": 60.0, "eta_uav": 60.0,
+                "in_flight_amb": 1.0, "in_flight_uav": 1.0, "delivered": 1.0}
 
 
 def _parse_variant():
@@ -511,6 +521,16 @@ class HospitalFeatureWrapper(gym.Wrapper):
         cap_remain = np.maximum(self._max_send - cap_used, 0.0)
         d = {"h": h, "p_sent": p_sent, "in_flight": in_flight,
              "cap_remain": cap_remain, "comms": comms}
+        if self._field:   # 수단별 이송중 (sim obs 의 (dest, time, sev) 에서 직접 집계)
+            for key, tag in (("amb_states", "if_amb"), ("uav_states", "if_uav")):
+                st = np.asarray(obs.get(key, ()), dtype=np.float32).reshape(-1, 3)
+                v = np.zeros(self.H, dtype=np.float32)
+                if st.shape[0]:
+                    carry = (st[:, 0] >= 1) & (st[:, 2] > 0)
+                    dst = st[carry, 0].astype(int) - 1
+                    ok = (dst >= 0) & (dst < self.H)
+                    np.add.at(v, dst[ok], 1.0)
+                d[tag] = v
         if self._ctx:
             # 병원별 최근접 도착 타이밍 — dest 1..H(1-based)·severity>0 관례는
             # EntityManager.in_flight_by_hospital 과 동일. 이송중 없음 = 클립값(2.0).
@@ -555,6 +575,11 @@ class HospitalFeatureWrapper(gym.Wrapper):
             # (v19 field) 정적 사전지식 · 지휘소 장부
             "n_or": self._n_or,
             "n_bed": self._n_bed,
+            # 수단별 이송중 — UAV 가 4배 빨라 도착(=수술실 점유) 시점이 다르므로 분리한다.
+            # 합산 열만 두면 구성 복원이 불가능하고(동시 발생 0.15% 병원-스텝), 도착 타이밍
+            # 정보가 사라진다. delivered 는 이미 인계돼 수단 무관이라 분리하지 않는다.
+            "in_flight_amb": dyn.get("if_amb"),   # field 전용 — 다른 variant 에선 None(미선택)
+            "in_flight_uav": dyn.get("if_uav"),
             "delivered": np.maximum(dyn["p_sent"] - dyn["in_flight"], 0.0).astype(np.float32),
         }
         if self._ctx:
