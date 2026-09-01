@@ -62,7 +62,7 @@ def rollout(factory, policy, seed: int):
 
 
 def worker(job):
-    region, cfg, model_dir, n_eps, seed0, policy_name, obs_variant = job
+    region, cfg, model_dir, n_eps, seed0, policy_name, ckpt, obs_variant = job
     try:
         import torch as th
 
@@ -80,8 +80,16 @@ def worker(job):
         from evaluate import ppo_policy
         from viper_distill import _suppress_stdout, load_vecnorm, make_feature_env
 
-        model = MaskablePPO.load(os.path.join(model_dir, "final_model.zip"), device="cpu")
-        norm = load_vecnorm(os.path.join(model_dir, "vecnormalize.pkl"))
+        # ckpt=0 → 최종 모델. ckpt>0 → CheckpointCallback 이 남긴 그 스텝의 체크포인트
+        # (`--save_vecnormalize` 로 같은 시점 통계도 저장돼 있어야 정확한 평가가 된다).
+        if ckpt:
+            mz = os.path.join(model_dir, "checkpoints", f"ppo_feature_{ckpt}_steps.zip")
+            vp = os.path.join(model_dir, "checkpoints", f"ppo_feature_vecnormalize_{ckpt}_steps.pkl")
+        else:
+            mz = os.path.join(model_dir, "final_model.zip")
+            vp = os.path.join(model_dir, "vecnormalize.pkl")
+        model = MaskablePPO.load(mz, device="cpu")
+        norm = load_vecnorm(vp)
         policy = ppo_policy(model)
         factory = make_feature_env(cfg, norm)
         rows = []
@@ -122,6 +130,9 @@ def main() -> None:
                    help="학습 때와 반드시 일치. v18 raw 인코딩 모델은 essential+load+valid+raw")
     p.add_argument("--policy_name", default="PPO_POINTER_V10",
                    help="CSV policy 열 이름. 여러 시드/아키텍처를 한 표로 모을 때 지정")
+    p.add_argument("--checkpoint", type=int, default=0,
+                   help="0=final_model.zip. >0 이면 checkpoints/ 의 그 스텝 체크포인트를 "
+                        "그 시점 vecnormalize 통계와 함께 평가(--save_vecnormalize 필요)")
     p.add_argument("--out", required=True)
     args = p.parse_args()
 
@@ -155,6 +166,7 @@ def main() -> None:
             raise RuntimeError(f"부분 기록 지역 발견(수동 정리 필요): {sorted(incomplete)[:3]}")
     jobs = [
         (key, manifest[key], model_dir, args.n_eps, args.seed0, args.policy_name,
+         args.checkpoint,
          args.obs_variant)
         for key in keys if key not in done_regions
     ]
