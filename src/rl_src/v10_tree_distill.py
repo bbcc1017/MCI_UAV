@@ -70,23 +70,39 @@ def _coord(path: str) -> str:
     return Path(path).resolve().parent.name
 
 
-def validate_train_manifest(path: Path) -> dict[str, str]:
+def validate_train_manifest(path: Path, eval_paths=None,
+                            structure: str = "train1000") -> dict[str, str]:
+    """수집 manifest 검증. **누수 검사(평가셋 좌표 중복 0)는 항상 강제**한다.
+
+    structure="train1000" (기본, 구 동작): 1000개·250그룹×p0~p3 구조까지 검사.
+    structure="any" (v19): 구조 검사를 생략하고 누수 검사만 한다 — sigungu30 처럼
+      키 규약이 다른 풀에서 수집할 때 쓴다. 대신 ``eval_paths`` 로 겹치면 안 되는
+      평가셋을 **명시**해야 한다(빠뜨리면 조용히 누수된다).
+    """
     manifest = json.load(open(path, encoding="utf-8"))
-    eval_manifest = json.load(open(EVAL_MANIFEST, encoding="utf-8"))
-    if len(manifest) != 1000:
-        raise ValueError(f"증류 manifest는 train1000이어야 함: N={len(manifest)}")
-    groups: dict[str, set[str]] = {}
-    for key in manifest:
-        toks = key.rsplit("_", 2)
-        if len(toks) != 3 or not toks[-2].isdigit() or toks[-1] not in {"p0", "p1", "p2", "p3"}:
-            raise ValueError(f"train1000 키 형식 오류: {key}")
-        groups.setdefault(toks[-2], set()).add(toks[-1])
-    bad = {k: sorted(v) for k, v in groups.items() if v != {"p0", "p1", "p2", "p3"}}
-    if len(groups) != 250 or bad:
-        raise ValueError(f"train1000 그룹 오류: groups={len(groups)} bad={list(bad.items())[:3]}")
-    overlap = {_coord(x) for x in manifest.values()} & {_coord(x) for x in eval_manifest.values()}
-    if overlap:
-        raise ValueError(f"증류 학습/최종평가 좌표 중복 {len(overlap)}개")
+    if structure == "train1000":
+        if len(manifest) != 1000:
+            raise ValueError(f"증류 manifest는 train1000이어야 함: N={len(manifest)}")
+        groups: dict[str, set[str]] = {}
+        for key in manifest:
+            toks = key.rsplit("_", 2)
+            if len(toks) != 3 or not toks[-2].isdigit() or toks[-1] not in {"p0", "p1", "p2", "p3"}:
+                raise ValueError(f"train1000 키 형식 오류: {key}")
+            groups.setdefault(toks[-2], set()).add(toks[-1])
+        bad = {k: sorted(v) for k, v in groups.items() if v != {"p0", "p1", "p2", "p3"}}
+        if len(groups) != 250 or bad:
+            raise ValueError(f"train1000 그룹 오류: groups={len(groups)} bad={list(bad.items())[:3]}")
+    elif structure != "any":
+        raise ValueError(f"미지 structure={structure}")
+    paths = list(eval_paths) if eval_paths else [EVAL_MANIFEST]
+    mine = {_coord(x) for x in manifest.values()}
+    for ep in paths:
+        ev = json.load(open(ep, encoding="utf-8"))
+        overlap = mine & {_coord(x) for x in ev.values()}
+        if overlap:
+            raise ValueError(f"증류 수집/평가 좌표 중복 {len(overlap)}개 (평가셋 {Path(ep).name})")
+    print(f"[collect] 누수 검사 통과 — 수집 {len(manifest)}좌표 vs 평가셋 "
+          f"{[Path(x).name for x in paths]} 중복 0")
     return manifest
 
 
@@ -201,7 +217,10 @@ def collect_worker(job):
 
 def collect_main(args) -> None:
     manifest_path = Path(args.manifest).resolve()
-    manifest = validate_train_manifest(manifest_path)
+    manifest = validate_train_manifest(
+        manifest_path,
+        eval_paths=[x for x in args.eval_manifests.split(",") if x],
+        structure=args.structure)
     items = list(manifest.items())
     if args.key_filter:
         items = [x for x in items if args.key_filter in x[0]]
@@ -504,6 +523,14 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--limit", type=int, default=0)
     c.add_argument("--key_filter", default="")
     c.add_argument("--behavior_tree", default="")
+    c.add_argument("--structure", default="train1000", choices=["train1000","any"],
+
+                   help="any = 구조검사 생략(누수검사는 유지). sigungu30 등 다른 풀 수집용")
+
+    c.add_argument("--eval_manifests", default=str(EVAL_MANIFEST),
+
+                   help="쉼표 구분. 수집 좌표와 중복 0 이어야 하는 평가셋 전부를 명시")
+
     c.add_argument("--role", choices=["train", "dagger", "validation"], default="train")
     c.add_argument("--out", required=True)
 
