@@ -108,7 +108,7 @@ def collect_worker(job):
         th.set_num_threads(1)
         os.environ.update(
             MCI_CAP_GATE="occ",
-            MCI_OBS_VARIANT="essential+load+valid",
+            MCI_OBS_VARIANT=os.environ.get("MCI_COLLECT_OBS_VARIANT", "essential+load+valid"),
             MCI_H_PAD="47",
             MCI_REWARD_MODE="woG",
         )
