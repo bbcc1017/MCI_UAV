@@ -212,9 +212,22 @@ def main() -> None:
         pdr = float(row["pdr_woG"])
         if not np.isfinite(pdr) or not 0 <= pdr <= 1:
             raise RuntimeError(f"PDR 오류: {key}={pdr}")
-    expected = len(keys) * len(cases) * args.n_eps
-    if len(rows) != expected:
-        raise RuntimeError(f"평가 행수 불일치 {len(rows)} != {expected}")
+    # ⚠️ 완전성은 **이번 호출이 담당한 (정책, 지역)** 에 대해서만 검사한다.
+    #    구 코드는 `len(rows)`(CSV 전체) 를 `len(keys)*n_eps`(이번 호출 요청분) 와 비교해,
+    #    같은 CSV 에 여러 모델·시도를 누적하면 데이터가 온전해도 항상 실패했다
+    #    (v19 에서 SIDO 17건 전부 rc=1 — 실제로는 750지역×30시드 무결).
+    want = {(k, args.policy_name) for k in keys}
+    got = {}
+    for row in rows:
+        rk = (row["region"], row["policy"])
+        if rk in want:
+            got.setdefault(rk, set()).add(int(row["episode"]))
+    missing = sorted(k for k in want if len(got.get(k, ())) != args.n_eps)
+    if missing:
+        raise RuntimeError(f"평가 행수 불일치 — 미완 {len(missing)}건 예: {missing[:3]} "
+                           f"(각 {args.n_eps} 에피소드 기대)")
+    print(f"[eval] 완전성 검증 통과 — 이번 호출 {len(want)}지역 × {args.n_eps}에피 · "
+          f"CSV 전체 {len(rows)}행")
 
     meta = {
         "schema_version": 1,
