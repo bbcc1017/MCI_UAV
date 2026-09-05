@@ -341,7 +341,7 @@ archive/*
 MCI_UAV_cold/
 
 # Unity 디지털트윈 / CAR_test 전용 GIS 도구 — 로컬-C 전용이라 추적하지 않는다.
-# 설명은 CLAUDE.unity.md. 복원은 `git show <2026-09-06 이전 커밋>:tools/<파일>`.
+# 설명은 CLAUDE.unity.md. 복원은 `git show 9f4d4fc:tools/<파일>` (untrack 직전 커밋).
 # ⚠️ RL/sim 공용인 osrm_*.{ps1,sh} 와 build_distance_matrix_osrm.py 는 추적 유지.
 tools/airspace_fetch.py
 tools/bldg_height_index.py
