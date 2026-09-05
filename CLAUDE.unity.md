@@ -6,7 +6,23 @@
 
 `tools/` 의 GIS 스크립트(`osm_*.py` `v2_*.py` `vworld_*` `terrain_*` `hdmap_fetch.py` `scene_export.py`
 `trace_export.py` `run_sim_trace.py` `nationwide/` `seoul_pilot/` 등 30개)는 같은 날 **추적에서
-뺐다**(gitignore). 파일 자체는 각 박스 워킹트리에 남아 있고, 복원은 `git show 9f4d4fc:tools/<파일>`.
+뺐다**(gitignore). 파일 자체는 각 박스 워킹트리에 남아 있다.
+
+⚠️ **Windows 박스가 이 커밋을 pull 하면 그 37개가 사라진다.** `.gitignore` 는 *미추적* 경로에만
+적용되는데, Windows HEAD 기준으로는 아직 tracked 라 체크아웃이 그냥 지운다(실측: 수정 안 한
+파일은 조용히 삭제, 수정한 파일이 있으면 `Please commit your changes or stash them` 으로 pull 자체가
+중단). 절차:
+
+```bash
+cp -r tools ../tools_backup_20260906          # 1. 먼저 백업 (Windows 로컬 수정분 보존)
+git pull                                       # 2. 중단되면 git checkout -- tools/ 후 재시도
+git restore --source=9f4d4fc --worktree -- tools/   # 3. 워킹트리만 복원
+diff -r ../tools_backup_20260906 tools         # 4. 백업본에만 있던 수정분 확인
+```
+
+`git checkout 9f4d4fc -- tools/` **는 쓰지 말 것** — 인덱스까지 갱신해 37개를 다시 스테이지하므로
+다음 커밋에서 재추적된다. `--worktree` 로 복원하면 인덱스가 안 변해 ignore 가 그대로 먹는다
+(실측: `git status` 무변경). 개별 파일은 `git show 9f4d4fc:tools/<파일> > tools/<파일>`.
 RL/sim 이 공유하는 OSRM 배관(`osrm_*.ps1/.sh`, `build_distance_matrix_osrm.py`)은 추적 유지이며
 설명도 `CLAUDE.md` 쪽에 남겼다.
 
