@@ -1,0 +1,87 @@
+{
+ "경기": {
+  "path": "scenarios/manifests/sigungu30_sido/경기.train.json",
+  "n_coord": 1008,
+  "n_sigungu": 42
+ },
+ "서울": {
+  "path": "scenarios/manifests/sigungu30_sido/서울.train.json",
+  "n_coord": 600,
+  "n_sigungu": 25
+ },
+ "경북": {
+  "path": "scenarios/manifests/sigungu30_sido/경북.train.json",
+  "n_coord": 552,
+  "n_sigungu": 23
+ },
+ "전남": {
+  "path": "scenarios/manifests/sigungu30_sido/전남.train.json",
+  "n_coord": 528,
+  "n_sigungu": 22
+ },
+ "경남": {
+  "path": "scenarios/manifests/sigungu30_sido/경남.train.json",
+  "n_coord": 528,
+  "n_sigungu": 22
+ },
+ "강원": {
+  "path": "scenarios/manifests/sigungu30_sido/강원.train.json",
+  "n_coord": 432,
+  "n_sigungu": 18
+ },
+ "부산": {
+  "path": "scenarios/manifests/sigungu30_sido/부산.train.json",
+  "n_coord": 384,
+  "n_sigungu": 16
+ },
+ "충남": {
+  "path": "scenarios/manifests/sigungu30_sido/충남.train.json",
+  "n_coord": 384,
+  "n_sigungu": 16
+ },
+ "전북": {
+  "path": "scenarios/manifests/sigungu30_sido/전북.train.json",
+  "n_coord": 360,
+  "n_sigungu": 15
+ },
+ "충북": {
+  "path": "scenarios/manifests/sigungu30_sido/충북.train.json",
+  "n_coord": 336,
+  "n_sigungu": 14
+ },
+ "인천": {
+  "path": "scenarios/manifests/sigungu30_sido/인천.train.json",
+  "n_coord": 240,
+  "n_sigungu": 10
+ },
+ "대구": {
+  "path": "scenarios/manifests/sigungu30_sido/대구.train.json",
+  "n_coord": 216,
+  "n_sigungu": 9
+ },
+ "광주": {
+  "path": "scenarios/manifests/sigungu30_sido/광주.train.json",
+  "n_coord": 120,
+  "n_sigungu": 5
+ },
+ "울산": {
+  "path": "scenarios/manifests/sigungu30_sido/울산.train.json",
+  "n_coord": 120,
+  "n_sigungu": 5
+ },
+ "대전": {
+  "path": "scenarios/manifests/sigungu30_sido/대전.train.json",
+  "n_coord": 120,
+  "n_sigungu": 5
+ },
+ "제주": {
+  "path": "scenarios/manifests/sigungu30_sido/제주.train.json",
+  "n_coord": 48,
+  "n_sigungu": 2
+ },
+ "세종": {
+  "path": "scenarios/manifests/sigungu30_sido/세종.train.json",
+  "n_coord": 24,
+  "n_sigungu": 1
+ }
+}
