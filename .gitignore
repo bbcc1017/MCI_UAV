@@ -328,3 +328,44 @@ tools/seoul_pilot/_work/
 tools/_tmp_*.yaml
 tools/**/_hospital_coords.csv
 osrm_data/
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 2026-09-06 레포 정돈
+# ─────────────────────────────────────────────────────────────────────────────
+# 종결 자산 보관소 — 원장(README)만 추적
+archive/*
+!archive/README.md
+
+# Windows 박스에서 콜드데이터를 Y:(=이 레포 루트) 로 옮기다 중단된 잔해.
+# 출처 미확인 상태로 보류 중 — 정체가 확인되면 레포 밖으로 옮기거나 지울 것.
+MCI_UAV_cold/
+
+# Unity 디지털트윈 / CAR_test 전용 GIS 도구 — 로컬-C 전용이라 추적하지 않는다.
+# 설명은 CLAUDE.unity.md. 복원은 `git show <2026-09-06 이전 커밋>:tools/<파일>`.
+# ⚠️ RL/sim 공용인 osrm_*.{ps1,sh} 와 build_distance_matrix_osrm.py 는 추적 유지.
+tools/airspace_fetch.py
+tools/bldg_height_index.py
+tools/build_region_index.py
+tools/hdmap_fetch.py
+tools/nationwide_build.py
+tools/nationwide/monitor.py
+tools/osm_areas.py
+tools/osm_explore.py
+tools/osm_features.py
+tools/osm_infra.py
+tools/osm_overpass_endpoints.py
+tools/osm_poi.py
+tools/osm_roads.py
+tools/osm_roads2.py
+tools/osm_water.py
+tools/osm_fetch_local.ps1
+tools/run_sim_trace.py
+tools/scene_export.py
+tools/trace_export.py
+tools/seoul_pilot/build_scene_data.py
+tools/shp_multi_to_buildings.py
+tools/terrain_fetch.py
+tools/terrain_smooth.py
+tools/v2_*.py
+tools/vworld_buildings_batch.py
+tools/vworld_fetch.py
