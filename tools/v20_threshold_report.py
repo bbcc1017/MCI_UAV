@@ -272,6 +272,9 @@ def main():
     o.add_argument("--out", default=str(OPTIMA)); o.set_defaults(fn=cmd_optima)
     s = sub.add_parser("scaling"); s.add_argument("--optima", default=str(OPTIMA))
     s.set_defaults(fn=cmd_scaling)
+    rf = sub.add_parser("refine"); rf.add_argument("--optima", default=str(OPTIMA))
+    rf.add_argument("--sweep", default=str(SWEEP)); rf.add_argument("--boot", type=int, default=300)
+    rf.set_defaults(fn=cmd_refine)
     tr = sub.add_parser("transfer"); tr.add_argument("--optima", default=str(OPTIMA))
     tr.set_defaults(fn=cmd_transfer)
     p = sub.add_parser("paired"); p.add_argument("--csv", required=True)
@@ -280,6 +283,135 @@ def main():
     args = ap.parse_args()
     args.fn(args)
 
+
+
+# ---------------------------------------------------------------- refine (v20 정밀 판정)
+# 통계 감사 결과 반영. 세 가지를 고친다.
+#   ① 판정선: 학습 시드 잡음바닥(0.00114)은 규칙 실험에 존재하지 않는 잡음원이다.
+#      규칙 비교의 잡음은 같은 좌표·같은 시드(CRN) paired 차이의 95%CI 이고 실측 0.0003~0.0004 다.
+#   ② 최적 임계값: 격자가 성기고(로그 간격 1.26~1.41) 가족마다 달라서 argmin 을 그대로 쓰면
+#      격자 해상도가 결론을 만든다. 로그축 포물선 보간으로 격자 의존을 제거한다.
+#   ③ 스케일링: "예측이 평탄대 안" 은 판정으로 공허하다(평탄대 폭이 격자 로그폭의 11~29%).
+#      보간 최적을 로그-로그 회귀하고 좌표 클러스터 부트스트랩으로 CI 를 낸다.
+def _interp_opt(lams, means):
+    """로그축 포물선 보간 최적. 최적이 격자 끝이면 격자값 그대로."""
+    k = int(np.argmin(means))
+    if k == 0 or k == len(lams) - 1:
+        return float(lams[k])
+    x = np.log(np.asarray(lams[k - 1:k + 2], float))
+    y = np.asarray(means[k - 1:k + 2], float)
+    a, b, _ = np.polyfit(x, y, 2)
+    if a <= 0:
+        return float(lams[k])
+    return float(np.exp(np.clip(-b / (2 * a), x[0], x[-1])))
+
+
+def cmd_refine(args):
+    from collections import defaultdict
+    d = json.loads(Path(args.optima).read_text(encoding="utf-8"))
+    PRE = {"K": "lam_", "T": "lam_", "H": "lam_", "L": "lamL_", "Q": "lamQ_", "S": "lamS_"}
+    sweep = Path(args.sweep)
+    cubes = {}          # (fam, tag, lam) -> cube
+    grids = defaultdict(dict)
+    for tag, v in d.items():
+        if not isinstance(v, dict):
+            continue
+        for fam in PRE:
+            if fam not in v:
+                continue
+            f = sweep / f"{PRE[fam]}{tag}.csv"
+            if not (f.parent / (f.name + ".meta.json")).exists():
+                continue
+            df = pd.read_csv(f)
+            g = v[fam]["grid"]
+            grids[fam][tag] = [a for a, _ in g]
+            for a, _ in g:
+                try:
+                    cubes[(fam, tag, a)] = cube(df, f"{fam}{a:g}")
+                except (ValueError, KeyError):
+                    pass
+
+    rng = np.random.default_rng(0)
+    print("== (1) 잡음원 실측 (base·H12 기준) ==")
+    base_h = cubes.get(("H", "base", 12.0))
+    if base_h is not None:
+        nb = cubes[("H", "base", 8.0)]
+        dd = nb.mean(1) - base_h.mean(1)
+        print(f"  CRN paired 두 팔 차이 95%CI      : {ci(dd):.5f}   ← 규칙 실험의 판정선")
+        print(f"  시뮬 난수만 (시드평균의 SE x1.96) : "
+              f"{1.96*base_h.mean(0).std(ddof=1)/np.sqrt(base_h.shape[1]):.5f}")
+        bs = [base_h[rng.integers(0, base_h.shape[0], base_h.shape[0])].mean() for _ in range(2000)]
+        lo, hi = np.percentile(bs, [2.5, 97.5])
+        print(f"  좌표 재표집 95%CI (절대 PDR 수준) : {(hi-lo)/2:.5f}   ← 다른 좌표셋 수치와 병치할 때만")
+        print(f"  (참고) 학습 시드 잡음바닥 0.00114 — 규칙에는 학습 시드가 없어 부적절")
+
+    print("\n== (2) 보간 최적 임계값과 로그-로그 기울기 (좌표 클러스터 부트스트랩 95%CI) ==")
+    AX = AXIS_BASE
+    for fam in ("K", "H", "Q", "S"):
+        if fam not in grids:
+            continue
+        print(f"\n  [{fam}] base 보간최적 = ", end="")
+        lams = grids[fam].get("base")
+        bh = [cubes[(fam, "base", a)] for a in lams if (fam, "base", a) in cubes]
+        print(f"{_interp_opt(lams, [c.mean() for c in bh]):.2f}")
+        for axis in ("capa", "amb", "vamb", "vuav", "uav", "n", "huav", "hamb"):
+            tags = [t for t, v in d.items() if isinstance(v, dict) and v.get("axis") == axis and t in grids[fam]]
+            if len(tags) < 2:
+                continue
+            pts = [("base", AX[axis])] + [(t, d[t]["axis_value"]) for t in tags]
+            sl = []
+            for b in range(args.boot):
+                idx = None
+                xs, ys = [], []
+                for t, xv in pts:
+                    L = grids[fam][t]
+                    cs = [cubes[(fam, t, a)] for a in L if (fam, t, a) in cubes]
+                    if len(cs) != len(L):
+                        continue
+                    if idx is None:
+                        idx = rng.integers(0, cs[0].shape[0], cs[0].shape[0]) if b else np.arange(cs[0].shape[0])
+                    ys.append(_interp_opt(L, [c[idx].mean() for c in cs])); xs.append(xv)
+                if len(xs) >= 3:
+                    sl.append(np.polyfit(np.log(xs), np.log(ys), 1)[0])
+            if sl:
+                s0 = sl[0]; lo, hi = np.percentile(sl[1:], [2.5, 97.5]) if len(sl) > 20 else (np.nan, np.nan)
+                print(f"    {axis:5s} 기울기 {s0:+.3f}  95%CI [{lo:+.3f}, {hi:+.3f}]")
+
+    print("\n== (3) 전이 후회 — 보간 기준 · LOSO · 설정별 paired 판정 ==")
+    for fam in ("K", "T", "L", "H", "Q", "S"):
+        if fam not in grids or "base" not in grids[fam]:
+            continue
+        L0 = grids[fam]["base"]
+        m0 = [cubes[(fam, "base", a)].mean() for a in L0 if (fam, "base", a) in cubes]
+        lam_b = L0[int(np.argmin(m0))]
+        rows, loso = [], []
+        for t in sorted(grids[fam]):
+            if t == "base":
+                continue
+            L = grids[fam][t]
+            cs = {a: cubes[(fam, t, a)] for a in L if (fam, t, a) in cubes}
+            if len(cs) != len(L):
+                continue
+            mm = [cs[a].mean() for a in L]
+            own = cs[L[int(np.argmin(mm))]]
+            tr = cs[min(cs, key=lambda a: abs(a - lam_b))]
+            dd = tr.mean(1) - own.mean(1)
+            rows.append((t, dd.mean(), ci(dd),
+                         min(mm) and (np.interp(0, [0], [0]) if False else 0)))
+            # 격자 무관 후회 = 전이값 − 보간최적값(포물선 y 최소)
+            k = int(np.argmin(mm))
+            if 0 < k < len(L) - 1:
+                x = np.log(L[k-1:k+2]); y = np.asarray(mm[k-1:k+2])
+                a2, b2, c2 = np.polyfit(x, y, 2)
+                ymin = c2 - b2 * b2 / (4 * a2) if a2 > 0 else min(mm)
+            else:
+                ymin = min(mm)
+            loso.append(tr.mean() - ymin)
+        if rows:
+            R = np.array([r[1] for r in rows]); sig = [r for r in rows if r[1] > r[2]]
+            print(f"  {fam} (기준 {lam_b:g}): 중위 {np.median(R):+.5f} · 평균 {R.mean():+.5f} · "
+                  f"최대 {R.max():+.5f} · **paired 유의 {len(sig)}/{len(rows)}** · "
+                  f"격자무관(보간) 평균 {np.mean(loso):+.5f}")
 
 if __name__ == "__main__":
     main()

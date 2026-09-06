@@ -29,12 +29,13 @@ from v20_threshold_report import cube, paired, AXIS_BASE, SEED_NOISE  # noqa: E4
 OUT = REPO / "results/scoreboard/v20/plots"
 SWEEP = REPO / "results/scoreboard/v20/sweep"
 INK, SUB = "#1F2933", "#6B7683"
-COL = {"K": "#8C96A0", "T": "#5B8DEF", "L": "#F2994A", "H": "#27AE60", "Q": "#C0392B"}
+COL = {"K": "#8C96A0", "T": "#5B8DEF", "L": "#F2994A", "H": "#27AE60", "Q": "#C0392B", "S": "#8E44AD"}
 NAME = {"K": "K  거리(km) + lam·부하        [현행 CARD]",
         "T": "T  시간(분) + lam·부하",
         "L": "L  거리(km) + lam·대기초과분",
         "H": "H  시간(분) + lam·대기초과분",
-        "Q": "Q  시간(분) + lam·대기초과분/서버수  [완전 유도형]"}
+        "Q": "Q  시간(분) + lam·대기초과분/서버수  [완전 유도형]",
+        "S": "S  생존확률 직접 최대화  [무튜닝, lam=대기 배율]"}
 
 
 def setup():
@@ -56,7 +57,7 @@ def fig1(d):
                              "병원 용량 ×0.5 (수술실 c_bar 2.16→1.30)",
                              "병원 용량 ×2.0 (수술실 c_bar 2.16→4.32)"]):
         v = d.get(tag, {})
-        for fam in ("K", "T", "L", "H", "Q"):
+        for fam in ("K", "T", "L", "H", "Q", "S"):
             if fam not in v:
                 continue
             g = np.array(v[fam]["grid"])
@@ -105,7 +106,7 @@ def fig2(d, ceff):
 
 
 def fig3(t):
-    fams = [f for f in ("K", "T", "L", "H", "Q") if f in set(t.family)]
+    fams = [f for f in ("K", "T", "L", "H", "Q", "S") if f in set(t.family)]
     fig, ax = plt.subplots(figsize=(11, 4.6))
     order = sorted(t.setting.unique())
     w = 0.8 / len(fams)
@@ -128,7 +129,7 @@ def fig4(rows):
     df = pd.DataFrame(rows).set_index("setting").sort_index()
     fig, ax = plt.subplots(figsize=(11, 4.6))
     y = np.arange(len(df))
-    for i, fam in enumerate([f for f in ("Q", "H", "L", "T") if f + "_d" in df]):
+    for i, fam in enumerate([f for f in ("Q", "S", "H", "L", "T") if f + "_d" in df]):
         ax.errorbar(df[fam + "_d"] * 1000, y + (i - 1.5) * .18, xerr=df[fam + "_ci"] * 1000,
                     fmt="o", ms=4, lw=1.3, color=COL[fam], label=NAME[fam].split("[")[0].strip())
     ax.axvline(0, color=INK, lw=1)
@@ -153,9 +154,10 @@ def main():
     ceff = {s: np.maximum(1, np.round(c0 * s)) for s in (0.5, 0.75, 1.0, 1.5, 2.0)}
 
     BASE = {"K": ("lam_", "K12"), "T": ("lam_", "T9"), "H": ("lam_", "H12"), "L": ("lamL_", "L14")}
-    qb = d["base"].get("Q")
-    if qb:
-        BASE["Q"] = ("lamQ_", f"Q{qb['lam']:g}")
+    for fam, pre in (("Q", "lamQ_"), ("S", "lamS_")):
+        b = d["base"].get(fam)
+        if b:
+            BASE[fam] = (pre, f"{fam}{b['lam']:g}")
     rows = []
     for tag in sorted({os.path.basename(f).split("_", 1)[1][:-4]
                        for f in glob.glob(str(SWEEP / "lam_*.csv"))}):
