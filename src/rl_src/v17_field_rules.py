@@ -30,6 +30,7 @@ from multiprocessing import Pool
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 for _v in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
     os.environ.setdefault(_v, "1")
@@ -472,7 +473,8 @@ FIELD_CARD_ADOPTED = {"lam_km_per_patient": 12.0, "red_uav_km": 12.0, "yellow_ho
 #   "load" 가 CARD 채택값 = 입원 census + 이송 중. 나머지는 "RL 이 고른 변수가 맞는가"를
 #   묻는 대조군이다 — 특히 p_sent 는 LB-T3 계열이 쓰는 축이고, in_flight 단독은 병원
 #   실시간 연계 없이 현장에서 셀 수 있는(I1) 신호다.
-LOAD_TERMS = ("load", "p_sent", "in_flight", "occ", "occ_ratio", "cap_deficit", "zero")
+LOAD_TERMS = ("load", "p_sent", "in_flight", "occ", "occ_ratio", "cap_deficit", "zero",
+              "hinge", "hinge1", "hingerate")
 
 
 def _load_vector(ctx, term: str, base):
@@ -493,6 +495,20 @@ def _load_vector(ctx, term: str, base):
         return -np.asarray(ctx["cap_remain"], float)
     if term == "zero":
         return np.zeros_like(o)
+    if term == "hingerate":
+        # 완전 유도형: 새 환자의 치료개시 지연 = (앞선 환자수 + 1 − 서버수)+ / 서버수 × 서비스시간.
+        # 서버수로 나누는 것까지 부하항에 넣으면 남는 계수는 **평균 서비스시간(분)** 하나뿐이고
+        # 그 값은 병원 명부에서 알려져 있다(Red tier3 40 · Yellow tier3 20 / tier2 30분).
+        # 즉 이 형태에서 lambda 는 튜닝 파라미터가 아니라 관측 가능한 물리량이어야 한다.
+        c = np.maximum(np.asarray(base["max_capa"], float), 1.0)
+        return np.maximum(o + f + 1.0 - c, 0.0) / c
+    if term in ("hinge", "hinge1"):
+        # 대기행렬 유도형: 새 환자의 치료개시 지연 = (앞선 환자수 - 서버수)+ × (서비스시간/서버수).
+        # 여기서는 앞 괄호(초과분)만 부하로 내주고 뒤 계수는 lambda 가 흡수한다.
+        # 서버수 = 수술실수(입원 게이트). hinge1 은 자기 자신을 줄에 포함(+1)한 보수적 형태.
+        c = np.maximum(np.asarray(base["max_capa"], float), 1.0)
+        extra = 1.0 if term == "hinge1" else 0.0
+        return np.maximum(o + f + extra - c, 0.0)
     raise ValueError(f"미지 load_term: {term}")
 
 
@@ -604,6 +620,233 @@ def make_field_card_policy(lam_km_per_patient: float = 6.0,
 
     fn.policy_name = (f"FIELD_CARD[{dist_mode}/{load_term}] lam={lam_km_per_patient:g} "
                       f"red_km={red_uav_km:g} yhold={yellow_hold:g}")
+    return fn
+
+
+def make_field_card_time_policy(lam_min_per_patient: float = 14.4,
+                                red_gain_min: float = 6.7,
+                                yellow_hold: float = 0.0,
+                                h_pad: int = H_PAD,
+                                load_term: str = "load",
+                                lam_uav: float | None = None):
+    """CARD-T — CARD 와 같은 3단 구조이되 거리축을 **분(分)** 으로 바꾼 규칙집 (v20).
+
+    CARD 의 채택 임계값(lam 12 km/명, red_km 12 km)은 속도 50/200 km/h·인계 5/10분인
+    한 시나리오에서만 튜닝된 값이라 물리 파라미터가 바뀌면 같이 움직인다. 시간축은
+    속도에 불변이고, 부하 교환율도 "수술실 1개가 환자 1명을 처리하는 시간" 같은 시스템
+    구조상수로 해석할 수 있다. 그 가설을 폐루프로 재기 위한 대조 규칙이다.
+
+    1단 등급 : CARD 와 동일 — Yellow 현장대기가 `yellow_hold` 명 이하이고 UAV 가 현장에
+               있으면 Red, 그 밖에는 Yellow.
+    3단 수단 : 현장에 한 종류만 대기하면 그것. 둘 다면 Red 는 시간이득
+               ``gain = t_a - t_u`` 가 `red_gain_min` 분을 넘을 때 UAV, 그 밖에는 AMB.
+               t_a = AMB 적격 중 tier3 만 모은 최소 도달시간(적격 tier3 가 없으면 AMB
+               적격 전체), t_u = UAV 적격 최소 도달시간. Yellow 는 AMB.
+    2단 목적지: 확정된 수단 m 에 대해 ``t_m(h) + lam_min_per_patient × load(h)`` 최소.
+               부하는 CARD 와 같은 `_load_vector`(기본 load = 입원 census + 이송 중).
+
+    도달시간은 ``amb_HtoS_t[0] + amb_handover_time``(UAV 도 동형)이며 **속도·인계시간을
+    하드코딩하지 않고 en_properties 에서 읽는다** — 파라미터 축 스윕이 이 값들을 런타임에
+    바꾸기 때문이다. 거리축 CARD 와 달리 정규화 진단모드(dist_mode)는 두지 않는다.
+    """
+    if load_term not in LOAD_TERMS:
+        raise ValueError(f"load_term 은 {LOAD_TERMS} 중 하나 (got {load_term})")
+    from aggregate_obs import AggregateObsWrapper
+    from loadbalance_heuristic import _codec_from_mask
+    from score_features import build_ctx, compute_static
+
+    cache = {"mid": None}
+
+    def _static(env):
+        mid = id(env.en_manager)
+        if cache["mid"] != mid:
+            base = compute_static(env)
+            H = int(base["H"])
+            props = env.en_manager.en_properties
+            ap = props.get("ambulance", {}) or {}
+            up = props.get("uav", {}) or {}
+
+            def reach(raw, handover):
+                """현장→병원 도달시간(분) = 이송 평균시간 + 인계시간. 병원축을 H 로 자른다."""
+                v = np.asarray(raw, float).reshape(-1)
+                if v.size < H:                       # 해당 수단 미보유 → 도달 불가
+                    v = np.full(H, np.inf)
+                return v[:H] + float(handover)
+
+            cache.update(
+                mid=mid, base=base, H=H,
+                t_amb=reach(base["t_amb"], ap.get("amb_handover_time", 0.0)),
+                t_uav=reach(base["t_uav"], up.get("uav_handover_time", 0.0)),
+                tier3=np.asarray(base["is_tier3"], float),
+            )
+        return cache
+
+    def fn(obs, mask, env_unwrapped):
+        u = env_unwrapped
+        mask = np.asarray(mask, dtype=bool)
+        st = _static(u)
+        H = st["H"]
+        encode = _codec_from_mask(len(mask), h_pad)
+        dobs = u.en_manager.get_full_obs()
+        dobs["time"] = u.ev_manager.time
+        ctx = build_ctx(u, static=st["base"], dobs=dobs)
+        load = _load_vector(ctx, load_term, st["base"])
+        pa = AggregateObsWrapper._patient_agg(np.asarray(dobs["p_states"]))[:10]
+        red_wait, yellow_wait = float(pa[1]), float(pa[6])
+
+        def elig(c, m):
+            idx = [h for h in range(H) if mask[encode(c, h + 1, m)]]
+            return np.asarray(idx, int)
+
+        sets = {(c, m): elig(c, m) for c in (0, 1) for m in (0, 1)}
+
+        # --- 1단: 등급 ---
+        can = {c: (sets[(c, 0)].size + sets[(c, 1)].size) > 0 for c in (0, 1)}
+        uav_here = sets[(0, 1)].size > 0 or sets[(1, 1)].size > 0
+        want_red = (yellow_wait <= yellow_hold) and uav_here
+        c = 0 if (want_red and can[0]) else (1 if can[1] else (0 if can[0] else None))
+        if c is None:                                  # 이송 불가 → 현장대기
+            return int(encode(0, 0, 0))
+
+        # --- 3단: 수단 (등급 확정 후) — 축만 km→분, 판정은 두 수단의 시간차 ---
+        has_a, has_u = sets[(c, 0)].size > 0, sets[(c, 1)].size > 0
+        if has_a and has_u:
+            if c == 0:
+                a = sets[(c, 0)]
+                t3 = a[st["tier3"][a] > 0.5]
+                t_a = float(st["t_amb"][t3 if t3.size else a].min())
+                t_u = float(st["t_uav"][sets[(c, 1)]].min())
+                m = 1 if (t_a - t_u) > red_gain_min else 0
+            else:
+                m = 0
+        else:
+            m = 0 if has_a else 1
+
+        # --- 2단: 목적지 ---
+        cand = sets[(c, m)]
+        t = st["t_uav"] if m == 1 else st["t_amb"]
+        # lam_uav 를 주면 수단별 교환율을 쓴다. UAV 착륙지는 전국 고정 헬기장 26곳뿐이라
+        # 후보집합이 작고 지리적으로 고정이어서 AMB 와 같은 부하 교환율이 최적이 아니다
+        # (v20 실측: UAV 이송 비율이 0.5 를 넘는 조건에서 단일 lambda 의 최적이 내려간다).
+        # 기본 None = 기존 경로 비트동일.
+        lam = lam_min_per_patient if (m == 0 or lam_uav is None) else lam_uav
+        score = t[cand] + lam * load[cand]
+        best = cand[int(np.argmin(score))]
+        return int(encode(c, int(best) + 1, m))
+
+    fn.policy_name = (f"FIELD_CARD_T[{load_term}] lam_t={lam_min_per_patient:g}"
+                      + (f"/{lam_uav:g}" if lam_uav is not None else "")
+                      + f" red_gain={red_gain_min:g} yhold={yellow_hold:g}")
+    return fn
+
+
+def make_field_card_surv_policy(wait_scale: float = 1.0,
+                                red_gain_min: float = 6.6,
+                                yellow_hold: float = 0.0,
+                                h_pad: int = H_PAD):
+    """CARD-S — 목적함수를 직접 최대화하는 무(無)튜닝 규칙집 (v20).
+
+    앞선 형태들은 전부 ``도달시간 + lambda × 부하`` 라는 **선형 대리목적**이고 lambda 는
+    폐루프 격자로 골라야 했다. 여기서는 대리목적을 버리고 목적함수 자체를 쓴다 —
+    시뮬의 보상이 곧 "치료개시 시각의 생존확률" 이므로, 각 후보 병원에 대해 그 시각을
+    추정해 생존확률이 가장 큰 곳을 고르면 된다.
+
+        치료개시 시각 = 현재시각 + 이송시간(분) + 인계시간 + 대기시간
+        대기시간      = S(등급, 병원 tier) × max(0, 부하 + 1 − 수술실수) / 수술실수
+        점수          = getSurvProb(치료개시 시각, 등급)   ← 최대화
+
+    이 식에 **튜닝 파라미터가 없다**. S 는 병원 명부의 치료시간 상수(Red tier3 40 ·
+    Yellow tier3 20 / tier2 30분), 수술실수·거리·속도·인계는 전부 관측값, 생존곡선은
+    문헌값이다. ``wait_scale`` 은 이론 검증용 배율이고 **1.0 이 이론값**이다
+    (0 이면 대기 무시 = 최근접, 크면 과잉 회피).
+
+    등급·수단 단계는 CARD-T 와 동일하다(비교 가능성 유지).
+    """
+    from aggregate_obs import AggregateObsWrapper
+    from loadbalance_heuristic import _codec_from_mask
+    from score_features import build_ctx, compute_static
+
+    cache = {"mid": None}
+
+    def _static(env):
+        mid = id(env.en_manager)
+        if cache["mid"] != mid:
+            base = compute_static(env)
+            H = int(base["H"])
+            props = env.en_manager.en_properties
+            ap = props.get("ambulance", {}) or {}
+            up = props.get("uav", {}) or {}
+
+            def reach(raw, handover):
+                v = np.asarray(raw, float).reshape(-1)
+                if v.size < H:
+                    v = np.full(H, np.inf)
+                return v[:H] + float(handover)
+
+            tier3 = np.asarray(base["is_tier3"], float)
+            # 서비스시간 상수표 — 등급 × 병원 tier. Red 는 tier2 치료 불가(마스크가 이미 차단).
+            pi = props["patient"]["patient_info"]
+            t3 = pd.to_numeric(pi["treat_tier3_mean"], errors="coerce").to_numpy(float)
+            t2 = pd.to_numeric(pi["treat_tier2_mean"], errors="coerce").to_numpy(float)
+            svc = np.zeros((2, H))
+            for c in (0, 1):
+                svc[c] = np.where(tier3 > 0.5, t3[c], t2[c])
+            svc = np.nan_to_num(svc, nan=float(np.nanmax(t3)))
+            cache.update(mid=mid, base=base, H=H, tier3=tier3,
+                         t_amb=reach(base["t_amb"], ap.get("amb_handover_time", 0.0)),
+                         t_uav=reach(base["t_uav"], up.get("uav_handover_time", 0.0)),
+                         capa=np.maximum(np.asarray(base["max_capa"], float), 1.0),
+                         svc=svc)
+        return cache
+
+    def fn(obs, mask, env_unwrapped):
+        u = env_unwrapped
+        mask = np.asarray(mask, dtype=bool)
+        st = _static(u)
+        H = st["H"]
+        encode = _codec_from_mask(len(mask), h_pad)
+        dobs = u.en_manager.get_full_obs()
+        now = float(u.ev_manager.time)
+        dobs["time"] = now
+        ctx = build_ctx(u, static=st["base"], dobs=dobs)
+        load = np.asarray(ctx["occ"], float) + np.asarray(ctx["in_flight"], float)
+        pa = AggregateObsWrapper._patient_agg(np.asarray(dobs["p_states"]))[:10]
+        yellow_wait = float(pa[6])
+
+        def elig(c, m):
+            return np.asarray([h for h in range(H) if mask[encode(c, h + 1, m)]], int)
+
+        sets = {(c, m): elig(c, m) for c in (0, 1) for m in (0, 1)}
+        can = {c: (sets[(c, 0)].size + sets[(c, 1)].size) > 0 for c in (0, 1)}
+        uav_here = sets[(0, 1)].size > 0 or sets[(1, 1)].size > 0
+        want_red = (yellow_wait <= yellow_hold) and uav_here
+        c = 0 if (want_red and can[0]) else (1 if can[1] else (0 if can[0] else None))
+        if c is None:
+            return int(encode(0, 0, 0))
+
+        has_a, has_u = sets[(c, 0)].size > 0, sets[(c, 1)].size > 0
+        if has_a and has_u:
+            if c == 0:
+                a = sets[(c, 0)]
+                t3 = a[st["tier3"][a] > 0.5]
+                t_a = float(st["t_amb"][t3 if t3.size else a].min())
+                t_u = float(st["t_uav"][sets[(c, 1)]].min())
+                m = 1 if (t_a - t_u) > red_gain_min else 0
+            else:
+                m = 0
+        else:
+            m = 0 if has_a else 1
+
+        cand = sets[(c, m)]
+        t = st["t_uav"] if m == 1 else st["t_amb"]
+        wait = st["svc"][c] * np.maximum(load + 1.0 - st["capa"], 0.0) / st["capa"]
+        arrive = now + t[cand] + wait_scale * wait[cand]
+        surv = np.array([u.getSurvProb(float(x), c) for x in arrive])
+        best = cand[int(np.argmax(surv))]
+        return int(encode(c, int(best) + 1, m))
+
+    fn.policy_name = (f"FIELD_CARD_S wait_scale={wait_scale:g} "
+                      f"red_gain={red_gain_min:g} yhold={yellow_hold:g}")
     return fn
 
 

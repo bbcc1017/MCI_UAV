@@ -73,7 +73,9 @@ def build_rule_policies(specs, region: str | None = None):
     from lb3_policy import make_agnostic_lb_policy
     from loadbalance_heuristic import make_cap_policy
     from fit_v10_heuristic_rules import all_rule_names
-    from v17_field_rules import make_field_card_policy, make_field_card_policy_local
+    from v17_field_rules import (make_field_card_policy, make_field_card_policy_local,
+                                 make_field_card_time_policy,
+                                 make_field_card_surv_policy)
 
     out = []
     for spec in specs:
@@ -95,6 +97,26 @@ def build_rule_policies(specs, region: str | None = None):
             else:
                 out.append((name, make_field_card_policy_local(
                     params, region, dist_mode=dm, load_term=lt)))
+            continue
+        if body.startswith("cards:"):
+            # cards:<wait_scale>,<red_gain_min>,<yhold> — 목적함수 직접 최대화(무튜닝, v20)
+            toks = body[len("cards:"):].split(",")
+            ws, rgain, yh = (float(x) for x in toks[:3])
+            out.append((name, make_field_card_surv_policy(ws, rgain, yh)))
+            continue
+        if body.startswith("cardtm:"):
+            # cardtm:<lam_amb>,<lam_uav>,<red_gain_min>,<yhold>[,load_term] — 수단별 교환율 (v20)
+            toks = body[len("cardtm:"):].split(",")
+            la, lu, rgain, yh = (float(x) for x in toks[:4])
+            lt = toks[4] if len(toks) > 4 else "load"
+            out.append((name, make_field_card_time_policy(la, rgain, yh, load_term=lt, lam_uav=lu)))
+            continue
+        if body.startswith("cardt:"):
+            # cardt:lam_min,red_gain_min,yhold[,load_term] — 시간(분)축 CARD-T (v20)
+            toks = body[len("cardt:"):].split(",")
+            lam_t, rgain, yh = (float(x) for x in toks[:3])
+            lt = toks[3] if len(toks) > 3 else "load"
+            out.append((name, make_field_card_time_policy(lam_t, rgain, yh, load_term=lt)))
             continue
         if body.startswith("card:"):
             # card:lam,red_km,yhold[,dist_mode[,load_term]]
@@ -252,6 +274,11 @@ def main() -> None:
             "MCI_OBS_VARIANT": "essential+load+valid",
             "MCI_H_PAD": "47",
         },
+        # v20 파라미터 축 실험 provenance — 시나리오 물리를 바꾸는 런타임 노브를 그대로 기록한다.
+        # 이게 없으면 같은 정책 스펙의 CSV 가 어느 물리 조건에서 나온 것인지 사후에 알 수 없다.
+        "scenario_knobs": {k: v for k, v in sorted(os.environ.items())
+                           if k.startswith("MCI_") and k not in
+                           ("MCI_CAP_GATE", "MCI_OBS_VARIANT", "MCI_H_PAD", "MCI_REWARD_MODE")},
         "n_rows": len(rows),
         "output": str(out),
         "output_sha256": sha256_file(out),

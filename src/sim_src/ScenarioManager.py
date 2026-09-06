@@ -6,6 +6,60 @@ import json
 
 from EntityManager import EntityManager
 from EventManager import EventManager
+
+# ───── 속도·인계시간 런타임 오버라이드 (임계값 일반화 실험용) ─────────────────
+# 배포 규칙 CARD 의 임계값(Red UAV 전환 12km, 부하 교환율 12km/명 등)은 velocity
+# 50/200 km/h · handover 5/10분인 특정 시나리오에서만 튜닝된 값이다. 임계값을 km 이
+# 아니라 분(分) 단위로 쓰면 속도에 불변인지 폐루프로 재려면 속도·인계시간을 축으로
+# 훑어야 한다. 이동시간은 런타임에 "거리 × 60 / 속도" 로 계산되므로 시나리오 재생성
+# 없이 여기서 갈아끼울 수 있다(MCI_AMB_NUM·MCI_CAPA_SCALE 과 같은 성격의 런타임 노브).
+#   MCI_AMB_VELOCITY / MCI_UAV_VELOCITY   (km/h, float)
+#   MCI_AMB_HANDOVER / MCI_UAV_HANDOVER   (분,   float)
+# 미설정(빈 문자열·공백 포함)이면 YAML 값을 그대로 쓴다 → 구 동작과 비트동일.
+# ⚠️ is_use_time=True(Kakao duration 기반) 시나리오에서는 출동시간(amb_dispatch_t)과
+#    병원→현장 이송시간(t_HtoS_road_api)이 API duration 에서 오므로 속도 노브가
+#    **부분적으로만** 먹는다(AMB 는 병원↔병원 diversion 구간에만 반영). 이때 1회 경고.
+_VELOCITY_KNOB_WARNED = set()   # is_use_time 부분적용 경고를 노브당 1회만 내기 위한 플래그
+
+
+def _env_float_knob(name):
+    """환경변수를 float 로 읽는다. 미설정·빈 문자열·공백이면 None(= 구 동작 유지)."""
+    raw = os.environ.get(name, "")
+    if not raw.strip():
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        raise ValueError(f"{name}={raw!r} 을(를) 숫자로 해석할 수 없습니다.") from None
+
+
+def _override_velocity(name, cfg_velocity, use_api_time):
+    """속도(km/h) 노브 적용. 미설정이면 cfg 값 그대로 반환."""
+    v = _env_float_knob(name)
+    if v is None:
+        return cfg_velocity
+    if v <= 0:
+        raise ValueError(
+            f"{name}={os.environ[name]!r} 은(는) 사용할 수 없습니다. 이동시간을 "
+            "'거리 × 60 / 속도'(분)로 계산하므로 속도는 0보다 큰 km/h 여야 합니다."
+        )
+    if use_api_time and name not in _VELOCITY_KNOB_WARNED:
+        _VELOCITY_KNOB_WARNED.add(name)
+        print(f"  ⚠️ {name}={v} 설정됨 — 이 시나리오는 is_use_time=True(API duration 기반)라"
+              " 출동·병원→현장 이송시간은 duration 에서 오고 속도 노브는 부분적으로만 반영됩니다.")
+    return v
+
+
+def _override_handover(name, cfg_handover):
+    """인계시간(분) 노브 적용. 미설정이면 cfg 값 그대로 반환."""
+    h = _env_float_knob(name)
+    if h is None:
+        return cfg_handover
+    if h < 0:
+        raise ValueError(f"{name}={os.environ[name]!r} 은(는) 사용할 수 없습니다. 인계시간은 0 이상의 분이어야 합니다.")
+    return h
+
+
 class ScenarioManager():
     def __init__(self, configs, rng=None):
         if rng is not None:
@@ -240,8 +294,10 @@ class ScenarioManager():
                     print("  AMB 비활성 (대수 0) - amb_states/dispatch_t/HtoS_t/HtoH_t 모두 빈 배열로 초기화")
                     reg_prop['amb_dispatch_d'] = np.array([], dtype='float32')
                     reg_prop['amb_dispatch_t'] = None
-                    reg_prop['amb_v'] = cfg_amb['velocity']
-                    reg_prop['amb_handover_time'] = cfg_amb['handover_time']
+                    reg_prop['amb_v'] = _override_velocity(
+                        "MCI_AMB_VELOCITY", cfg_amb['velocity'], cfg_amb.get('is_use_time', False))
+                    reg_prop['amb_handover_time'] = _override_handover(
+                        "MCI_AMB_HANDOVER", cfg_amb['handover_time'])
                     reg_prop['amb_response_t'] = (np.array([]), np.array([]), np.array([]))
                     reg_prop['amb_HtoS_t']     = (np.array([]), np.array([]), np.array([]))
                     reg_prop['amb_HtoH_t']     = (np.array([]), np.array([]), np.array([]))
@@ -258,8 +314,10 @@ class ScenarioManager():
                     print("  ⚠️ amb_info에 duration 컬럼이 없습니다. 거리/속도 기반 계산으로 전환합니다.")
                     reg_prop['amb_dispatch_t'] = None
 
-                reg_prop['amb_v'] = cfg_amb['velocity']
-                reg_prop['amb_handover_time'] = cfg_amb['handover_time']
+                reg_prop['amb_v'] = _override_velocity(
+                    "MCI_AMB_VELOCITY", cfg_amb['velocity'], cfg_amb.get('is_use_time', False))
+                reg_prop['amb_handover_time'] = _override_handover(
+                    "MCI_AMB_HANDOVER", cfg_amb['handover_time'])
             except FileNotFoundError:
                 print("구급차 데이터 생성에 필요한 파일이 부족합니다.")
         else:
@@ -328,8 +386,9 @@ class ScenarioManager():
                 if reg_prop['uav_num'] == 0:
                     print("  UAV 대수가 0입니다. 기본 파라미터로 초기화합니다.")
                     reg_prop['uav_dispatch_d'] = np.array([], dtype='float32')
-                    reg_prop['uav_v'] = cfg_uav['velocity']
-                    reg_prop['uav_handover_time'] = cfg_uav['handover_time']
+                    reg_prop['uav_v'] = _override_velocity("MCI_UAV_VELOCITY", cfg_uav['velocity'], False)
+                    reg_prop['uav_handover_time'] = _override_handover(
+                        "MCI_UAV_HANDOVER", cfg_uav['handover_time'])
                     # 빈 파라미터로 초기화
                     reg_prop['uav_response_t'] = (np.array([]), np.array([]), np.array([]))
                     reg_prop['uav_HtoS_t'] = (np.array([]), np.array([]), np.array([]))
@@ -338,8 +397,9 @@ class ScenarioManager():
                     return reg_prop
                                     
                 reg_prop['uav_dispatch_d'] = uav_info['init_distance'].to_numpy(dtype='float32')
-                reg_prop['uav_v'] = cfg_uav['velocity']
-                reg_prop['uav_handover_time'] = cfg_uav['handover_time']
+                reg_prop['uav_v'] = _override_velocity("MCI_UAV_VELOCITY", cfg_uav['velocity'], False)
+                reg_prop['uav_handover_time'] = _override_handover(
+                    "MCI_UAV_HANDOVER", cfg_uav['handover_time'])
             except FileNotFoundError:
                 print("UAV 데이터 생성에 필요한 파일이 부족합니다.")
         else:

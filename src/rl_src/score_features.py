@@ -73,9 +73,13 @@ def compute_static(env) -> dict:
     H = int(hp['hos_num'])
     is_tier3 = (np.asarray(hp['hos_tier']).reshape(-1) == 3).astype(np.float32)
     max_send = np.asarray(hp['hos_max_send'], float).reshape(-1)
+    # 입원(치료개시) 게이트의 서버수 = 수술실수(hos_max_capa). 발송 게이트(max_send =
+    # 수술실수+병상수)와 다른 축이다 — 대기시간 이론(대기 = 초과분 × 서비스시간/서버수)이
+    # 쓰는 것은 이쪽이다. v20 에서 부하항 hinge 변형이 소비한다. (키 추가라 기존 경로 무영향)
+    max_capa = np.asarray(hp.get('hos_max_capa', max_send), float).reshape(-1)
     eta_amb, eta_uav = get_static_eta(env, H)          # 최근접=1 정규화 + MCI_ETA_CLIP
     t_amb, t_uav = _raw_times(env, H)                  # raw 분(모드 간 비교·게이트용)
-    return {"H": H, "is_tier3": is_tier3, "max_send": max_send,
+    return {"H": H, "is_tier3": is_tier3, "max_send": max_send, "max_capa": max_capa,
             "eta_amb": np.asarray(eta_amb, float), "eta_uav": np.asarray(eta_uav, float),
             "t_amb": np.asarray(t_amb, float), "t_uav": np.asarray(t_uav, float)}
 
