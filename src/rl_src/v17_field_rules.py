@@ -475,7 +475,8 @@ FIELD_CARD_ADOPTED = {"lam_km_per_patient": 12.0, "red_uav_km": 12.0, "yellow_ho
 #   실시간 연계 없이 현장에서 셀 수 있는(I1) 신호다.
 LOAD_TERMS = ("load", "p_sent", "in_flight", "occ", "occ_ratio", "cap_deficit", "zero",
               "hinge", "hinge1", "hingerate",
-              "hinge1_psent", "hingerate_psent", "hingerate_if")
+              "hinge1_psent", "hingerate_psent", "hingerate_if",
+              "hinge1_if", "hinge1_occ", "hingerate_occ")
 
 
 def _load_vector(ctx, term: str, base):
@@ -506,6 +507,17 @@ def _load_vector(ctx, term: str, base):
         q = np.asarray(ctx["p_sent"], float) if term != "hingerate_if" else f
         ex = np.maximum(q + 1.0 - c, 0.0)
         return ex if term == "hinge1_psent" else ex / c
+    if term in ("hinge1_if", "hinge1_occ", "hingerate_occ"):
+        # ★ 정보수준 사다리 보강. 함수형은 그대로 두고 부하 신호의 출처만 갈아끼운다.
+        #   occ(입원 census)      = 병원 전산 → 통신 필요           (I2)
+        #   in_flight(그 병원행 이송중) = 현장 지휘소 배차 기록 → 통신 불요 (I1a)
+        #   p_sent(내가 보낸 누적)   = 현장 지휘소 화이트보드 → 통신 불요 (I1b)
+        # 같은 초과분 형태에 신호만 바꿔 끼우므로 (정보수준 × 함수형) 격자가 닫히고
+        # 통신 비용을 함수형 효과와 분리해 잴 수 있다.
+        c = np.maximum(np.asarray(base["max_capa"], float), 1.0)
+        q = f if term == "hinge1_if" else o
+        ex = np.maximum(q + 1.0 - c, 0.0)
+        return ex / c if term == "hingerate_occ" else ex
     if term == "hingerate":
         # 완전 유도형: 새 환자의 치료개시 지연 = (앞선 환자수 + 1 − 서버수)+ / 서버수 × 서비스시간.
         # 서버수로 나누는 것까지 부하항에 넣으면 남는 계수는 **평균 서비스시간(분)** 하나뿐이고

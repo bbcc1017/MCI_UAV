@@ -6,8 +6,11 @@
   F2 ★임계값의 정체 — 치료시간 축에서 lambda 가 비례한다
   F3 ★용량축 — 구조 보정마다 의존이 한 단위씩 사라진다
   F4 전이 후회 — 상수 하나로 27개 다른 조건을 덮는가
-  F5 최종 판정 (미개봉 판정셋 750좌표)
-  F6 기전 — 부하항은 대기를 줄여 치료개시를 앞당긴다 · UAV 도입 효과
+  F5 최종 판정 (미개봉 판정셋 750좌표 x 시드 0-29, 교사 두 계열)
+  F6 기전 — 부하항은 대기를 줄여 치료개시를 앞당긴다
+  F7 UAV 도입 효과
+  F8 ★정보수준 x 함수형 격자 — 통신이 있고 없을 때의 카드
+  F9 ★시드 수 감사 — 10시드 판정과 30시드 판정
 
 실행: python tools/labmeeting_20260908/plot_brief.py
 산출: docs/260908랩미팅/*.svg
@@ -32,6 +35,7 @@ from v20_threshold_report import cube, paired, _interp_opt  # noqa: E402
 
 OUT = REPO / "docs/260908랩미팅"
 V20 = REPO / "results/scoreboard/v20"
+V21 = REPO / "results/scoreboard/v21"
 INK, SUB, GRID = "#1F2933", "#6B7683", "#D5DAE0"
 C = {"K": "#8C96A0", "T": "#5B8DEF", "L": "#F2994A", "H": "#27AE60",
      "Q": "#C0392B", "S": "#8E44AD", "PPO": "#2D3B8F", "LB": "#B0B7BF"}
@@ -211,30 +215,72 @@ def f4():
 
 # ------------------------------------------------------------------ F5
 def f5():
-    T = V20 / "theory"
-    a = pd.read_csv(T / "test750_final.csv")
-    b = pd.read_csv(T / "test750_ppo.csv")
-    cb = {p: cube(a, p) for p in a.policy.unique()}
-    cb["PPO"] = cube(b, "PPO_NATIONAL")
+    """최종 판정 — test750 x seed 0-29. 왼쪽 = 절대 수준, 오른쪽 = 최강 교사 대비 paired."""
+    sys.path.insert(0, str(REPO / "tools"))
+    from v21_infoladder_report import _judge_arms
+    from v20_threshold_report import paired
+    cb = _judge_arms(29)
     LAB = {"START_LB3": "현실적 휴리스틱 (START-LB3)", "CARD_K12": "현행 현장 규칙집",
-           "CARD_H12": "시간축 + 대기초과", "CARD_MODE": "수단별 교환율",
-           "PPO": "강화학습 교사 (PPO)", "CARD_P18": "유도형 · 병원 통신 불필요",
-           "CARD_S062": "유도형 · 무튜닝", "CARD_Q18": "유도형 (채택)"}
+           "CARD_H12": "유도형 · 초과분", "CARD_MODE": "유도형 · 수단별 교환율",
+           "PPO_NATIONAL": "강화학습 교사 · 전국 단일", "PPO_SIDO": "강화학습 교사 · 광역시도 17벌",
+           "CARD_P18": "유도형 · 병원 통신 불필요", "CARD_S062": "유도형 · 무튜닝",
+           "CARD_Q18": "유도형 (채택)"}
     COL = {"START_LB3": C["LB"], "CARD_K12": C["K"], "CARD_H12": C["H"], "CARD_MODE": C["H"],
-           "PPO": C["PPO"], "CARD_P18": C["S"], "CARD_S062": C["S"], "CARD_Q18": C["Q"]}
-    items = sorted(((p, c.mean()) for p, c in cb.items() if p in LAB), key=lambda kv: -kv[1])
-    fig, ax = plt.subplots(figsize=(10.5, 5.0))
-    y = np.arange(len(items))
+           "PPO_NATIONAL": "#7C86C4", "PPO_SIDO": C["PPO"],
+           "CARD_P18": C["S"], "CARD_S062": C["S"], "CARD_Q18": C["Q"]}
+    items = sorted(((p, c.mean()) for p, c in cb.items() if p in LAB), key=lambda kv: kv[1])
+    fig, axes = plt.subplots(1, 2, figsize=(14.6, 5.0),
+                             gridspec_kw={"width_ratios": [1.25, 1]})
+    ax = axes[0]
+    lo = 0.1355
     for i, (p, v) in enumerate(items):
-        ax.barh(i, v, .68, color=COL[p], alpha=.93)
-        ax.text(v + 0.0012, i, f"{v:.4f}", va="center", fontsize=10,
-                fontweight="bold" if p in ("CARD_Q18", "PPO") else "normal")
-    ax.set_yticks(y); ax.set_yticklabels([LAB[p] for p, _ in items], fontsize=10)
-    ax.set_xlim(0, 0.19); ax.set_xlabel("예방가능 사망률 (낮을수록 좋음)")
+        ax.hlines(i, lo, v, color=COL[p], lw=2.2, alpha=.55)
+        ax.plot(v, i, "o", ms=11, color=COL[p],
+                markeredgecolor="white", markeredgewidth=1.2, zorder=4)
+        ax.text(v + .0009, i, f"{v:.4f}", va="center", fontsize=10,
+                fontweight="bold" if p in ("CARD_Q18", "PPO_SIDO") else "normal")
+    ax.axvline(cb["PPO_SIDO"].mean(), color=C["PPO"], ls=":", lw=1.5)
+    ax.set_yticks(np.arange(len(items)))
+    ax.set_yticklabels([LAB[p] for p, _ in items], fontsize=10)
+    ax.invert_yaxis()
+    ax.set_xlim(lo, .1755)
+    ax.set_xlabel("예방가능 사망률 (낮을수록 좋음)")
     ax.grid(alpha=.25, lw=.6, axis="x")
-    ax.axvline(cb["PPO"].mean(), color=C["PPO"], ls=":", lw=1.4)
-    ax.set_title("최종 판정 — 임계값 조정에 한 번도 쓰지 않은 750개 좌표\n"
-                 "점선 = 강화학습 교사 수준 · 전부 같은 좌표·같은 난수", fontsize=12.5, pad=12)
+    ax.set_title("절대 수준 — 가로축이 0 에서 시작하지 않는다\n"
+                 "점선 = 가장 강한 교사(광역시도 17벌)", fontsize=11.5, pad=10)
+
+    ax2 = axes[1]
+    ref = "PPO_SIDO"
+    order = [p for p, _ in items if p != ref]
+    ys, ds, cs, cols = [], [], [], []
+    for i, p in enumerate(order):
+        r = paired(cb[ref], cb[p])          # 양수 = 교사가 더 나쁘다 = 후보 우세
+        ys.append(i); ds.append(-r["delta"]); cs.append(r["ci95"]); cols.append(COL[p])
+    XL = -0.0088
+    ax2.axvline(0, color=INK, lw=1.3)
+    ax2.axvspan(-0.00053, 0.00053, color="#D9E4F5", alpha=.8, zorder=0)
+    for y, d, c, col, p in zip(ys, ds, cs, cols, order):
+        if d < XL:                       # 축 밖 — 화살표와 값으로 표시
+            ax2.annotate(f"{d:+.4f}", xy=(XL + .0004, y), xytext=(XL + .0026, y),
+                         va="center", ha="left", fontsize=9, color=col, fontweight="bold",
+                         arrowprops=dict(arrowstyle="-|>", color=col, lw=1.6))
+            continue
+        ax2.plot([d - c, d + c], [y, y], "-", color=INK, lw=1.8, zorder=3)
+        for e in (d - c, d + c):
+            ax2.plot([e, e], [y - .16, y + .16], "-", color=INK, lw=1.5, zorder=3)
+        ax2.plot(d, y, "o", ms=10, color=col, markeredgecolor="white",
+                 markeredgewidth=1.1, zorder=4)
+    ax2.text(0.0007, -0.62, "판정선 이내\n= 동률", ha="left", va="center",
+             fontsize=8.5, color="#3C5A99")
+    ax2.set_yticks(ys); ax2.set_yticklabels([LAB[p] for p in order], fontsize=9.5)
+    ax2.invert_yaxis()
+    ax2.set_xlim(XL, 0.0028)
+    ax2.set_ylim(len(order) - .4, -1.05)
+    ax2.set_xlabel("가장 강한 교사와의 차이 (왼쪽 = 교사보다 나쁘다)")
+    ax2.grid(alpha=.25, lw=.6, axis="x")
+    ax2.set_title("가장 강한 교사 대비 짝비교 · 95% 신뢰구간\n"
+                  "유도형 규칙은 교사를 넘지 않는다 — 같은 수준이다", fontsize=11.5, pad=10)
+    fig.tight_layout()
     save(fig, "F5_최종판정")
 
 
@@ -302,6 +348,150 @@ def f7():
     save(fig, "F7_UAV도입효과")
 
 
+# ------------------------------------------------------------------ F8
+def f8():
+    """정보수준(부하 신호 출처) x 함수형 격자 — 통신이 있고 없을 때의 카드 성능."""
+    sys.path.insert(0, str(REPO / "tools"))
+    from v21_infoladder_report import CELLS
+    f = V21 / "infoladder/ladder_optima.json"
+    if not f.exists():
+        print("  F8 skip (ladder_optima 없음)"); return
+    rows = {r["cell"]: r for r in json.loads(f.read_text(encoding="utf-8"))}
+    INFO = ["I3 census+이송중", "I2 census만", "I1a 이송중만", "I1b 보낸누적"]
+    SHORT = {"I3 census+이송중": "병원 재고 + 내 이송기록\n(통신 필요)",
+             "I2 census만": "병원 재고만\n(통신 필요)",
+             "I1a 이송중만": "지금 가는 중만\n(통신 불요)",
+             "I1b 보낸누적": "내가 보낸 누적\n(통신 불요)"}
+    FORMS = ["lin   q", "hinge (q+1-c)+", "rate  (q+1-c)+/c"]
+    FLAB = ["선형\n(수술실수 불요)", "초과분", "초과분 / 수술실수\n(유도형)"]
+    cell_of = {(v[0], v[1]): k for k, v in CELLS.items()}
+    fig, axes = plt.subplots(1, 2, figsize=(15.0, 5.6),
+                             gridspec_kw={"width_ratios": [1.5, 1]})
+    ax = axes[0]
+    w, x = 0.2, np.arange(len(FORMS))
+    COLS = [C["Q"], "#E07B54", "#4B9E6A", C["S"]]
+    for j, info in enumerate(INFO):
+        vals, labs = [], []
+        for form in FORMS:
+            k = cell_of.get((info, form))
+            r = rows.get(k) if k else None
+            vals.append(r["pdr"] if r else np.nan)
+            labs.append(f"{r['lam_best']:g}" if r else "")
+        hatch = "" if info.startswith(("I3", "I2")) else "//"
+        ax.bar(x + (j - 1.5) * w, vals, w * .92, color=COLS[j], alpha=.92,
+               hatch=hatch, edgecolor="white", linewidth=.7, label=SHORT[info])
+        for xi, (v, lb) in enumerate(zip(vals, labs)):
+            if np.isfinite(v) and v < .1565:      # 축 밖 칸의 라벨은 화살표 주석에 넣는다
+                ax.text(xi + (j - 1.5) * w, v + .0010, lb, ha="center", fontsize=8, color=SUB)
+    z = rows.get("Z")
+    if z:
+        ax.text(2.44, .1567, f"참고 · 부하를 아예 안 보면 {z['pdr']:.3f}",
+                ha="right", fontsize=9.5, color=SUB)
+    for j, info in enumerate(INFO):        # 축 밖으로 나간 칸을 화살표로 표시
+        if not info.startswith("I2"):
+            continue
+        for form in FORMS:
+            k = cell_of.get((info, form))
+            r = rows.get(k) if k else None
+            if not r:
+                continue
+            xi = FORMS.index(form)
+            ax.annotate(f"{r['pdr']:.3f}\n({r['lam_best']:g}분/명)",
+                        xy=(xi + (j - 1.5) * w, .1580),
+                        xytext=(xi + (j - 1.5) * w, .1495), ha="center", fontsize=8.5,
+                        color="#C0503A", fontweight="bold",
+                        arrowprops=dict(arrowstyle="-|>", color="#C0503A", lw=1.4))
+    ax.set_xticks(x); ax.set_xticklabels(FLAB, fontsize=9.5)
+    ax.set_ylabel("예방가능 사망률 (낮을수록 좋음)")
+    ax.set_ylim(.130, .1585)     # I2·I0 은 축 밖 — 아래 주석으로 표시
+    ax.grid(alpha=.25, lw=.6, axis="y")
+    ax.legend(fontsize=8.5, ncol=4, framealpha=.95, loc="lower center",
+              bbox_to_anchor=(.5, -.335), columnspacing=1.0, handlelength=1.3)
+    ax.set_title("무엇을 아느냐(색) x 어떻게 계산하느냐(가로축)\n"
+                 "막대 위 숫자 = 그 칸에서 다시 고른 교환율 · 사선 = 통신 불필요",
+                 fontsize=11.5, pad=10)
+
+    # 오른쪽: 판정셋(test750 x 30시드) 에서 확인한 카드 세트
+    ax2 = axes[1]
+    from v21_infoladder_report import _judge_arms
+    cb = _judge_arms(29)
+    SET = [("CARD_Q18", "A  통신 O · 완전판", True), ("CARD_S062", "A' 통신 O · 무튜닝", True),
+           ("CARD_P18", "B  통신 X · 완전판", False), ("PH9", "C  통신 X · 나눗셈 없음", False),
+           ("PL9", "D  통신 X · 선형(최소)", False), ("CARD_K12", "현행 규칙집", True),
+           ("OR32", "X  병원 재고만", True)]
+    SET = [(k, l, c) for k, l, c in SET if k in cb]
+    vals = [cb[k].mean() for k, _, _ in SET]
+    cols = [C["Q"] if c else C["S"] for _, _, c in SET]
+    cols[-1] = C["LB"]
+    ax2.barh(np.arange(len(SET)), vals, .68, color=cols, alpha=.9,
+             hatch=["" if c else "//" for _, _, c in SET], edgecolor="white", linewidth=.7)
+    for i, v in enumerate(vals):
+        ax2.text(min(v, .175) + .0012, i, f"{v:.4f}", va="center", fontsize=9)
+    ax2.set_yticks(np.arange(len(SET)))
+    ax2.set_yticklabels([l for _, l, _ in SET], fontsize=9)
+    ax2.invert_yaxis()
+    ax2.set_xlim(.130, .1865)
+    ax2.axvline(cb["PPO_SIDO"].mean(), color=C["PPO"], ls=":", lw=1.4)
+    ax2.set_xlabel("예방가능 사망률 (판정셋 750좌표 x 30시드)")
+    ax2.grid(alpha=.25, lw=.6, axis="x")
+    ax2.set_title("카드 세트 — 판정셋 확인\n점선 = 최강 교사 · 사선 = 통신 불필요", fontsize=11.5, pad=10)
+    fig.subplots_adjust(bottom=.26, wspace=.42, left=.075, right=.985, top=.86)
+    save(fig, "F8_정보수준격자")
+
+
+# ------------------------------------------------------------------ F9
+def f9():
+    """시드 수 감사 — 시드를 10개에서 30개로 되돌리면 결론이 바뀌는가."""
+    V20T = V20 / "theory"
+    v20 = pd.concat([pd.read_csv(V20T / "test750_final.csv"),
+                     pd.read_csv(V20 / "final30/test750_rules_s10_29.csv")], ignore_index=True)
+    v19p = pd.read_csv(REPO / "results/scoreboard/v19/ppo_test750.csv")
+
+    def M(df, pol):
+        return (df[df.policy == pol].pivot_table(index="region", columns="seed",
+                                                 values="pdr_woG").sort_index().to_numpy())
+    Q, P, S = M(v20, "CARD_Q18"), M(v19p, "NATIONAL"), M(v19p, "SIDO")
+    fig, axes = plt.subplots(1, 2, figsize=(13.6, 4.8),
+                             gridspec_kw={"width_ratios": [1.35, 1]})
+    ax = axes[0]
+    for D, lab, col in ((P - Q, "전국 단일 교사 대비", "#7C86C4"),
+                        (S - Q, "광역시도 17벌 교사 대비", C["PPO"])):
+        d = D.mean(0)
+        ax.plot(np.arange(30), d, "o-", ms=4.5, lw=1.4, color=col, label=lab, alpha=.9)
+    ax.axhline(0, color=INK, lw=1)
+    ax.axvspan(-0.5, 9.5, color="#F5C6C0", alpha=.35)
+    ax.text(4.5, ax.get_ylim()[1] * .92, "이번 주에 쓴 시드 0-9", ha="center", fontsize=9.5, color="#B03A2E")
+    ax.set_xlabel("시뮬레이션 시드")
+    ax.set_ylabel("규칙이 교사보다 좋은 폭\n(양수 = 규칙 우세)")
+    ax.grid(alpha=.25, lw=.6)
+    ax.legend(fontsize=9, framealpha=.95)
+    ax.set_title("시드마다 우열이 흔들린다 — 한 시드만 보면 마진과 같은 크기로 요동한다",
+                 fontsize=11.5, pad=10)
+
+    ax2 = axes[1]
+    labs, ds, cis, cols = [], [], [], []
+    for D, nm, col in ((P - Q, "전국 단일", "#7C86C4"), (S - Q, "광역시도 17벌", C["PPO"])):
+        for m in (10, 30):
+            d = D[:, :m].mean(0)
+            labs.append(f"{nm}\n시드 {m}개"); ds.append(d.mean())
+            cis.append(1.96 * D.mean(0).std(ddof=1) / np.sqrt(m)); cols.append(col)
+    x = np.arange(4)
+    ax2.bar(x, ds, .58, yerr=cis, capsize=5, color=cols, alpha=.92,
+            error_kw=dict(ecolor=INK, lw=1.2))
+    ax2.axhline(0, color=INK, lw=1)
+    ax2.axhline(0.00053, color="#B03A2E", ls=":", lw=1.4)
+    ax2.text(3.45, 0.00058, "판정선", ha="right", fontsize=9, color="#B03A2E")
+    for xi, (d, c) in enumerate(zip(ds, cis)):
+        ax2.text(xi, d + c + .00006, f"{d:+.5f}", ha="center", fontsize=9)
+    ax2.set_xticks(x); ax2.set_xticklabels(labs, fontsize=9)
+    ax2.set_ylabel("규칙 - 교사 (양수 = 규칙 우세)")
+    ax2.grid(alpha=.25, lw=.6, axis="y")
+    ax2.set_title("시드를 되돌리면 마진은 커지고 오차는 줄어든다\n"
+                  "다만 최강 교사 대비는 판정선 아래 = 동률", fontsize=11.5, pad=10)
+    fig.tight_layout()
+    save(fig, "F9_시드감사")
+
+
 def main():
     setup()
     opt = json.loads((V20 / "optima.json").read_text(encoding="utf-8"))
@@ -313,7 +503,7 @@ def main():
     )["수술실수"].values for k in random.sample(list(man), 40)]).astype(float)
     ceff = {s: np.maximum(1, np.round(c0 * s)).mean() for s in (0.5, 0.75, 1.0, 1.5, 2.0)}
     print("[brief] SVG 생성")
-    f1(opt); f2(); f3(opt, ceff); f4(); f5(); f6(); f7()
+    f1(opt); f2(); f3(opt, ceff); f4(); f5(); f6(); f7(); f8(); f9()
     print(f"[brief] 완료 → {OUT}")
 
 
