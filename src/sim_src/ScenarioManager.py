@@ -127,6 +127,21 @@ class ScenarioManager():
             if incident_type is not None:
                 raise NotImplementedError("사고 type 정보 반영은 아직 구현 전입니다.")
             assert math.isclose(patient_info['ratio'].sum(), 1.0), "환자 비율 합은 1이어야 합니다."
+            # 서비스시간(치료시간) 런타임 스케일 — 임계값 일반화 실험용.
+            # CARD 의 부하 교환율 lambda 는 이론상 '수술실 하나가 환자 하나를 처리하는 시간'
+            # (= 서비스시간 / 수술실수)이다. 그 주장을 직접 검증하려면 서비스시간 축을 흔들어야
+            # 하는데 지금까지 이 축만 고정돼 있었다. MCI_TREAT_SCALE=s 는 치료시간 평균을 s 배로
+            # 만든다(숫자 셀만; Red 의 tier2 는 'inf' 문자열이라 그대로 둔다).
+            # 미설정이면 CSV 값 그대로 = 구 동작 비트동일.
+            _ts = os.environ.get("MCI_TREAT_SCALE", "")
+            if _ts.strip():
+                _ts = float(_ts)
+                if _ts <= 0:
+                    raise ValueError(f"MCI_TREAT_SCALE={_ts} — 치료시간 배율은 0보다 커야 합니다.")
+                patient_info = patient_info.copy()
+                for _c in ('treat_tier3_mean', 'treat_tier2_mean'):
+                    _v = pd.to_numeric(patient_info[_c], errors='coerce')
+                    patient_info[_c] = _v.mul(_ts).where(_v.notna(), patient_info[_c])
             reg_prop['patient_info'] = patient_info
             # p_info_dict = patient_info.set_index("type").to_dict(orient="index")
             # reg_prop.update({'Red': p_info_dict['Red'],

@@ -469,7 +469,8 @@ class EventManager():
             h_tier = self.properties['hospital']['hos_tier'][h_idx]
             service_time = self.sample_service_time(h_tier=h_tier, p_class=p_class)
             log['p_admit'].append((self.time, p_class))
-            self._record_trace("care_start", patient_id=int(p_idx), hospital_id=int(h_idx), severity=int(p_class))
+            self._record_trace("care_start", patient_id=int(p_idx), hospital_id=int(h_idx),
+                               severity=int(p_class), from_queue=False)
             # 병원, 환자 상태 업데이트
             self.status['hospital']['h_states'][h_idx, 0] -= 1  # n_idle -= 1
             # 이벤트 추가
@@ -625,6 +626,12 @@ class EventManager():
                     break
             service_time = self.sample_service_time(h_tier=h_tier, p_class=p_class)
             log['p_admit'].append((self.time, p_class))
+            # 병상 대기에서 수술실로 들어가는 경로도 care_start 다. 여기에 trace 가 빠져 있어서
+            # **기다린 환자만 정확히** 추적에서 누락됐다(보상은 p_admit 으로 정상 계상되므로
+            # 시뮬 결과에는 영향이 없고, 사후 기전 분석만 편향됐다 — v20 기전 계측에서 발견).
+            # from_queue 로 즉시진입/대기후진입을 구분한다. trace 전용이라 동작 불변.
+            self._record_trace("care_start", patient_id=int(new_p_idx), hospital_id=int(h_idx),
+                               severity=int(p_class), from_queue=True)
             # 병원, 환자 상태 업데이트
             self.status['hospital']['h_states'][h_idx, 1] -= 1  # n_queue -= 1
             # 이벤트 추가

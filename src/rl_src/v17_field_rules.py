@@ -474,7 +474,8 @@ FIELD_CARD_ADOPTED = {"lam_km_per_patient": 12.0, "red_uav_km": 12.0, "yellow_ho
 #   묻는 대조군이다 — 특히 p_sent 는 LB-T3 계열이 쓰는 축이고, in_flight 단독은 병원
 #   실시간 연계 없이 현장에서 셀 수 있는(I1) 신호다.
 LOAD_TERMS = ("load", "p_sent", "in_flight", "occ", "occ_ratio", "cap_deficit", "zero",
-              "hinge", "hinge1", "hingerate")
+              "hinge", "hinge1", "hingerate",
+              "hinge1_psent", "hingerate_psent", "hingerate_if")
 
 
 def _load_vector(ctx, term: str, base):
@@ -495,6 +496,16 @@ def _load_vector(ctx, term: str, base):
         return -np.asarray(ctx["cap_remain"], float)
     if term == "zero":
         return np.zeros_like(o)
+    if term in ("hinge1_psent", "hingerate_psent", "hingerate_if"):
+        # ★ 정보수준 I1(현장 지득만) 변형. 병원 실시간 연락 없이 쓸 수 있는 부하 대리값.
+        #   occ(입원 census)는 병원과 통신해야 알 수 있는 값이다. 반면
+        #   p_sent(내가 그 병원으로 보낸 누적 인원)와 in_flight(지금 그 병원으로 가는 중)는
+        #   현장 지휘소의 자기 기록이고, 수술실수는 병원 명부의 정적 값이다.
+        #   즉 이 변형은 "내가 보낸 사람 수 − 그 병원 수술실 수" 라는 화이트보드 산수만 쓴다.
+        c = np.maximum(np.asarray(base["max_capa"], float), 1.0)
+        q = np.asarray(ctx["p_sent"], float) if term != "hingerate_if" else f
+        ex = np.maximum(q + 1.0 - c, 0.0)
+        return ex if term == "hinge1_psent" else ex / c
     if term == "hingerate":
         # 완전 유도형: 새 환자의 치료개시 지연 = (앞선 환자수 + 1 − 서버수)+ / 서버수 × 서비스시간.
         # 서버수로 나누는 것까지 부하항에 넣으면 남는 계수는 **평균 서비스시간(분)** 하나뿐이고
@@ -791,7 +802,10 @@ def make_field_card_surv_policy(wait_scale: float = 1.0,
             svc = np.zeros((2, H))
             for c in (0, 1):
                 svc[c] = np.where(tier3 > 0.5, t3[c], t2[c])
-            svc = np.nan_to_num(svc, nan=float(np.nanmax(t3)))
+            # Red 의 tier2 서비스시간은 'inf' 다(치료 불가). 마스크가 그 조합을 이미 차단하므로
+            # argmax 에는 영향이 없지만 벡터 연산에서 overflow 경고가 나므로 유한값으로 막는다.
+            cap = float(np.nanmax(t3[np.isfinite(t3)])) * 100.0
+            svc = np.nan_to_num(svc, nan=cap, posinf=cap, neginf=cap)
             cache.update(mid=mid, base=base, H=H, tier3=tier3,
                          t_amb=reach(base["t_amb"], ap.get("amb_handover_time", 0.0)),
                          t_uav=reach(base["t_uav"], up.get("uav_handover_time", 0.0)),
