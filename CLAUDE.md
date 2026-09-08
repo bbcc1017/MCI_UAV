@@ -301,6 +301,35 @@ Unity MCP 함정. **Unity·GIS 작업 전에 그 파일을 Read 할 것.**
 
 같은 날 `tools/` GIS 스크립트 30개를 **추적에서 뺐다**(gitignore, 파일은 워킹트리에 잔존).
 
+## 2026-09-08 공개 저장소 정돈 — 추적 범위 변경 (읽고 시작할 것)
+
+`origin` 을 공개 레포로 전환하며 원격에서 보이는 것을 **현행 아크(v17~v21) + 파이프라인 + 논문
+기준선**으로 줄였다. **파일은 안 지웠다** — `archive/code_20260908/` 에 있고 이력에도 남아 있다.
+복원 기준 커밋 **`3bd3dea6`**(정돈 직전), 원장 `archive/README.md`, 개별 복원
+`git show 3bd3dea6:<원경로>`.
+
+- **일회성 코드 71개 추적 해제**: 기준 = 도달성 0(다른 추적 파일이 import·경로호출 안 함) ∧ 종결
+  아크(v6~v15) ∧ 드라이버·집계·플롯·스모크. **정책·래퍼·알고리즘 클래스는 도달성 0 이어도 전부
+  보존**(논문 비교표 기준선이거나 기각 증거물), v1 멀티알고 레거시도 2026-07-11 보존 결정 유지.
+  ⚠️`score_cma`·`exit_distill` 은 옮겼다가 되돌렸다 — 현행 `planner_eval`·`ncrp_labels` 가
+  `score_cma.select_tune_regions`, `ncrp_label_probe` 가 `exit_distill.{policy_probs,kl_mean}` 를
+  import 한다. **아카이브 후 import 폐쇄성 기계 검사 + 주요 모듈 실제 import 스모크 필수**.
+- **`scenarios/manifests/{sigungu30,sigungu250}/` 2,002개 추적 해제**: split 스크립트 재생성물이고
+  추적 파일 수의 95% 였다. 재생성 명령은 `.gitignore` 주석에 같이 적어 뒀다. 부모 매니페스트·좌표
+  원장·시도 단위 70개는 계속 추적. ⚠️`sigungu250/_index.json` 은
+  `results/scoreboard/v17/fieldrules/static_train1000.npz` 가 있는 박스에서만 완전 재생성된다.
+- **`.gitignore`: `docs/` → `docs/*` + `!docs/assets/`** — 디렉터리 자체가 ignore 되면 하위 negation
+  이 안 먹어서 패턴을 바꿨다. `docs/assets/` = README 임베드용 Unity 데모 GIF 2종(52MB)만 추적하며
+  **docs 하위에서 유일하게 추적되는 경로**다. 나머지 `docs/`(논문 초고·출원서류·참고논문 원문)는 로컬 전용.
+- **README 전면 개정**: 공개용 front door(문제 정의 → v21 현행 수치 → 저장소 구조 → 셋업 →
+  파이프라인 → obs/action/reward → **판정 규약** → 환경변수 → Unity 섹션 → 데이터 출처).
+  Unity 세부 4항목(버전·실행 절차·촬영 씬·자산 배포 가능 여부)과 라이선스·인용은
+  `<!-- TODO(local) -->` 로 비워 뒀다 — 사용자가 로컬에서 채운다.
+- ⚠️**Windows 박스가 이 커밋을 pull 하면 추적 해제된 2,073개가 워킹트리에서 사라진다**
+  (2026-09-06 `tools/` 때와 같은 함정 — gitignore 는 미추적 경로에만 적용되고, 그 박스 HEAD 에선
+  아직 tracked 라 체크아웃이 지운다). 절차는 `CLAUDE.unity.md` 상단과 동일:
+  백업 → `git pull` → `git restore --source=3bd3dea6 --worktree -- <경로>`(인덱스는 건드리지 말 것).
+
 ## tools/ data pipeline — 라우팅 (RL/sim 공용)
 
 - **Local self-hosted routing/OSM** (avoids Kakao cost + mirror 429; needs Docker Desktop/WSL2): `docker-compose.osrm.yml` (`MCI_OSRM_URL`; data via `tools/osrm_prepare_korea.ps1`→`osrm_start_local.ps1`) + `docker-compose.overpass.yml` (`MCI_OVERPASS_URL`); `tools/osm_fetch_local.ps1` runs the OSM scripts against local Overpass; **`tools/build_distance_matrix_osrm.py`** rebuilds the hospital↔hospital road-distance matrix off the hospital xlsx (⚠️구 `fill_h2h_road_osrm.py`는 2026-06-23 커밋 804a740에서 **삭제**됨 — 잔존 `.pyc`에 속지 말 것). Guide: `docs/local_osm_osrm.md` (docs/ is gitignored).

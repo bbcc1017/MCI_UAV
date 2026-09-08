@@ -290,6 +290,12 @@ docs/*
 # 시나리오 생성 실패 로그(재실행 시 재생성 — 산출물 아님)
 scenarios/manifests/*.failed.json
 
+# 지역별 분할 매니페스트 — 부모 매니페스트에서 스크립트로 재생성(파일 2,002개라 추적하지 않는다)
+#   sigungu30/  : python src/sce_src/split_sigungu30.py --wave1 16
+#   sigungu250/ : python src/sce_src/split_sigungu_manifests.py --holdout p3 --wave1 16
+scenarios/manifests/sigungu30/
+scenarios/manifests/sigungu250/
+
 # Claude Code 로컬 전용 메모(Unity 작업 등) — 팀 공유 CLAUDE.md와 분리
 .claude.local.md
 
