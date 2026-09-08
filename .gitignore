@@ -282,8 +282,10 @@ experiment_logs/
 # 에이전트 스킬 설치 산출물(caveman 등 `npx skills add`) — 도구지 프로젝트 코드 아님
 .agents/
 skills-lock.json
-# 문서
-docs/
+# 문서 — 로컬 전용(논문 초고·저작권 있는 참고문헌·특허 서류 포함). 원격에 올리지 않는다.
+docs/*
+# 예외: README 에 임베드하는 미디어만 추적
+!docs/assets/
 
 # 시나리오 생성 실패 로그(재실행 시 재생성 — 산출물 아님)
 scenarios/manifests/*.failed.json
