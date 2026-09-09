@@ -8,10 +8,10 @@
 
 | 경로 | 크기 | 내용 |
 |---|---:|---|
-| `docs/reports/` | 29개 | v3~v15 종결 아크 보고서. 판정·수치는 `RESEARCH_LOG.md` 와 `CLAUDE.md` 에 요약돼 있다 |
+| `docs/reports/` | 29개 | v3~v15 종결 아크 보고서. 판정·수치는 `RESEARCH_LOG.md`·`RESEARCH_HISTORY.md`; 과거 지침 전문은 `git show 0b749f07e:AGENTS.md` |
 | `docs/presentations/` | 5개 | 일회용 랩미팅·노션 보고자료 (07-27, 07-30, 08-03, 08-21 및 TRE 방향설정) |
 | `docs/papers/` | 2개 | VIPER(NeurIPS 2018) 원문, 연속수치지형도 설명서(Unity GIS) |
-| `tools/labmeeting_20260903/` | 8개 py | 09-03 랩미팅 그림 생성기. 산출 PNG 는 `docs/260903랩미팅/` 에 있다 |
+| `tools/labmeeting_20260903/` | 8개 py | 09-03 랩미팅 그림 생성기. 산출 PNG 는 `archive/docs/presentations/260903랩미팅/` 에 있다 |
 | `logs/` | 36개 | 2026-06~08 배치 실행 로그 |
 | `results_20260702_헬기장정정이전/` | 37G | 성남 헬기장 정정(2026-07-02) 이전 산출물. **신구 수치 혼용 금지** |
 | `scenarios_pre20260702/` | 17G | 같은 사유의 구 시나리오 3종 (아래 표) |

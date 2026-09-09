@@ -1,6 +1,6 @@
 # RESEARCH_LOG.md — MCI RL 재설계 v3~v5 상세 기록
 
-`CLAUDE.md`/`AGENTS.md` 에서 분리한 **연구 이력·측정 수치·산출물 경로**. 매 세션 필요한 결론(챔피언 모델·평가 불변식·기각 목록)은 CLAUDE.md 의 **"재설계 v3~v5 — 현행 정답과 기각 목록"** 에 남기고, 재현·검증에 필요한 전체는 여기 둔다.
+**v3~v5 당시의 연구 이력·측정 수치·산출물 경로**다. 본문의 챔피언·seed·평가 분할은 당시 재현용이며 현재 기본값이 아니다. 현재 작업 지침은 [AGENTS.md](AGENTS.md), 최신 판정 계약은 [agent_docs/research.md](agent_docs/research.md), 이후 발전 과정은 [RESEARCH_HISTORY.md](RESEARCH_HISTORY.md)를 참조한다.
 
 **읽어야 할 때**: ① 새 실험을 설계하기 전(→ "이미 해봤고 왜 기각했나" 확인) ② v3~v5 수치·CSV·보고서 경로를 인용할 때 ③ 스코어 추출·동물원·플래너 도구를 실제로 돌릴 때(함정이 여기 있다).
 
