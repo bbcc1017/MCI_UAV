@@ -318,9 +318,8 @@ tools/nationwide/ngiiroads/
 tools/nationwide/roads2_old/
 # 건물 높이 인덱스 (vworld_buildings_batch.py 로 재생성 — 255지역 492MB)
 tools/nationwide/bldgindex/
-# v2 디지털트윈 산출물 (정사/DEM/타일 버킷 — 전부 재생성 가능; qa 리포트만 추적)
-tools/nationwide_v2/*
-!tools/nationwide_v2/qa/
+# v2 디지털트윈 산출물(정사/DEM/타일 버킷·qa 리포트) — 전부 로컬 전용
+tools/nationwide_v2/
 # 참고 논문 원문 (저작물 — 버전관리 제외)
 /scratch_paper.txt
 # 지형 DEM(.bin/.json)·정사 모자이크 — 대용량 재생성물(terrain_fetch.py / vworld_fetch.py)
@@ -348,34 +347,71 @@ archive/*
 # 출처 미확인 상태로 보류 중 — 정체가 확인되면 레포 밖으로 옮기거나 지울 것.
 MCI_UAV_cold/
 
-# Unity 디지털트윈 / CAR_test 전용 GIS 도구 — 로컬-C 전용이라 추적하지 않는다.
-# 설명·복원절차는 CLAUDE.unity.md 머리말. 워킹트리만 되살리려면
-#   git restore --source=9f4d4fc --worktree -- tools/
-# `git checkout 9f4d4fc -- tools/` 는 인덱스까지 갱신해 재추적되니 쓰지 말 것.
+# Unity 디지털트윈 / CAR_test 전용 도구 — **로컬-C 전용이라 원격에 코드를 남기지 않는다**
+# (2026-09-06 1차 37개 → 2026-09-09 전면 확대: 학습 드라이버·검증기·에셋 생성기까지).
+#
+# ⚠️ 파일명 열거를 **접두 glob 으로 바꿨다** — 1차 정돈이 파일명을 하나씩 적는 방식이라
+#    세션마다 새로 만든 수집기·검증기가 목록에 없어 그대로 재추적됐다(실측: 3일간 53개).
+#    새 Unity 도구는 아래 접두사 중 하나를 쓸 것. 안 쓰면 또 샌다.
 # ⚠️ RL/sim 공용인 osrm_*.{ps1,sh} 와 build_distance_matrix_osrm.py 는 추적 유지.
+# 워킹트리만 되살리려면 `git restore --source=<옛 커밋> --worktree -- tools/`
+# (`git checkout <커밋> -- tools/` 는 인덱스까지 갱신해 재추적되니 쓰지 말 것).
 tools/airspace_fetch.py
 tools/bldg_height_index.py
+tools/blender/
+tools/blender_*.py
 tools/build_region_index.py
-tools/hdmap_fetch.py
+tools/dtm_*.py
+tools/hdmap_*.py
+tools/lamps_*.py
 tools/nationwide_build.py
 tools/nationwide/monitor.py
-tools/osm_areas.py
-tools/osm_explore.py
-tools/osm_features.py
-tools/osm_infra.py
-tools/osm_overpass_endpoints.py
-tools/osm_poi.py
-tools/osm_roads.py
-tools/osm_roads2.py
-tools/osm_water.py
+tools/ngii_*.py
+tools/ortho_*.py
+tools/osm_*.py
 tools/osm_fetch_local.ps1
 tools/run_sim_trace.py
 tools/scene_export.py
-tools/trace_export.py
-tools/seoul_pilot/build_scene_data.py
+tools/seoul_*.py
+tools/seoul_pilot/
 tools/shp_multi_to_buildings.py
-tools/terrain_fetch.py
-tools/terrain_smooth.py
+tools/terrain_*.py
+tools/tex_*.py
+tools/trace_export.py
 tools/v2_*.py
-tools/vworld_buildings_batch.py
-tools/vworld_fetch.py
+tools/vworld_*
+
+# Unity ML-Agents 학습·씬 배치 드라이버(자율주행/자율비행/KDT 재빌드/정밀도로지도 검증).
+# 리눅스 학습박스로는 git 이 아니라 sync_roaddrive.sh 로 직접 보낸다.
+tools/exp_drivers/bev_coherence.py
+tools/exp_drivers/chw_index_check.py
+tools/exp_drivers/csc_check.sh
+tools/exp_drivers/lgv2_verify.py
+tools/exp_drivers/pgmon.sh
+tools/exp_drivers/road_*
+tools/exp_drivers/run_dtm*
+tools/exp_drivers/run_hd_*
+tools/exp_drivers/run_kdt_*
+tools/exp_drivers/run_ortho_*
+tools/exp_drivers/run_pg_*
+tools/exp_drivers/run_road_*
+tools/exp_drivers/run_roads_*
+tools/exp_drivers/stop_at_step.sh
+tools/exp_drivers/sync_roaddrive.sh
+tools/exp_drivers/unity_*
+
+# MCP 서버 설정 — 박스별 절대경로(`C:/Users/.../uvx.exe`)라 공유하면 반대 박스에서 깨진다.
+.mcp.json
+
+# 2026-09-06 누락 보강 — 아래는 전부 **생성물**인데 무시 목록에 없어 `git add -A` 한 번이면
+# 98GB 를 스테이징한다(실측: ortho18 92G · ngiitopo 5.8G · forest 310M · trees 53M · seoul_signal 15M).
+# 기존 목록이 디렉터리를 하나씩 열거하는 방식이라 새 수집기가 생길 때마다 빠진다.
+tools/nationwide/ortho18/
+tools/nationwide/ngiitopo/
+tools/nationwide/forest/
+tools/nationwide/trees/
+tools/nationwide/lamps/
+tools/nationwide/lamps_raw/
+tools/nationwide/subway/
+tools/nationwide/seoul_signal/
+tools/nationwide/coastal_regions.txt

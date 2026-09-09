@@ -290,7 +290,7 @@ python src/rl_src/v17_ppo_eval.py \
 Unity 프로젝트 `UAV_test/`는 Windows 로컬 자산이며 전체를 배포하지 않습니다.
 이 저장소에서는 Python 시뮬레이션과 연구 코드를 관리합니다.
 ML-Agents 학습은 **Windows에서 플레이어를 빌드해 Linux 학습박스로 보내는 방식**이며,
-두 박스가 공유하는 학습 드라이버·커리큘럼만 [tools/exp_drivers/](tools/exp_drivers/)에 있습니다.
+학습 드라이버·커리큘럼도 로컬 자산으로 두고 저장소에는 올리지 않습니다.
 
 [디지털트윈 구성 기록 →](CLAUDE.unity.md)
 
