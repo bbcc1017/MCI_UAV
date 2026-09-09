@@ -380,14 +380,13 @@ tools/tex_*.py
 tools/trace_export.py
 tools/v2_*.py
 tools/vworld_*
-
-# Unity ML-Agents 학습·씬 배치 드라이버(자율주행/자율비행/KDT 재빌드/정밀도로지도 검증).
-# 리눅스 학습박스로는 git 이 아니라 sync_roaddrive.sh 로 직접 보낸다.
-tools/exp_drivers/bev_coherence.py
+# Unity ML-Agents 학습·씬 배치 드라이버. **리눅스 학습박스가 직접 실행하는 11개만 추적**하고
+# (그것들은 `.gitattributes` 로 LF 고정 — CRLF 로 넘어가면 bash 가 `set -u` 을 못 읽고도 exit 0),
+# 나머지(Unity 에디터 batchmode·빌드·전송·데이터 QA)는 Windows 전용이라 로컬에만 둔다.
+# 판정 기준 = **그 스크립트를 서버에서 실행하는가**. 새 드라이버도 이 기준으로 예외에 넣을 것.
 tools/exp_drivers/chw_index_check.py
 tools/exp_drivers/csc_check.sh
 tools/exp_drivers/lgv2_verify.py
-tools/exp_drivers/pgmon.sh
 tools/exp_drivers/road_*
 tools/exp_drivers/run_dtm*
 tools/exp_drivers/run_hd_*
@@ -396,9 +395,17 @@ tools/exp_drivers/run_ortho_*
 tools/exp_drivers/run_pg_*
 tools/exp_drivers/run_road_*
 tools/exp_drivers/run_roads_*
-tools/exp_drivers/stop_at_step.sh
 tools/exp_drivers/sync_roaddrive.sh
 tools/exp_drivers/unity_*
+# ── 리눅스에서 도는 것만 예외(학습·평가 실행 / 커리큘럼 / 재개·정지·감시 / 산출물 판독·검증)
+!tools/exp_drivers/run_road_drive_linux.sh
+!tools/exp_drivers/run_road_eval_linux.sh
+!tools/exp_drivers/road_driving_pg.yaml
+!tools/exp_drivers/road_driving_pg_ft.yaml
+!tools/exp_drivers/road_train_watchdog2.sh
+!tools/exp_drivers/road_train_report.py
+!tools/exp_drivers/road_eval_report.py
+!tools/exp_drivers/road_eval_paired.py
 
 # MCP 서버 설정 — 박스별 절대경로(`C:/Users/.../uvx.exe`)라 공유하면 반대 박스에서 깨진다.
 .mcp.json

@@ -8,8 +8,10 @@
 30개(`osm_*.py` `v2_*.py` `vworld_*` `terrain_*` `hdmap_fetch.py` `scene_export.py` `trace_export.py`
 `run_sim_trace.py` `nationwide/` `seoul_pilot/`), **2차는 2026-09-09 에 전면 확대** — 학습·배치
 드라이버(`exp_drivers/road_*` `run_{road,kdt,hd,pg,ortho,dtm}_*` `sync_roaddrive.sh` `unity_*`),
-에셋 생성기(`blender*`), 지형·정사·정밀도로지도 검증기(`dtm_*` `ortho_*` `v2_hd_*` 등) 53개를
-**푸시 전에** 뺐다. 원격엔 Unity 코드가 없고 파일은 각 박스 워킹트리에만 있다.
+에셋 생성기(`blender*`), 지형·정사·정밀도로지도 검증기(`dtm_*` `ortho_*` `v2_hd_*` 등) 53개 중
+**42개를 푸시 전에** 뺐다. 남긴 11개는 **리눅스 학습박스가 직접 실행하는 것**뿐 — 학습·평가
+드라이버, 커리큘럼 yaml, 재개·정지·감시, 산출물 판독·관측 검증(목록은 `.gitignore` 예외 절).
+파일은 어느 쪽이든 각 박스 워킹트리에 그대로 있다.
 ⚠️ignore 목록은 **접두 glob** 이다 — 1차가 파일명 열거였던 탓에 새로 만든 도구가 목록에 없어
 3일 만에 53개가 다시 추적됐다. **새 Unity 도구는 위 접두사 중 하나를 쓸 것.**
 
@@ -777,19 +779,23 @@ v1/v2 × 시점 캡처를 **실제로 눈으로 열어 보면서** 나온 것들
 ## ★ML-Agents 학습 = Windows 빌드 → Linux 학습 (2026-09~)
 
 Unity ML-Agents 학습도 이제 리눅스에서 돈다. 흐름은 **Windows 에서 플레이어를 굽고 → 서버로
-보내고 → 산출물을 회수**다. 규약 넷:
+보내고 → 산출물을 회수**다. 규약 다섯:
 
 - **산출물·플레이어는 `/home/ryu/roaddrive/` 안에서만** 다룬다. 학습박스의 리포 체크아웃
   `/home/ryu/MCI_UAV` 는 **다른 계정 세션이 쓰는 중**이라 건드리지 않는다.
-- 두 박스가 공유하는 텍스트(학습 드라이버·커리큘럼 yaml·검증기)의 **정본은 Windows 의
-  `tools/exp_drivers/`** 인데, 2026-09-09 부터 **git 추적 대상이 아니다**(원격에 Unity 코드를 안 남긴다).
-  이동 통로는 `tools/exp_drivers/sync_roaddrive.sh` 하나뿐 — 서버 쪽 mtime 이 더 새로우면
-  **덮지 않고 exit 3** 이다(서버에서 직접 핫픽스한 전례가 있다). 그때는 `--pull` 로 회수해
-  로컬 파일에 반영한다(**커밋으로 남지 않으니 회수 자체를 빼먹지 말 것**).
-- ⚠️**LF 는 이제 `.gitattributes` 가 지켜주지 않는다.** 미추적이라 git 이 손대지 않으므로
-  `core.autocrlf` 변환도 없지만, 반대로 **Windows 편집기가 CRLF 로 저장하면 그대로 서버로 간다**.
-  그러면 bash 가 `set -u` 을 못 읽고도 **exit 0 으로 계속 간다**(실측: `set: - : invalid option` 만
-  찍히고 안전장치가 통째로 사라짐). 조용히 깨지는 종류다 — 새 `.sh` 는 LF 로 저장할 것.
+- 두 박스가 공유하는 텍스트의 **정본은 `tools/exp_drivers/`** 이고, 2026-09-09 부터 그중
+  **리눅스가 실행하는 11개만 git 추적**한다(학습 `run_road_drive_linux.sh`·평가
+  `run_road_eval_linux.sh`·커리큘럼 `road_driving_pg*.yaml`·재개 `road_train_watchdog2.sh`·
+  정지 `stop_at_step.sh`·감시 `pgmon.sh`·판독 `road_{train,eval}_report.py`·`road_eval_paired.py`·
+  관측 검증 `bev_coherence.py`). 서버에선 **`git pull` 로 받는 게 정본 경로**다.
+- ⚠️**그래도 `sync_roaddrive.sh` 가 같은 파일을 밀 수 있다** — 통로가 둘이면 갈린다.
+  서버 쪽 mtime 이 더 새로우면 **덮지 않고 exit 3**(서버에서 직접 핫픽스한 전례가 있다) →
+  `--pull` 로 회수해 **커밋한 뒤** 다시 민다. 추적 대상은 sync 가 아니라 git 을 정본으로 볼 것.
+  나머지 42개(Unity 에디터 batchmode·빌드·전송·데이터 QA)는 로컬 전용이라 sync 만이 통로다.
+- ⚠️**`.sh`/`.py`/`.yaml` 은 `.gitattributes` 로 LF 고정**(추적되는 11개에 적용). 없으면
+  `core.autocrlf=true` 인 Windows 체크아웃이 CRLF 로 바꾸고, 그걸 리눅스로 보내면 bash 가
+  `set -u` 을 못 읽고도 **exit 0 으로 계속 간다**(실측: `set: - : invalid option` 만 찍히고
+  안전장치가 통째로 사라짐). **미추적 스크립트는 git 이 안 지켜주니 편집기가 LF 로 저장할 것.**
 - ⚠️**빌드 성공 판정은 로그가 아니라 DLL 내용으로.** 에디터가 열려 있으면 `-batchmode` 가
   `Temp/UnityLockfile` 때문에 죽는데(요청파일 `Temp/hd_rebuild.request` 경로는 열린 채로도 동작),
   구 바이너리가 그대로 전송돼도 학습은 멀쩡히 도는 것처럼 보인다. 실측 사고: 보상 7개를 고쳤는데
