@@ -1,437 +1,386 @@
+<p align="center">
+  <img src="docs/assets/readme-overview.svg" width="100%" alt="MCI UAV — 강화학습 정책에서 현장 이송 규칙으로">
+</p>
+
 <div align="center">
 
-# 🚑🛩 MCI_UAV
+**재난 환자 이송을 학습하고, 현장에서 쓸 수 있는 규칙으로 만듭니다.**
 
-**대량 재난 사고(MCI) 환자 이송 의사결정 — 강화학습으로 풀고, 현장 규칙으로 되돌린다**
+<p>구급차와 무인기의 환자 이송을 시뮬레이션하고,<br>강화학습 정책의 의사결정을 분석해 해석 가능한 현장 규칙을 도출하는 연구입니다.</p>
 
-구급차(AMB)와 무인기(UAV)를 함께 운용하는 triage·병원·수단 결정을 이산사건 시뮬레이션 위에서
-강화학습으로 학습하고, 학습된 정책을 **현장 대원이 종이 한 장으로 쓸 수 있는 명시 규칙**으로
-역설계한다. 최종 산출물은 모델이 아니라 **규칙집**이다.
+<code>Python 3.10</code> · <code>MaskablePPO</code> · <code>OSRM / Kakao</code> · <code>Unity</code>
 
-![Python](https://img.shields.io/badge/Python-3.10-3776AB?logo=python&logoColor=white)
-![PyTorch](https://img.shields.io/badge/PyTorch-2.8-EE4C2C?logo=pytorch&logoColor=white)
-![SB3](https://img.shields.io/badge/sb3--contrib-MaskablePPO-0081A5)
-![Gymnasium](https://img.shields.io/badge/Gymnasium-<1.0-0081A5)
-![Routing](https://img.shields.io/badge/Routing-OSRM%20%7C%20Kakao-FFCD00)
-![Judgment](https://img.shields.io/badge/judgment-750%20districts%20%C3%97%2030%20seeds-success)
-![Twin](https://img.shields.io/badge/digital%20twin-Unity%20255%20districts-000000?logo=unity&logoColor=white)
-
-<img src="docs/assets/KoreaDigitalTwin_UAV.gif" width="100%" alt="MCI 디지털트윈 — 구급차·무인기 이송 재생">
+[연구](#연구) &nbsp; / &nbsp; [시작하기](#시작하기) &nbsp; / &nbsp; [Unity 데모](#unity-데모) &nbsp; / &nbsp; [코드와 문서](#코드와-문서)
 
 </div>
 
----
+<br>
 
-## 30초 요약
+| 연구 범위 | 검증 규모 | 현재 도달점 |
+| :--- | :--- | :--- |
+| 전국 **250개 시군구** | **750좌표 × 30시드** | **Q18 ≈ 최강 PPO** |
 
-| | |
-|---|---|
-| **무엇을 푸나** | 사고 현장에 환자 100명, 구급차 30대, 무인기 26대, 후보 병원 47곳. 구조된 환자마다 **[등급 · 병원 · 수단]** 을 동시에 정해야 한다 |
-| **무엇을 최소화하나** | **예방가능 사망률 `PDR_woG`** = 1 − (달성 생존확률 합) ÷ (예방가능 최대). 사고 규모에 불변, **낮을수록 좋다** |
-| **어떻게 푸나** | 이산사건 시뮬 + MaskablePPO(병원 랭킹 pointer head) → 전국 단일정책 → **결정 로그에서 물리단위 임계값 채굴** → 규칙집 |
-| **무엇이 결론인가** | 목적지 점수 = **`도달시간(분) + λ · 대기벌점`**. λ 는 튜닝 상수가 아니라 **서비스시간 ÷ 수술실수**라는 대기행렬 구조상수다 |
-| **얼마나 좋나** | 미학습 750좌표 폐루프에서 **최강 학습 교사와 동률**, 발송상한 휴리스틱 대비 PDR 0.029 개선, UAV 도입 효과 **−31%** |
-| **무엇이 현실적인가** | 실제 병원 좌표·수술실/병상 용량, OSRM/Kakao 실도로 경로, 헬기장 보유 병원만 UAV 착륙, 병원 통신 단절 시나리오까지 분리 측정 |
+Q18과 최강 교사의 실용적 동률은 v21의 판정 기준에 따른 표현입니다. 정책별 수치와 비교 조건은 아래 **실험 결과**에서 확인할 수 있습니다.
+
+## 연구
+
+<details>
+<summary><strong>01 · 문제와 접근</strong> — 시뮬레이션에서 규칙으로</summary>
+
+<br>
+
+대량사상자 사고에서는 환자의 이송 순서, 목적지 병원, 이송 수단을 함께 결정해야 합니다.
+가까운 병원에 집중하면 치료 대기가 길어지고, 지나치게 분산하면 이동시간이 늘어납니다.
+이 연구는 그 사이의 선택을 **예방가능 사망률** `PDR_woG`로 평가합니다. 값이 낮을수록 좋습니다.
+
+```text
+실제 좌표·병원·도로망
+        ↓
+이산사건 시뮬레이션 → PPO 정책 학습
+                          ↓
+                     결정 로그 분석
+                          ↓
+                물리단위 규칙·임계값 도출
+                          ↓
+                 별도 좌표 폐루프 검증
+```
+
+| 구성 | 내용 |
+| :--- | :--- |
+| 시나리오 | 병원 좌표·수술실·병상·헬기장, 119 기지, OSRM/Kakao 도로 경로 |
+| 표준 설정 | 환자100명 · AMB30대 · UAV26대 · 후보 병원47곳 |
+| 의사결정 | 환자 등급 × 목적지 병원 × AMB/UAV 수단 |
+| 공통 제약 | Red는 Tier3 병원, UAV는 헬기장 보유 병원으로 이송. 용량·가용성은 hard mask로 처리 |
+| 평가 시점 | 병원에서 **치료를 시작한 시각**의 생존확률. 도착 후 수술실을 기다리는 지연도 반영 |
+
+규칙·RL·플래너는 같은 행동 마스크를 사용합니다. 초기 연구는 RL 성능 개선에 집중했으며,
+현재는 **규칙을 도출하는 절차, 필요한 정보, 물리 조건에 따른 전이성**을 함께 검증합니다.
+
+[연구 발전사 →](RESEARCH_HISTORY.md)
+
+</details>
+
+<details>
+<summary><strong>02 · 실험 결과</strong> — 정책 비교와 판정 조건</summary>
+
+<br>
+
+**v21 · test750 · seed0–29** 기준입니다. 250개 시군구의 평가 좌표750곳에서
+정책당22,500 에피소드를 실행하고, 동일 좌표·시드의 결과를 짝지어 비교했습니다.
+
+| 정책 | 부하 정보 / 역할 | `PDR_woG` ↓ |
+| :--- | :--- | ---: |
+| START-LB3 | 발송상한 휴리스틱 기준선 | 0.167356 |
+| CARD_K12 | 이전 거리 + 선형 부하 규칙 | 0.144985 |
+| PPO_NATIONAL | 전국 단일 교사 | 0.139738 |
+| **CARD_P18** | **현장 누적발송 장부를 쓰는 카드** | **0.139207** |
+| PPO_SIDO | 광역시도17 교사 | 0.138839 |
+| **CARD_Q18** | **병원 재고 + 이송중 환자를 쓰는 카드** | **0.138445** |
+
+**견고한 개선은 규칙의 함수형에서 나왔습니다.**
+Q18은 K12 대비 PDR을 **0.006540 ±0.000318** 줄였고, 지역별 승/무/패는 **626/122/2**입니다.
+최강 교사 PPO_SIDO 대비 개선은0.000393으로 v21 실용 판정선보다 작습니다.
+학습 시드 반복도 충분하지 않아 **“최강 교사와 실용적 동률”**로 보고합니다.
+
+**비교 조건**
+
+- 좌표 역할: `train6000` 학습 / `budget750` 튜닝 / `test750` 판정. 세 집합의 정확 좌표 교집합은0입니다.
+- 파라미터는 튜닝셋에서 선택합니다. test750은 버전별로 사용한 판정셋이며 매번 새로운 blind test는 아닙니다.
+- 승/무/패는 **지역별 에피소드 차이의 95% 신뢰구간**으로 셉니다. 진행 중 CSV나 행동일치도로 정책을 선택하지 않습니다.
+- 과거 대표점250·시도17 결과와 직접 섞지 않습니다. 규칙과 교사를 비교할 때 정보 조건·시뮬 시드·학습 시드를 구분합니다.
+- P18의 통신 요구 감소는 **부하 입력**에 관한 결과입니다. 공통 안전마스크까지 완전 무통신으로 검증한 것은 아닙니다.
+
+[판정 계약과 산출물 경로 →](agent_docs/research.md) · [집계 코드 →](tools/v21_infoladder_report.py)
+
+</details>
+
+<details>
+<summary><strong>03 · 현장 규칙</strong> — 시간과 대기를 한 점수로</summary>
+
+<br>
+
+목적지 병원은 다음 점수가 가장 작은 적격 후보로 정합니다.
+
+```text
+점수 = 도달시간(분) + λ × max(0, q + 1 − c) / c
+
+c : 병원의 수술실 수
+q : Q18은 병원 재고 + 이송중 환자 / P18은 누적발송 환자
+λ : 유효 서비스시간 계수 — 기준 설정에서 18
+```
+
+도달시간에는 평균 이송시간과 인계시간이 포함됩니다.
+이미 수술실 수 `c`로 나누는 형태이므로, 남은 λ를 다시 `서비스시간/c`로 해석하지 않습니다.
+λ18과 물리조건 전이 결과는 검증한 설정 범위에 조건부입니다.
+
+| 카드 | 필요한 부하 입력 | 선택 |
+| :--- | :--- | :--- |
+| **P18** | 현장 지휘소의 누적발송 장부 | 정보 요구를 줄인 권장 카드 |
+| Q18 | 병원 재고와 현장 이송기록 | 병원 연계가 가능한 구성 |
+| PH9 | 현장 누적발송 장부 | 수술실 수로 나누는 계산을 생략한 단순형 |
+
+채택된 설정은 이송 가능한 Yellow가 있으면 우선합니다.
+두 수단이 모두 가능할 때 Red는 AMB 대비 UAV 도달시간 이득이6.6분을 넘으면 UAV를 선택하고,
+Yellow는 AMB를 선택합니다. 다른 조건에서는 마스크가 허용하는 선택으로 제한됩니다.
+
+이는 **이 시뮬레이션의 목적함수와 제약에서 도출한 연구 규칙**이며,
+실제 현장 지침으로 사용하려면 별도의 검증이 필요합니다.
+
+[규칙 구현 →](src/rl_src/v17_field_rules.py) · [기전 계측 →](src/rl_src/v20_mechanism_eval.py)
+
+</details>
+
+## 시작하기
+
+<details>
+<summary><strong>04 · 설치와 첫 실행</strong> — 개발 좌표에서 규칙 평가</summary>
+
+<br>
+
+**Python3.10** 환경을 사용합니다. 아래 명령은 저장소 루트에서 실행합니다.
 
 ```bash
-# 1) 환경
+conda create -n UAV python=3.10
 conda activate UAV
-pip install -r requirements.txt          # torch 는 GPU 에 맞춰 별도 설치
-
-# 2) 규칙 정책 폐루프 평가 (학습 없이 바로 실행되는 최단 경로)
-python src/rl_src/v17_rule_eval.py \
-  --manifest scenarios/manifests/sigungu30_test750_manifest.json \
-  --policies "CARD_Q18=cardt:18,6.6,0,hingerate;START_LB3=cap3:START, YellowNearest, Red OnlyUAV, Yellow Both_AMBFirst" \
-  --n_eps 30 --workers 44 --out results/scoreboard/v21/test750_rules.csv
+python -m pip install -r requirements.txt
 ```
 
-> 학습·평가는 **사전계산·동결된 거리행렬만** 읽는다. 외부 API 는 시나리오 생성 단계에서만 쓰이므로
-> 이미 생성된 시나리오가 있으면 키 없이 전부 재현된다. 시나리오 생성용 라우팅은
-> [🧭 라우팅 백엔드](#-라우팅-백엔드) 참조.
-
----
-
-## 파이프라인
-
-```mermaid
-flowchart LR
-    A["📍 좌표 입력<br/>(위도·경도)"] --> B["🏥 시나리오 생성<br/>make_csv_yaml_dynamic.py"]
-    B -->|"OSRM / Kakao"| C[("scenarios/exp_*/(lat,lon)/<br/>병원 · AMB기지 · UAV · 환자<br/>거리행렬 · config.yaml")]
-    C --> D["⚙️ gym env + 래퍼<br/>obs · 행동마스크"]
-    D --> E["🧠 MaskablePPO<br/>train_ppo_feature.py"]
-    D --> F["📐 비교군<br/>휴리스틱 64룰 · 문헌규칙<br/>발송상한 · MILP · 플래너"]
-    E --> G["🔎 결정 로그 채굴<br/>v17_field_rules.py mine"]
-    G --> H["📋 현장 규칙집<br/>도달시간 + λ·대기벌점"]
-    E --> I["⚖️ 폐루프 판정<br/>test750 × 30시드 CRN paired"]
-    F --> I
-    H --> I
-    C --> J["🌏 Unity 디지털트윈<br/>scene.json + trace_flat.json"]
-
-    style E fill:#e8f0ff,stroke:#4a7dff
-    style H fill:#e8ffe8,stroke:#4aff7d
-    style I fill:#fff0e8,stroke:#ff8a4a
-```
-
-<details>
-<summary><b>단계별 상세 — 어느 스크립트가 무엇을 만드나</b></summary>
-<br>
-
-| 단계 | 실행 주체 | 산출물 |
-|---|---|---|
-| 시나리오 생성 | `src/sce_src/make_csv_yaml_dynamic.py` · `gen_regions.py` · `gen_sigungu30_osrm.py` | 병원·AMB기지·UAV·환자 CSV, 거리행렬, `config_(lat,lon).yaml`, 경로 JSON |
-| 매니페스트 분할 | `src/sce_src/split_sigungu30.py` · `split_sigungu_manifests.py` | 지역별 학습/예산/평가 매니페스트(추적 제외 — 재생성물) |
-| 휴리스틱 기준선 | `tools/exp_drivers/run_heur_batch.py` → `aggregate_heur.py` | 64룰 × 1000ep 전수 + 좌표별 최선 CSV |
-| RL 학습 | `src/rl_src/train_ppo_feature.py` | `final_model.zip` · `vecnormalize.pkl` · `meta.json`(데이터 해시·head·seed 자동 기록) · `tb/` |
-| 임계값 채굴 | `src/rl_src/v17_field_rules.py {static,table,logit,mine}` | 좌표별 병원 물리량 npz, 결정 테이블 CSV, λ·전환거리·등급 임계 |
-| 증류 | `src/rl_src/v10_tree_distill.py` · `tree_distill_policy.py` | 후보랭킹 CART/GBDT(병원 번호 비의존) |
-| 폐루프 판정 | `src/rl_src/v17_rule_eval.py` · `v17_ppo_eval.py` · `paired_eval_ladder.py` | 지역×시드 에피소드 배열 + paired 95%CI |
-| 집계·감사 | `tools/v21_infoladder_report.py {ladder,judge,audit}` | 판정표·시드 감사·정보수준 격자 |
-
-</details>
-
----
-
-## 📈 결과 한눈에
-
-판정셋 **test750**(시군구 250곳 × 각 3좌표, 학습·튜닝에 안 쓴 좌표) × **시드 30개**,
-정책당 22,500 에피소드, 공통 난수(CRN) paired.
-
-| 정책 | 정보수준 | `PDR_woG` ↓ | 비고 |
-|---|---|---:|---|
-| `START-LB3` 발송상한 휴리스틱 | 현장 | 0.167356 | 강한 설명가능 기준선 |
-| `CARD_K12` 거리 + 선형 부하 | 병원 통신 | 0.144985 | 규칙집 1세대 |
-| `PPO_NATIONAL` 전국 단일 교사 | 현장 obs | 0.139738 | 10M steps |
-| **`CARD_P18`** 도달시간 + 대기행렬 벌점 | **통신 불요** | **0.139207** | 지휘소 화이트보드만으로 실행 |
-| **`CARD_Q18`** 같은 형태 + 병원 재고 | 병원 통신 | **0.138445** | 최종 규칙 |
-| `PPO_SIDO` 광역시도 17벌 교사 | 현장 obs | 0.138839 | **Q18 과 동률** |
-
-- **규칙 대 규칙** — `Q18` vs `K12` = **+0.006540 ± 0.000318**(626승 122무 2패). 개선의 본체는
-  변수 선택이 아니라 **함수형 교체**(이진 발송상한 → 연속 교환율 → 대기행렬 유도형)다.
-- **규칙 대 교사** — `Q18` vs 최강 교사 `PPO_SIDO` = **+0.000393 ± 0.000340** → 판정선 0.00053 미만
-  **동률**. 전국 단일 교사에는 유의하게 앞선다(+0.001293, 시드 27/30). *추월 주장은 하지 않는다.*
-- **임계값이 구조상수다** — 치료시간 6배 범위에서 λ 의 로그-로그 기울기 **+1.06**(이론 +1),
-  용량축 의존성은 형태를 보정할수록 한 단위씩 소멸(**−1.30 → −1.03 → −0.20**).
-  덕분에 다른 물리 조건으로 옮겨도 재튜닝이 사실상 불필요하다(27조건 전이 후회 평균 +0.00010).
-- **UAV 도입 효과** = 0.201 → 0.139, **−31%**. 무인기의 실제 역할은 원거리 접근이 아니라
-  **구급차 대기열 흡수**로 측정됐다.
-- **통신보다 계산이 비싸다** — 병원 통신을 끊는 비용 +0.00076(회복률 99.4%) < 식에서 나눗셈 제거
-  +0.00283 < 선형화 +0.00497. 단 **병원 재고만 보고 내가 보낸 환자를 세지 않으면 +0.0929 로 붕괴**한다.
-
-<details>
-<summary><b>⚖️ 판정 규약 — 이 저장소가 수치를 인정하는 조건</b></summary>
-<br>
-
-| 규약 | 내용 |
-|---|---|
-| 좌표 분리 | 학습(train6000) / 튜닝(budget750) / 판정(test750) 좌표 교집합 **0**. 판정 좌표에서 파라미터를 고르면 누수다(실제로 한 번 발생 → 튜닝셋 재도출로 정정) |
-| CRN paired | 모든 팔이 같은 시드·같은 시나리오를 본다. **판정선 = 두 팔 차이의 95%CI ≈ 0.00053** |
-| 잡음원 구분 | 학습 시드 잡음(0.00114)은 *규칙 실험에 없는 잡음원*이라 규칙 대 규칙 판정에 쓰지 않는다 |
-| 규칙 vs 학습정책 | 시드축 CI 가 지역축과 같은 크기로 남는다 → **30시드 이상 + 시드 부호 일관성** 병기 |
-| 기준선 선택 | 계열이 여러 개면 **그중 최강**과 비교한다(단일 시드·단일 계열 비교는 과대추정) |
-| 부분집계 금지 | 에피소드 비용이 난이도에 비례해 완료 순서가 난이도와 역상관 → 진행 중 CSV 로 판정하지 않는다 |
-| 아키텍처 판정 | 3시드 평균 대 시드 잡음 바닥, 배수 ≥2. **훈련곡선 중간 우세는 채택 근거가 아니다** |
-| 모방≠성능 | 교사 행동 재현율로 정책을 고르지 않는다(재현율과 폐루프 성능이 역전한 사례 6회) |
-| 게이트 | 실패를 step 증가·threshold 완화로 우회하지 않는다 |
-
-</details>
-
-<details>
-<summary><b>🚫 기각 목록 — 재시도 전에 확인할 것</b></summary>
-<br>
-
-이 저장소는 **음성 결과를 지우지 않는다**. 값을 치른 기각은 결론이고, 같은 벽에 두 번 부딪히지
-않게 하려고 코드와 사유를 함께 남긴다.
-
-| 기각 | 확증 횟수 | 요지 |
-|---|---|---|
-| 반응형 정책의 룩어헤드 흡수 | **5중** | 오라클/비오라클 행동 BC · 관측 확장 · 가치측 흡수 · CRR 전부 음성. 룩어헤드는 **배포 시 플래너 실행**으로만 얻는다 |
-| 표현력 확장 | **4연속** | obs 확장(dim 502) · 3원 head · 잔차 head · GOPT 크로스어텐션. 오히려 **attention 제거**가 채택됐다(시드 분산 1/28) |
-| 모방 기준 적합 | **6회** | 조건부 로짓·행동 재현율로 고른 파라미터가 폐루프에서 진다(λ 6.37 vs 12, 재현율 최상위 팔이 폐루프 최하위) |
-| 지역화 | 상한 확정 | 오라클 지역화조차 총 격차의 **12.4%** 뿐. 전국 단일 규칙 하나가 이미 87.6% 를 먹는다 |
-
-전체 이력·수치·기각 근거 → [`RESEARCH_HISTORY.md`](RESEARCH_HISTORY.md) · [`RESEARCH_LOG.md`](RESEARCH_LOG.md)
-
-</details>
-
----
-
-## ✨ 기능
-
-### 🏥 실제 병원 용량·도로망 기반 시나리오
-
-전국 병원 마스터(요양기관·수술실수·병상수·**헬기장 여부**)와 119 안전센터 원장에서 사고 좌표 주변
-병원을 자동 선정한다. 표준 세트는 **병원 47 · 헬기장 26 · AMB 30대 · UAV 26대 · 환자 100명 ·
-속도 50/200 km/h · 인계 5/10분**으로 고정하고, 지역·규모·자원 변주는 런타임 노브로 준다.
-
-- **라우팅 2종**: OSRM(정적 도로망, 결정적) / Kakao Mobility(출발시각 교통 반영)
-- **좌표 스냅 게이트**: OSRM 이 좌표를 도로로 스냅하는 거리를 검증해 **500m 초과는 기각**한다
-  (AMB 는 스냅점, UAV 는 원좌표를 쓰므로 스냅이 크면 UAV 이득이 왜곡된다)
-- **좌표 풀**: 시군구 250곳 × 30좌표 = 7,500점. 학습 6,000 / 튜닝 750 / 판정 750 으로 분리
-
-### 🚁 AMB + UAV 이중 수단 + 하드 마스킹
-
-이산사건 엔진이 구조 → 배차 → 이송 → 병원 도착 → **수술실 배정** → 완료를 분 단위로 굴린다.
-보상은 **치료 개시 시각의 생존확률**이다 — 병원 도착이 아니라 수술실이 비는 순간이 기준이라,
-병상에서 기다린 시간이 그대로 손실로 잡힌다.
-
-- 행동 `[class, dest, mode]` → Discrete **192 = 2 × 48 × 2**
-- **마스킹은 페널티가 아니라 하드 제약**: Red → Tier3 전용, UAV → 헬기장 보유 병원 전용, 발송 게이트
-- **규칙·MILP·트리도 전부 같은 마스크에서만 후보를 고른다** — 비교 공정성의 핵심
-- 병목은 수용량이 아니라 **수술실 대기**다. 전원(diversion) 실측 0건, 손실은 100% 치료 개시 지연
-
-### 🧠 차원 비의존 MaskablePPO 포인터 정책
-
-병원을 슬롯이 아니라 **집합**으로 읽는 pointer head(순열등변)라 병원 수·순서가 바뀌어도 같은
-정책이 돈다. `MCI_H_PAD` 로 지역별 병원 수 차이를 패딩 흡수하고, 패딩 병원은 마스크로 차단한다.
-
-- obs `field` = **현장 지휘소가 실제로 아는 값만**. 차량 실시간 잔여시간(뽑힌 난수)·병원 실시간
-  점유·미구조 환자 등급(트리아지 전 라벨) 3종을 **누출로 판정해 제거**했다
-- `--n_attn_blocks 0`(attention 제거)이 성능·재현성 모두에서 채택 구성. 시드 표준편차가 1/28 로 줄었다
-- ⚠️ **병원 블록은 슬롯별 정규화를 하면 안 된다** — 병원 슬롯이 현장 거리순으로 정렬돼 있는데
-  head 는 순열등변이라 같은 20분이 슬롯0 에서 +0.21σ, 슬롯46 에서 −6.07σ 로 읽힌다. 전역 상수로만 나눈다
-
-### 📋 현장 규칙집 — 학습 정책의 역설계
-
-교사 정책의 결정 로그에서 **물리단위 임계값**을 채굴한다. 정규화된 관측값이 아니라 분·km·명 단위로
-읽어야 전국 단일 규칙이 성립한다(좌표별 정규화는 "환자 1명 = 몇 분" 교환율을 지운다).
-
-```
-① 등급   현장 대기 환자 중 누구를 먼저 — 접근성이 좋을수록 Red 우선 임계가 올라간다
-② 목적지  적격 병원 중  도달시간(분) + λ · max(0, 대기+1 − 수술실수) / 수술실수  최소
-③ 수단   현장 대기 수단이 하나면 그것, 둘 다면 최근접 Tier3 도로거리 임계로 UAV 전환
-```
-
-- **λ ≈ 서비스시간 ÷ 수술실수** — 대기행렬에서 유도되는 값이라 물리 조건이 바뀌어도 따라온다
-- **정보수준 3벌**: A(병원 통신) · **B(통신 불요 — 권장)** · C(나눗셈 없음). 선형화 버전은
-  현행보다 나빠서 권장선에서 제외했다
-- 결정당 **밀리초 단위**(증류 트리 실측 ~1.7 ms). MILP 113 ms · 롤아웃 플래너 수 초 는
-  성능 상한·민감도 자료로만 둔다
-
-### 🧪 비교군 — 휴리스틱부터 OR 까지
-
-| 비교군 | 구현 | 역할 |
-|---|---|---|
-| 휴리스틱 64룰 | `sim_src/RuleManager.py` | 2 우선순위 × 2 병원 × 4 Red모드 × 4 Yellow모드 |
-| 문헌 규칙 16종 | `sim_src/ShinHeuristics.py` | Shin–Lee(2020) 계열 적응 + 병원선택 정합 변형 16종 |
-| 발송상한 규칙 | `rl_src/lb3_policy.py` · `loadbalance_heuristic.py` | 병원당 누적발송 soft cap — **강한 설명가능 기준선** |
-| MILP 롤링호라이즌 | `rl_src/milp_policy.py` | 치료개시 기회 열거 → 선형 정수배정(scipy HiGHS) |
-| 롤아웃 플래너 | `rl_src/planner_policy.py` | 비오라클 NCRP — 성능 상한 참고선 |
-| 트리·GBDT 증류 | `rl_src/tree_distill_policy.py` | 후보랭킹(병원 번호 비의존) CART/GBDT |
-
-### ⚡ 고속 실행경로 (`src/sim_src_upgrade/`)
-
-원본 `src/sim_src` 와 **로직이 동일한 별도 실행경로** + 등가성 검증 하네스. 기존 드라이버를
-수정하지 않고 런처만 바꿔 쓴다.
-
-| | |
-|---|---|
-| 결과 | 지표·산출 파일 **비트 동일**(가중치 텐서 포함 등가성 게이트 통과) |
-| 속도 | 규칙 전수평가 **3.3~4.4×**, PPO 학습 1.31× |
-| 함정 | `deepcopy` 가 numpy 뷰를 끊어 플래너에서만 결과가 갈리고, **BLAS 스레드 수가 부동소수 결과를 바꾼다** |
-
-전체 문서 → [`src/sim_src_upgrade/README.md`](src/sim_src_upgrade/README.md)
-
----
-
-## 🌏 Unity 디지털트윈
-
-시뮬레이션 결과를 **전국 3D 한국 지도** 위에 재생한다. RL/시뮬 코드와는 시나리오 데이터
-(`scene.json` + `trace_flat.json`)로만 연결된다.
-
-### 재난 대응 트윈 — `UAV_test`
-
-<img src="docs/assets/KoreaDigitalTwin_UAV.gif" width="100%" alt="MCI 디지털트윈 — 구급차·무인기 이송 재생">
-
-- **255 시군구 씬**을 필요한 지역만 additive 로드. 각 씬에 정사영상·건물·OSM 도로·교통시설·
-  공원/수계·POI(병원/학교/소방)가 메시로 구워져 있다(vWorld·OSM·DEM 수집 → 에디터 임포터 베이크)
-- 좌표계는 시군구별 EPSG:5186 프레임으로 WGS84 → Unity 월드(미터) 변환
-- 시나리오를 고르면 AMB/UAV 배차·병원 처치·카메라가 재생되고, NPC 차량(응급차량 양보·신호 준수)과
-  보행자가 함께 돌아간다
-- eVTOL 에어앰뷸런스는 **무인기 설정**이라 조종사 없이 의사·환자·구급대원 3인 캐빈만 있고,
-  계기는 아날로그 EFIS 가 아니라 **자율주행차식 인지 화면**(LiDAR 자유공간 조감도 · 자율성 상태 카드 ·
-  깊이 카메라)이다
-
-### 자율주행 씬 — `CAR_test`
-
-<img src="docs/assets/KoreaDigitalTwin_ADS.gif" width="100%" alt="강남 자율주행 씬 — 정밀도로지도 기반">
-
-- MCI 시뮬과는 **무관한 별도 씬**이지만 같은 GIS 파이프라인 산출물(정밀도로지도 차선그래프·보행망·
-  표준링크)을 소비한다
-- 강남 110타일(EPSG:5186 11×10 km) k-ring 스트리밍. 지면 높이의 단일 출처는 **정밀도로지도 차선 z**
-- 센서 리그: LiDAR16 · 77GHz 레이더 · GNSS/INS 융합 · IMU · 열화상 · 초음파 12구 · V2X SPaT ·
-  전방 RGB · 스테레오 깊이. 차량 물리는 WheelCollider + ABS/TCS/ESC + 엔진 토크곡선 파워트레인
-
-<details>
-<summary><b>⚠️ 이 저장소와의 관계 — Unity 자산은 원격에 없다</b></summary>
-<br>
-
-`external/ml-agents` 는 **upstream Unity-Technologies/ml-agents 를 가리키는 서브모듈**이고,
-Unity 프로젝트 `UAV_test/` · `CAR_test/` 는 그 서브모듈 작업트리 안에 **untracked 로** 존재한다.
-따라서 Unity C#·Assets 는 `origin` 에 올라가지 않는다(의도된 구조) — 이 저장소가 버전관리하는 것은
-RL/시뮬 Python 코드다. 아키텍처·임포터·재발 함정 기록은 [`CLAUDE.unity.md`](CLAUDE.unity.md).
-
-| 항목 | 내용 |
-|---|---|
-| Unity 버전 / 렌더 파이프라인 | *(TODO)* |
-| 프로젝트 열기·씬 실행 절차 | *(TODO)* |
-| 위 영상 촬영 씬·구성 | *(TODO)* |
-| 3D 자산·GIS 데이터 배포 가능 여부 | *(TODO)* |
-
-</details>
-
----
-
-## ⚙️ 실행 옵션
-
-| 환경변수 | 기본 | 효과 |
-|---|---|---|
-| `MCI_OBS_VARIANT` | `essential` | obs 구성 (`field` = v19 현장관측, `essential+load+valid` = v6 계열). **학습↔평가 일치 필수 — 호출자 책임** |
-| `MCI_H_PAD` | — | 병원 슬롯 패딩 상한(예 `47`). 미설정 = 구 동작 **비트 동일** |
-| `MCI_REWARD_MODE` | `raw` | `woG` / `pdrwog`(규모 불변) / `rywt` |
-| `MCI_CAP_GATE` | `occ` | 발송 게이트 = **통신축**. `psent` = 병원 실시간 정보 없이 현장 지득분만. obs·마스크·휴리스틱 4곳이 같은 정의를 공유한다 |
-| `MCI_CARED_OBS` | `1` | `0` 이면 병원 처치 완료를 관측에서 감춘다. `psent` 와 짝지어 **완전 통신단절** 모델 |
-| `MCI_INCIDENT_SIZE` · `MCI_CAPA_SCALE` · `MCI_AMB_NUM` · `MCI_UAV_NUM` | — | 자원·부하 런타임 노브(시나리오 재생성 불요) |
-| `MCI_AMB_VELOCITY` · `MCI_UAV_VELOCITY` · `MCI_AMB_HANDOVER` · `MCI_UAV_HANDOVER` | — | 물리축 노브. 미설정 = 구 동작 **비트 동일** |
-| `MCI_OSRM_URL` · `KAKAO_API_KEY` | — | 시나리오 생성 라우팅 |
-
-**노브 추가 규칙**: 미설정이면 기존 경로와 **비트 동일**해야 하고, 회귀 스모크로 그것을 증명한다.
-
-<details>
-<summary><b>⚠️ 용량 게이트가 거의 안 걸리는 이유 (통신축 해석 주의)</b></summary>
-<br>
-
-병원 총 용량(Σ `max_send` = 수술실수 + 병상수)이 환자 부하의 **6~15배**라 `occ`(실시간 점유)와
-`psent`(현장 지득 누적)가 거의 갈라지지 않는다. 그래서 통신축 자체는 행동을 크게 바꾸지 않는다
-(18지역 ×2 실험에서 통신 단절 비용은 잡음 이내). **게이트를 실제로 물리게 하려면**
-`max_send_coeff` ↓, `MCI_INCIDENT_SIZE` ↑, 병원 수 ↓ 로 용량 ≈ 1× 로 조여야 한다.
-
-단 **부하 신호 자체는 결정적**이다 — 목적지 규칙에서 부하항을 빼면 같은 test750 에서 PDR 이 0.138 → 0.260 으로 붕괴한다.
-게이트(이산 상한)와 부하 벌점(연속 교환율)은 다른 축이다.
-
-</details>
-
----
-
-## 🧭 라우팅 백엔드
-
-<details open>
-<summary><b>OSRM (기본, 키 불필요)</b></summary>
-<br>
-
-정적 도로망 기반이라 교통 혼잡은 반영되지 않고 시뮬은 `거리 ÷ 속도` 로 이동시간을 만든다.
-현행 정본 시나리오는 전부 OSRM 이다(결정적 = 재현 가능). 대량 생성은 자체 인스턴스를 띄운다.
+**실행 데이터는 별도로 준비해야 합니다.**
+생성된 시나리오와 학습 모델은 저장소에 포함되지 않습니다.
+매니페스트가 가리키는 YAML·CSV·거리행렬이 있어야 평가가 가능하며,
+다른 머신에서는 매니페스트의 절대경로도 확인해야 합니다.
+데이터가 준비된 뒤의 학습·평가에는 라우팅 API 키가 필요하지 않습니다.
+
+처음에는 튜닝셋의 한 좌표에서 규칙 두 개를 실행합니다. **4에피소드의 동작 확인용**이며 성능 판정은 아닙니다.
 
 ```bash
-tools/osrm_prepare_korea.sh
+export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+
+python src/rl_src/v17_rule_eval.py \
+  --manifest scenarios/manifests/sigungu30_budget750_manifest.json \
+  --regions 가평군_41820_q10 \
+  --policies 'CARD_Q18=cardt:18,6.6,0,hingerate;CARD_P18=cardt:18,6.6,0,hingerate_psent' \
+  --n_eps 2 --seed0 0 --workers 1 \
+  --out results/readme_smoke/rules.csv
+```
+
+지역·정책·시드별 지표가 `rules.csv`에, 실행 설정이 `rules.csv.meta.json`에 기록됩니다.
+조건을 바꿔 실행할 때는 출력 경로를 새로 지정합니다.
+
+[실행·검증 가이드 →](agent_docs/operations.md)
+
+</details>
+
+<details>
+<summary><strong>05 · 데이터 준비</strong> — 시나리오와 라우팅</summary>
+
+<br>
+
+| 데이터 | 생성 / 관리 |
+| :--- | :--- |
+| 병원·119 기지·행정경계 원장 | `scenarios/`의 입력 파일 |
+| 좌표별 YAML·CSV·거리행렬 | [make_csv_yaml_dynamic.py](src/sce_src/make_csv_yaml_dynamic.py) |
+| 시군구250 × 30좌표 풀 | [gen_sigungu30_osrm.py](src/sce_src/gen_sigungu30_osrm.py) |
+| 학습·튜닝·판정 분할 | [split_sigungu30.py](src/sce_src/split_sigungu30.py) |
+| 상위 매니페스트·좌표 원장 | [scenarios/manifests/](scenarios/manifests/) |
+
+현행 좌표 생성기는 도로 스냅 거리500m 이내 조건을 검사합니다.
+AMB는 도로 경로, UAV는 직선거리를 사용하므로 좌표 스냅 차이도 데이터 품질에 영향을 줍니다.
+
+**OSRM — 기본 경로**
+
+정적 도로망의 거리를 사용하며, 시간은 시뮬레이션의 속도 설정으로 계산합니다.
+대량 생성에는 자체 OSRM 인스턴스를 사용합니다. Docker와 도로 데이터 저장 공간이 필요합니다.
+
+```bash
+bash tools/osrm_prepare_korea.sh
 docker compose -f docker-compose.osrm.yml up -d
 export MCI_OSRM_URL=http://localhost:5000
-python tools/build_distance_matrix_osrm.py     # 병원↔병원 도로거리 행렬 재생성
 ```
+
+**Kakao Mobility — 교통시간 기반 경로**
+
+`make_csv_yaml_dynamic.py --is_use_time True`로 API 소요시간을 사용하는 경로를 선택합니다.
+키·출발시각·입력 원장 옵션은 생성기의 `--help`를 확인합니다.
+API 키와 키 파일은 버전관리하지 않습니다.
+
+생성 데이터·모델을 포함한 재현 조건과 과거 자산 위치는 [실행 가이드](agent_docs/operations.md)와
+[아카이브 원장](archive/README.md)에 정리되어 있습니다.
 
 </details>
 
 <details>
-<summary><b>Kakao Mobility (출발시각 교통 반영)</b></summary>
+<summary><strong>06 · 학습과 평가</strong> — 모델 호환성과 실행 옵션</summary>
+
 <br>
 
-`--is_use_time True`. 구간마다 길찾기 API 를 호출해 실제 소요시간을 받고, `departure_time` 을 주면
-미래 시각 기준 예측 교통량이 반영된다. 라우팅 축 효과는 약 2%(OSRM 낙관 / Kakao 지연).
-키는 **환경변수로만** 준다.
+주력 트레이너는 [train_ppo_feature.py](src/rl_src/train_ppo_feature.py)입니다.
+매니페스트에서 지역을 샘플링하며 모델·정규화 통계·실행 메타데이터를 저장합니다.
+
+| 항목 | v19 전국 교사 설정 |
+| :--- | :--- |
+| 학습 데이터 | `sigungu30_train6000_manifest.json` |
+| 관측 | **`field`, 389차원** — 병원8특징 × 47 + 글로벌13 |
+| 정책 | MaskablePPO · pointer head · attention0블록 |
+| 보상 | `pdrwog` + reward normalization |
+| 학습량 | fresh10M steps · 학습 seed0 |
+| 저장 파일 | `final_model.zip` · `vecnormalize.pkl` · `meta.json` |
+
+`field+valid`는436차원의 별도 구성입니다. 기존 field 모델을 평가할 때 토큰을 추가하면 호환되지 않습니다.
+병원 블록은 모든 슬롯에 같은 물리단위 스케일을 적용하고, 슬롯별 VecNormalize에서는 면제합니다.
+
+**모델 평가 예시** — 해당 모델과 시나리오가 준비된 경우:
 
 ```bash
-export KAKAO_API_KEY=<your_key>
-python src/sce_src/gen_sigungu_kakao.py --keys_file <keys>   # 재개 가능·키 로테이션
+python src/rl_src/v17_ppo_eval.py \
+  --manifest scenarios/manifests/sigungu30_test750_manifest.json \
+  --model_dir results/rl/v19/national \
+  --obs_variant field --policy_name PPO_NATIONAL \
+  --n_eps 30 --seed0 0 --workers 1 \
+  --out results/readme_eval/ppo_national.csv
 ```
+
+이는 전체 판정 실행입니다. 실행 시간과 자원에 맞게 worker 수를 정하고,
+체크포인트 선택·디버깅에는 학습/튜닝 좌표를 사용합니다.
+평가 시에는 **같은 시점의 모델과 vecnorm**을 짝지어야 합니다.
+
+| 설정 | 역할 |
+| :--- | :--- |
+| `MCI_OBS_VARIANT`, `MCI_H_PAD` | 관측 구성·병원 패딩. 학습과 평가가 일치해야 함 |
+| `MCI_REWARD_MODE` | 보상 변형 |
+| `MCI_CAP_GATE`, `MCI_CARED_OBS` | 발송 게이트·병원 처치 정보 가시성 |
+| `MCI_INCIDENT_SIZE`, `MCI_CAPA_SCALE` | 환자 부하·수술실/병상 용량 |
+| `MCI_AMB_NUM`, `MCI_UAV_NUM` | 차량 자원 수 |
+| `MCI_AMB_VELOCITY`, `MCI_UAV_VELOCITY` | 이동 속도 |
+| `MCI_AMB_HANDOVER`, `MCI_UAV_HANDOVER` | 인계시간 |
+
+비교군으로 Full64·Shin–Lee 문헌 규칙·LB 발송상한·MILP·NCRP·CART/GBDT를 제공합니다.
+각 버전의 정보 조건과 평가셋을 확인해 비교합니다.
+
+[코드 계약 →](agent_docs/codebase.md) · [학습 레시피 →](agent_docs/operations.md) · [가속 경로와 등가성 검증 →](src/sim_src_upgrade/README.md)
 
 </details>
 
----
+## Unity 데모
 
-## 📁 저장소 구조
+실제 지형·건물·도로를 재현한 3D 도시에서 자율비행과 자율주행을 시뮬레이션합니다.
+아래는 **6초 미리보기**이며 전체 GIF는 각각의 링크에서 열 수 있습니다.
 
-```
+<details>
+<summary><strong>07 · 자율비행 디지털트윈</strong> — UAV 도심 비행</summary>
+
+<br>
+
+<p align="center">
+  <a href="docs/assets/KoreaDigitalTwin_UAV.gif">
+    <img src="docs/assets/unity-uav-preview.gif" width="320" height="180" alt="3D 도시 위에서 UAV가 자율비행하는 6초 미리보기">
+  </a>
+</p>
+
+<p align="center">
+  <a href="docs/assets/KoreaDigitalTwin_UAV.gif"><strong>전체 GIF 보기 · 약35초</strong></a>
+</p>
+
+- **255개 시군구 씬**에 정사영상·건물·OSM 도로와 시설물을 배치하고 필요한 지역을 로드합니다.
+- 도심 건물·지형을 배경으로 UAV의 자율비행 경로와 기체 움직임을 시각화합니다.
+- eVTOL 캐빈·센서 화면과 여러 관전 시점을 제공하며 NPC 차량·보행자도 함께 동작합니다.
+
+Unity 프로젝트 `UAV_test/`는 Windows 로컬 자산입니다.
+이 저장소에서 Python 시뮬레이션과 연구 코드를 관리하며 Unity 프로젝트 전체는 배포하지 않습니다.
+
+[디지털트윈 구성 기록 →](CLAUDE.unity.md)
+
+</details>
+
+<details>
+<summary><strong>08 · 자율주행 디지털트윈</strong> — 강남 도심 주행</summary>
+
+<br>
+
+<p align="center">
+  <a href="docs/assets/KoreaDigitalTwin_ADS.gif">
+    <img src="docs/assets/unity-driving-preview.gif" width="320" height="180" alt="강남 도로에서 차량과 센서를 시뮬레이션하는 6초 미리보기">
+  </a>
+</p>
+
+<p align="center">
+  <a href="docs/assets/KoreaDigitalTwin_ADS.gif"><strong>전체 GIF 보기 · 약41초</strong></a>
+</p>
+
+- 정밀도로지도 차선그래프와 높이 정보를 활용한 강남 도심 주행 씬입니다.
+- 도로 타일 스트리밍, 차량 물리, 교통신호, NPC 차량·보행자를 포함합니다.
+- LiDAR·레이더·GNSS/INS·IMU·RGB/깊이 카메라 등의 센서 리그를 구성합니다.
+
+`CAR_test/`는 **MCI 환자 이송 연구와 별개의 자율주행 프로젝트**이며 GIS 파이프라인 일부를 공유합니다.
+Unity 프로젝트는 upstream ML-Agents 서브모듈 안의 미추적 로컬 자산입니다.
+
+[자율주행 씬 구성 기록 →](CLAUDE.unity.md)
+
+</details>
+
+## 코드와 문서
+
+<details>
+<summary><strong>09 · 저장소 지도</strong> — 구현과 연구 기록 찾기</summary>
+
+<br>
+
+```text
 MCI_UAV/
 ├── src/
-│   ├── sim_src/              # 시뮬레이션 엔진 (정본, 무수정 유지)
-│   ├── sim_src_upgrade/      # ⚡ 고속 실행경로 (결과 비트 동일) + 등가성 검증
-│   ├── sce_src/              # 시나리오 생성기 · 좌표 풀 분할
-│   ├── rl_src/               # RL · 규칙 · 증류 · 평가
-│   └── vis_src/              # 지도 시각화
-├── scenarios/                # 병원·소방서 마스터, 시도 경계 shp, manifests/
-├── tools/                    # 라우팅 배관 + 집계·리포트 + exp_drivers/(실험 드라이버)
-├── scoreboard/               # 버전별 판정 프로토콜(JSON) — 방법 ID·제외 사유의 정본
-├── external/ml-agents/       # Unity ML-Agents (submodule) — Unity 자산은 로컬 전용
-├── CLAUDE.md / AGENTS.md     # 코딩 에이전트 지침 = 엔지니어링 로그 정본
-├── CLAUDE.unity.md           # Unity·GIS 파이프라인
-└── RESEARCH_HISTORY.md / RESEARCH_LOG.md
+│   ├── sim_src/           이산사건 시뮬레이션 정본
+│   ├── sim_src_upgrade/   별도 가속 경로 · 등가성 검증
+│   ├── sce_src/           시나리오 생성 · 좌표 분할
+│   ├── rl_src/            학습 · 규칙 · 증류 · 평가
+│   └── vis_src/           지도 시각화
+├── scenarios/            입력 원장 · 매니페스트
+├── tools/                라우팅 · 실험 실행 · 결과 집계
+├── scoreboard/           버전별 평가 프로토콜
+├── docs/assets/          README 배너 · 데모
+├── agent_docs/           연구 판정 · 코드 계약 · 실행 가이드
+└── external/ml-agents/   upstream ML-Agents 서브모듈
 ```
 
-<details>
-<summary><b>📂 <code>src/rl_src/</code> 주요 모듈</b></summary>
-<br>
+| 찾는 내용 | 문서 / 코드 |
+| :--- | :--- |
+| 연구 방향과 버전별 채택·기각 | [연구 발전사](RESEARCH_HISTORY.md) |
+| v3~v5 실험 전문 | [연구 로그](RESEARCH_LOG.md) |
+| 현재 판정 계약·결과 출처 | [연구 상태](agent_docs/research.md) |
+| 환경·장기 실행·복구 | [실행 가이드](agent_docs/operations.md) |
+| obs·action·마스크·정규화 | [코드 계약](agent_docs/codebase.md) |
+| 현재 규칙 / 교사 평가 | [v17_rule_eval.py](src/rl_src/v17_rule_eval.py) · [v17_ppo_eval.py](src/rl_src/v17_ppo_eval.py) |
+| 폐루프 결과 집계 | [v21_infoladder_report.py](tools/v21_infoladder_report.py) |
+| 코딩 에이전트 지침 | [AGENTS.md](AGENTS.md) |
+| 과거 자산 복원 | [아카이브 원장](archive/README.md) |
 
-| 파일 | 역할 |
-|---|---|
-| `env_wrapper.py` | dict→flat obs, MultiDiscrete→Discrete, **행동 마스킹**, `encode/decode_action` |
-| `hospital_feature_wrapper.py` | 병원별 특징 obs · `MCI_H_PAD` 패딩 · 정보수준 변형 |
-| `pointer_policy.py` · `hospital_set_extractor.py` | 병원 랭킹 pointer head(순열등변) · deepsets 인코더 |
-| `pad_vecnorm.py` | 패딩·병원 블록을 정규화에서 면제(슬롯별 정규화 함정 회피) |
-| `train_ppo_feature.py` | 주력 트레이너 — 멀티지역 매니페스트 학습, `meta.json` 자동 기록 |
-| `multi_region_env.py` | 에피소드 reset 마다 지역 샘플링 |
-| `v17_field_rules.py` | **현장 규칙집** — 정적 물리량 · 임계값 채굴(`mine`) · CARD 정책 생성 |
-| `v17_rule_eval.py` · `v17_ppo_eval.py` | 규칙·PPO 폐루프 평가(동일 rollout·seed·CSV 규약) |
-| `lb3_policy.py` · `loadbalance_heuristic.py` | 발송상한 기준선 |
-| `milp_policy.py` · `planner_policy.py` | MILP 롤링호라이즌 · NCRP 롤아웃 플래너 |
-| `tree_distill_policy.py` · `v10_tree_distill.py` | 후보랭킹 CART/GBDT 증류 |
-| `paired_eval_ladder.py` | paired 판정 하네스(지역별 에피소드 배열 + 95%CI) |
-| `v20_mechanism_eval.py` | 손실 분해 계측기 — `PDR = 미진입손실 + 지연손실` 항등식 검증 |
-| `v10_full_baselines.py` · `shin_full_baselines.py` | 휴리스틱·문헌규칙 전수 기준선 |
+`v17_*`처럼 이전 버전 이름을 가진 파일도 현재 파이프라인에서 사용합니다.
+파일명만으로 현행·레거시를 구분하지 않습니다.
+
+생성 시나리오, `results/`의 모델·평가 산출물, 대부분의 `docs/` 보고서와 대용량 GIS 데이터는
+로컬 관리 대상입니다. 공개 저장소에 모든 재현 자산이 포함되어 있지는 않습니다.
 
 </details>
 
 <details>
-<summary><b>🗄️ 저장소에 없는 것</b></summary>
+<summary><strong>10 · 데이터 출처와 이용</strong></summary>
+
 <br>
 
-학습 산출물(`results/`), 생성된 시나리오(`scenarios/exp_*`), 보고서 본문(`docs/`), 대용량 GIS
-데이터는 `.gitignore` 대상이다(수십~수백 GB). 종결된 실험 자산과 도달성 0 인 일회성 분석 코드는
-`archive/`(로컬 보관, 원장 README 만 추적)로 옮기고 복원 경로를 함께 적어둔다.
-`docs/assets/` 만 예외로 추적한다 — 위 데모 GIF 가 여기 있다.
+| 자료 | 출처 계열 |
+| :--- | :--- |
+| 병원·119 기지·행정경계 | 국내 공공데이터 |
+| 도로 경로 | OpenStreetMap / OSRM · Kakao Mobility |
+| 3D 지도용 정사영상·건물·표고·정밀도로지도 | vWorld · 국토지리정보원 계열 자료 |
+
+원자료의 이용·재배포 조건은 제공기관별로 확인해야 합니다.
+프로젝트 코드의 라이선스는 아직 지정되지 않았습니다.
+
+프로젝트 관련 질문이나 재현 문제는 [GitHub Issues](https://github.com/bbcc1017/MCI_UAV/issues)에 남길 수 있습니다.
 
 </details>
 
 ---
 
-## 🔗 관련 문서
-
-| 문서 | 내용 |
-|---|---|
-| [`RESEARCH_HISTORY.md`](RESEARCH_HISTORY.md) | 연구 발전사 — 무엇을 왜 바꿨는가 |
-| [`RESEARCH_LOG.md`](RESEARCH_LOG.md) | 실험 이력·수치·**기각 근거** |
-| [`CLAUDE.md`](CLAUDE.md) / [`AGENTS.md`](AGENTS.md) | 코딩 에이전트 지침 겸 엔지니어링 로그 정본. 배관 계약·함정·판정 규약이 여기 누적된다(두 파일은 헤더 2줄만 다른 미러) |
-| [`CLAUDE.unity.md`](CLAUDE.unity.md) | Unity 디지털트윈·자율주행 씬·GIS 파이프라인 |
-| [`src/sim_src_upgrade/README.md`](src/sim_src_upgrade/README.md) | 고속 실행경로 설계·등가성 검증 |
-| `scoreboard/v*_protocol.json` | 버전별 판정 프로토콜 — 방법 ID·평가셋 역할·제외 사유 |
-| `archive/README.md` | 종결 자산·일회성 코드 보관 원장(복원 경로 포함) |
-
-> ⚠️ **수치 인용 주의**: 판정축이 두 번 바뀌었다(대표점250 → test750, 시뮬 정정 커밋 전후).
-> 서로 다른 축·정정 시점의 수치를 섞어 인용하면 안 된다. 상세는 `RESEARCH_HISTORY.md`.
-
----
-
-## 📊 데이터 출처
-
-병원 풀·안전센터/소방서·시도 경계는 국내 공공데이터, 도로 경로는 OSM/OSRM 또는 Kakao Mobility API,
-Unity 트윈의 정사영상·건물·DEM·정밀도로지도는 vWorld·국토지리정보원 계열 자료를 수집해 사용한다.
-**원자료의 재배포 조건은 각 제공기관 약관을 따른다** — 이 저장소는 스크립트만 버전관리하고
-대용량 원자료·가공 산출물은 포함하지 않는다.
-
-
-## 라이선스
-
-(프로젝트 라이선스 명시 필요)
-
-
-## 문의
-
-(문의처 정보 추가 필요)
+<p align="center">
+  <sub>MCI UAV · Simulation / Reinforcement Learning / Field Rules</sub>
+</p>
