@@ -41,7 +41,16 @@ env **생성** 시드는 `ScenarioManager` 를 거쳐 `EventManager` 로만 흘�
    평가하면 **승자의 저주**(winner's curse)가 붙어 기대성능을 낙관한다.
 2. **CRN**: 한 실행 안의 모든 후보가 **같은 내부 시드 집합**을 공유한다. 후보 간 차이의
    분산을 줄이는 유일한 장치다. 캐시가 (후보,시드) 단위라 halving 라운드 간에도 유지된다.
-3. 산출에 **승자의 저주 크기**를 명시한다 — 선택 후보의 `내부 PDR` vs `외부 PDR` 차이.
+3. 선택 품질을 **세 지표로 분리**해 기록한다(`--outer_all`, 기본 켜짐 — 외부 시드에서
+   전 후보를 평가한다). `outer(선택) − inner(선택)` 하나는 **시드집합 난이도 차이와
+   선택 편향이 섞여** 예산 곡선의 축이 못 된다(실측: 3시드에서 −0.026 = 부호가 음수라
+   승자의 저주로 설명 불가). 구 키 `winners_curse` 는 `selected_inner_vs_outer` 로
+   개명해 남겨 두고, 다음 셋을 정본으로 쓴다.
+     * `selection_regret` = `outer(선택) − outer(외부 기준 최선)`. **정의상 ≥ 0** 이고
+       "온라인 선택이 오라클보다 얼마나 나쁜가" 다. **예산 곡선의 정본 y축**.
+     * `level_shift` = 전 후보 `mean(outer − inner)`. 시드집합 난이도 차이이며
+       선택 편향이 아니다. 소표본에서는 이 항만으로 전체 격차(≈0.0285) 규모 오차가 난다.
+     * `rank_agreement` = 내부·외부 순위 Spearman ρ + top-1 일치 + 내부 top-1 의 외부 순위.
 4. 판정선을 하드코딩하지 않는다. paired 차이의 95%CI 를 실제로 계산한다. 통계 함수는
    `tools/v20_threshold_report.py` 의 `ci`/`cube`/`paired` 를 **재사용**한다(재구현하면
    W/T/L 정의가 갈린다). 좌표가 1개이므로 **paired 단위는 시드**다 — `cube()` 가 주는
@@ -735,6 +744,133 @@ def _paired_over_seeds(rows: list[dict], region: str, a_name: str, b_name: str) 
     return res
 
 
+def _avg_rank(x) -> np.ndarray:
+    """동순위 평균 랭크(pandas `rank()` 규약). Spearman 을 직접 계산하려고 쓴다."""
+    return pd.Series(np.asarray(x, float)).rank().to_numpy(float)
+
+
+def selection_diagnostics(runner: "Runner", names: list[str], inner_seeds: list[int],
+                          outer_seeds: list[int], best: str) -> dict:
+    """★ 선택 편향과 시드집합 난이도 이동을 **분리**한다.
+
+    ``outer(선택) − inner(선택)`` 하나로는 예산 곡선의 축이 못 된다. 그 값에 성분이 둘
+    섞여 있기 때문이다.
+
+    ① **시드집합 난이도 차이** — 내부 `[0,K)` 와 외부 `[1000,1000+M)` 의 실현 난이도가
+       다르다. 이건 **모든 후보에 똑같이** 걸리는 수준 이동이고 선택 편향이 아니다.
+    ② **선택 편향(진짜 승자의 저주)** — 내부 시드로 고른 후보가 그 시드에서 운이 좋았을 수
+       있다. 이건 **순위**의 편향이다.
+
+    ①이 지배하면 부호가 음수로도 나온다(내부가 오히려 비관적). 실측 경고: 3시드 소규모에서
+    ``outer − inner = −0.026`` 이 관측됐다 — 승자의 저주로는 설명 불가능한 부호이고,
+    **소표본에서는 시드 난이도 이동만으로 전체 격차(≈0.0285) 규모의 오차가 난다**는 뜻이다.
+
+    그래서 외부 시드에서 **전 후보**를 평가하고(``--outer_all``) 셋으로 쪼갠다.
+
+    * ``selection_regret`` = ``outer(선택) − outer(외부 기준 최선)``.
+      선택 후보가 후보집합에 포함되므로 **정의상 ≥ 0**. "온라인 선택이 오라클 선택보다
+      얼마나 나쁜가" 이고, 예산 곡선(x=내부 시드 수·계산 예산, y=성능)의 **정본 y축**이다.
+    * ``level_shift`` = 전 후보에 대한 ``mean(outer − inner)``. 시드집합 난이도 차이이며
+      **선택 편향이 아니다**.
+    * ``rank_agreement`` = 내부·외부 순위의 Spearman ρ + top-1 일치 여부 + 내부 top-1 의
+      외부 순위. 선택 편향이 어디서 오는지 보여주는 진단.
+
+    ⚠️ ``level_shift``·``rank_agreement`` 는 **내부 선택 시드 집합을 온전히 가진 후보**만
+    쓴다. halving 은 조기 탈락자가 시드 접두사만 갖기 때문이다(그 수를 함께 기록한다).
+    ``selection_regret`` 의 오라클은 반대로 **외부 시드를 가진 전 후보**에서 고른다 —
+    후보를 빼면 후회가 과소평가된다.
+    """
+    from v20_threshold_report import ci as _ci
+
+    have_out = [n for n in names if runner.have(n, outer_seeds)]
+    if not have_out:
+        raise RuntimeError("외부 시드 평가된 후보가 없다")
+    o = {n: runner.mean(n, outer_seeds) for n in have_out}
+    oracle = min(have_out, key=lambda n: (o[n], n))
+    regret = o[best] - o[oracle]
+    if regret < -1e-12:                                    # 정의상 불가 — 배관 오류 신호
+        raise RuntimeError(f"selection_regret<0 ({regret!r}): 선택 후보가 오라클 집합 밖이다")
+
+    pairable = [n for n in have_out if runner.have(n, inner_seeds)]
+    shifts = np.array([o[n] - runner.mean(n, inner_seeds) for n in pairable], float)
+    inner_v = np.array([runner.mean(n, inner_seeds) for n in pairable], float)
+    outer_v = np.array([o[n] for n in pairable], float)
+    if len(pairable) > 1:
+        ra, rb = _avg_rank(inner_v), _avg_rank(outer_v)
+        rho = (float(np.corrcoef(ra, rb)[0, 1])
+               if ra.std() > 0 and rb.std() > 0 else float("nan"))
+    else:
+        rho = float("nan")
+    in_top1 = min(pairable, key=lambda n: (runner.mean(n, inner_seeds), n)) if pairable else None
+    out_order = sorted(pairable, key=lambda n: (o[n], n))
+
+    # 오라클도 M 시드로 추정한 값이므로 regret 자체에 추정오차가 있다. 같은 외부 시드를
+    # 공유하니(CRN) paired 차이의 CI 를 낼 수 있고, 그게 예산 곡선의 **바닥**이다 —
+    # regret 이 이 CI 미만이면 "오라클과 구분 못 함"이라 곡선이 더 내려갈 수 없다.
+    reg_ci = (_ci(runner.vec(best, outer_seeds) - runner.vec(oracle, outer_seeds))
+              if oracle != best else 0.0)
+    return {
+        "selection_regret": {
+            "value": float(regret), "ci95": float(reg_ci),
+            "significant": bool(regret > reg_ci),
+            "selected": best, "selected_outer": float(o[best]),
+            "oracle": oracle, "oracle_outer": float(o[oracle]),
+            "n_candidates_outer": len(have_out),
+            "note": ("outer(선택) − outer(외부 기준 최선). 정의상 ≥0. 예산 곡선의 정본"
+                     " y축 — '내부 시드를 몇 개 써야 온라인 선택이 오라클에 근접하나'에"
+                     " 직접 답한다. 오라클은 외부 시드를 가진 전 후보에서 고른다."
+                     " ci95 는 같은 외부 시드 CRN paired 차이의 95%CI 이며 오라클 추정"
+                     " 오차를 담는다. regret < ci95 면 오라클과 동률이므로 곡선의 바닥이다."
+                     " M(외부 시드 수)이 작으면 오라클이 잡음으로 뽑혀 regret 이 과대"
+                     " 평가된다 — 예산 곡선을 그릴 때 M 을 고정하고 충분히 키워라."),
+        },
+        "level_shift": {
+            "mean": float(shifts.mean()), "ci95": _ci(shifts),
+            "min": float(shifts.min()), "max": float(shifts.max()),
+            "n_candidates_paired": len(pairable),
+            "inner_seeds": list(inner_seeds), "outer_seeds": list(outer_seeds),
+            "note": ("전 후보 mean(outer − inner) = 시드집합 난이도 차이. **선택 편향이"
+                     " 아니다** — 모든 후보에 똑같이 걸리는 수준 이동이다. 소표본에서는"
+                     " 이 항만으로 전체 격차(≈0.0285) 규모의 오차가 난다(3시드 실측"
+                     " −0.026). 예산 곡선의 y축으로 쓰지 마라."),
+        },
+        "rank_agreement": {
+            "spearman_rho": rho,
+            "top1_match": bool(in_top1 == out_order[0]) if pairable else None,
+            "inner_top1": in_top1,
+            "outer_top1": out_order[0] if out_order else None,
+            "inner_top1_outer_rank": (out_order.index(in_top1) + 1) if pairable else None,
+            "n_candidates_ranked": len(pairable),
+            "note": ("내부 순위 대비 외부 순위. ρ 가 1 이면 선택 편향 0(순위가 그대로)."
+                     " halving 은 조기 탈락자가 내부 전 시드를 안 가져 생존자만 순위에"
+                     " 들어간다 — n_candidates_ranked 를 함께 읽어라."),
+        },
+    }
+
+
+def _card_selection_lines(stats: dict) -> list[str]:
+    """선택 품질 줄 — **선택 후회**와 **시드 난이도 이동**을 반드시 분리해 찍는다.
+
+    한 줄에 섞으면(구 '승자의 저주' 줄) 부호가 음수로 나와도 원인을 알 수 없다.
+    """
+    d = stats.get("diag")
+    if not d:
+        return [f"│ 내부→외부     {stats['inner_mean']:.5f} → {stats['outer_mean']:.5f}"
+                f"  ({stats['curse']:+.5f})",
+                "│               ⚠️ 시드 난이도 이동과 선택 편향이 섞인 값이다."
+                " 분리하려면 --outer_all 로 돌려라"]
+    r, ls, ra = d["selection_regret"], d["level_shift"], d["rank_agreement"]
+    rho = ra["spearman_rho"]
+    return [
+        f"│ 선택 후회     {r['value']:+.5f} ± {r['ci95']:.5f}  (외부 오라클 {r['oracle']} 대비"
+        f" · 정의상 ≥0 · {'유의' if r['significant'] else '오라클과 동률'})",
+        f"│ 시드 난이도   {ls['mean']:+.5f} ± {ls['ci95']:.5f}  (내부→외부 수준 이동 ·"
+        f" 선택 편향 아님 · 후보 {ls['n_candidates_paired']})",
+        f"│ 순위 일치     Spearman ρ {rho:.3f} · top-1 {'일치' if ra['top1_match'] else '불일치'}"
+        f" (내부 top-1 의 외부 순위 {ra['inner_top1_outer_rank']}/{ra['n_candidates_ranked']})",
+    ]
+
+
 def render_card(name: str, spec: str, situation: Situation, snap: dict,
                 stats: dict) -> str:
     """채워진 규칙집 1장. 3단 구조는 `v17_field_rules.py` 의 정본 docstring 을 따른다."""
@@ -782,8 +918,7 @@ def render_card(name: str, spec: str, situation: Situation, snap: dict,
         f"│ 기준 {stats['ref_name']}    {stats['ref_mean']:.5f} ± {stats['ref_ci']:.5f}"
         f"   → (기준−선택) {stats['delta']:+.5f} ± {stats['delta_ci']:.5f} "
         f"({stats['verdict']}, 시드 W/T/L {stats['wtl']})",
-        f"│ 승자의 저주   내부 {stats['inner_mean']:.5f} → 외부 {stats['outer_mean']:.5f}"
-        f"  ({stats['curse']:+.5f})",
+        *_card_selection_lines(stats),
         f"│ 계산          후보 {stats['n_cand']} · 에피소드 {stats['n_episodes']}"
         f" · 벽시계 {stats['wall_s']:.1f}s · 워커 {stats['n_workers']}"
         f" · loadavg {stats['loadavg']:.1f}",
@@ -793,7 +928,7 @@ def render_card(name: str, spec: str, situation: Situation, snap: dict,
 
 
 # ═════════════════════════════════════════════════════════════════════ 게이트
-GATES = ("workers", "determinism", "search", "knobs")
+GATES = ("workers", "determinism", "search", "knobs", "regret")
 
 
 def run_gates(args) -> int:
@@ -855,6 +990,29 @@ def run_gates(args) -> int:
             fails.append("knobs")
         if not nd > nd0:
             print("         ⚠️ 환자를 늘렸는데 결정 수가 안 늘었다 — 노브가 물리에 안 닿았을 수 있다")
+    if "regret" in wanted:
+        # ① selection_regret >= 0 이 항상 성립하는지, ② 내부 시드를 2→4→8 로 늘리면
+        # 줄어드는 경향이 보이는지. 외부 시드 집합은 K 사이에 **고정**해야 비교 가능하다.
+        curve, bad = [], []
+        for k in (2, 4, 8):
+            r = once(families=["Q", "P"], lam=[8.0, 12.0, 18.0, 26.0, 36.0], yhold=[0.0],
+                     inner_seeds=k, outer_seeds=8, workers=4)
+            sr, ls, ra = r["selection_regret"], r["level_shift"], r["rank_agreement"]
+            curve.append((k, sr["value"], sr["ci95"], sr["selected"], sr["oracle"],
+                          ls["mean"], ra["spearman_rho"], r["search"]["episodes_total"]))
+            if sr["value"] < 0:
+                bad.append(k)
+        print(f"[gate] selection_regret >= 0: {'PASS' if not bad else 'FAIL K=' + str(bad)}",
+              flush=True)
+        for k, v, c, sel, orc, sh, rho, ep in curve:
+            print(f"         K={k}: regret {v:+.5f}±{c:.5f} (선택 {sel} / 오라클 {orc}) · "
+                  f"시드난이도 {sh:+.5f} · ρ {rho:.3f} · {ep}ep", flush=True)
+        vals = [c[1] for c in curve]
+        print(f"         추세 2→8: {vals[0]:+.5f} → {vals[-1]:+.5f} "
+              f"({'감소' if vals[-1] < vals[0] else '비감소'} — 소규모 3점이라 경향 참고용)",
+              flush=True)
+        if bad:
+            fails.append("regret")
     print(f"[gate] {'전부 PASS' if not fails else 'FAIL: ' + ','.join(fails)}", flush=True)
     return 1 if fails else 0
 
@@ -969,6 +1127,18 @@ def run_once(args) -> dict:
 
             # 외부 시드 = 평가 전용. 선택에 절대 쓰지 않는다.
             ep_outer = runner.run(sorted({best, ref_name}), outer, stage="T6_outer")
+            # --outer_all: 전 후보를 외부 시드에서도 평가한다. 이것 없이는 오라클 후보를
+            # 모르므로 `selection_regret`(예산 곡선의 정본 y축)을 계산할 수 없다.
+            # 비용은 후보수 × M 으로 탐색과 같은 규모다(39후보 × 4시드 = 156 ep).
+            outer_all, outer_all_skip = False, None
+            if args.outer_all and runner.budget_exhausted:
+                outer_all_skip = ("탐색에서 예산이 소진돼 진단 스윕을 건너뛴다 —"
+                                  " selection_regret 을 원하면 --budget_sec 를 늘리거나 빼라")
+            elif args.outer_all:
+                ep_outer += runner.run(names, outer, stage="T6_outer_all")
+                outer_all = True
+            diag = (selection_diagnostics(runner, names, common, outer, best)
+                    if outer_all else None)
             rows = runner.rows(region)
             ov = runner.vec(best, outer)
             rv = runner.vec(ref_name, outer)
@@ -980,7 +1150,7 @@ def run_once(args) -> dict:
             curse = float(ov.mean()) - inner_mean
             stats = {
                 "outer_mean": float(ov.mean()), "outer_ci": _ci(ov), "n_outer": len(outer),
-                "inner_mean": inner_mean, "curse": curse,
+                "inner_mean": inner_mean, "curse": curse, "diag": diag,
                 "ref_name": ref_name, "ref_mean": float(rv.mean()), "ref_ci": _ci(rv),
                 "delta": (pair or {}).get("delta", 0.0),
                 "delta_ci": (pair or {}).get("ci95", 0.0),
@@ -1051,11 +1221,23 @@ def run_once(args) -> dict:
             "n_outer_seeds": len(outer),
             "rank_runner_up": ranked[1] if len(ranked) > 1 else None,
         },
-        "winners_curse": {
+        # 구 키 `winners_curse` 를 이 이름으로 **개명**했다(삭제하지 않음 — 과거 산출과
+        # 대조 가능해야 한다). 값의 정의는 그대로다.
+        "selected_inner_vs_outer": {
             "inner_mean": inner_mean, "outer_mean": stats["outer_mean"], "delta": curse,
-            "note": ("외부 − 내부. 내부 시드로 고른 후보를 같은 시드로 평가하면 낙관되므로"
-                     " 서로소 외부 시드로 다시 잰 차이다. 양수 = 내부 추정이 낙관적이었다."),
+            "renamed_from": "winners_curse",
+            "note": ("외부 − 내부(선택된 후보 하나). ⚠️ 이 값은 **시드집합 난이도 차이와"
+                     " 선택 편향이 섞여** 있다 — 부호가 음수로도 나온다(3시드 실측"
+                     " −0.026). 선택 편향만 보려면 `selection_regret` 을, 난이도 이동만"
+                     " 보려면 `level_shift` 를 보라. 예산 곡선의 y축으로 쓰지 마라."),
         },
+        # ★ 예산 곡선의 정본 y축 = selection_regret. --outer_all 이 없으면 None 이다.
+        "selection_regret": (diag or {}).get("selection_regret"),
+        "level_shift": (diag or {}).get("level_shift"),
+        "rank_agreement": (diag or {}).get("rank_agreement"),
+        "outer_all": {"done": outer_all, "skipped_reason": outer_all_skip,
+                      "note": ("외부 시드에서 전 후보를 평가했는지. 이게 없으면 오라클"
+                               " 후보를 몰라 selection_regret 을 계산할 수 없다.")},
         "reference": {"name": ref_name, "spec": ref_body,
                       "outer_mean": stats["ref_mean"], "outer_ci": stats["ref_ci"]},
         "paired_vs_reference_outer": pair,
@@ -1181,6 +1363,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="halving 1라운드 시드 수 (기본 K//4). K 로 주면 grid 와 같은 순위")
     s.add_argument("--budget_sec", type=float, default=None,
                    help="벽시계 예산(초). 넘기면 안전 중단 후 그 시점 최선을 반환")
+    s.add_argument("--outer_all", action="store_true", default=True,
+                   help="외부 시드에서 **전 후보** 평가 → selection_regret·level_shift·"
+                        "rank_agreement 분리 계산 (기본 켜짐)")
+    s.add_argument("--no_outer_all", dest="outer_all", action="store_false",
+                   help="외부 시드는 선택 후보·기준만 평가(진단 3종 없음)")
 
     r = p.add_argument_group("실행·산출")
     r.add_argument("--workers", type=int, default=8, help="Pool 워커 수 (샤드 수)")
