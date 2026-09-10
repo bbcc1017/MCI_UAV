@@ -19,6 +19,7 @@ import csv
 import hashlib
 import json
 import os
+import platform
 import sys
 import time
 from multiprocessing import Pool
@@ -26,7 +27,8 @@ from pathlib import Path
 
 import numpy as np
 
-for _v in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+BLAS_VARS = ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS")
+for _v in BLAS_VARS:
     os.environ.setdefault(_v, "1")
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -34,10 +36,14 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 REPO = Path(__file__).resolve().parents[2]
 EVAL_MANIFEST = REPO / "scenarios/manifests/sigungu_osrm_eval250_representative_manifest.json"
+# wall_ms·cpu_ms 는 **끝에만** 추가한다 — 앞의 11열은 구 스키마와 순서·의미가 같아야
+# 기존 산출물(v17~v21 전수평가 CSV)과 그대로 조인·재개된다.
 COLS = [
     "region", "policy", "info_level", "complexity", "episode", "seed",
     "reward_woG", "pdr_woG", "sim_time", "n_decisions", "ms_per_decision",
+    "wall_ms", "cpu_ms",
 ]
+LEGACY_COLS = COLS[:-2]
 
 
 def sha256_file(path: str | Path) -> str:
@@ -49,6 +55,20 @@ def sha256_file(path: str | Path) -> str:
 
 
 def rollout(factory, policy, seed: int):
+    """에피소드 1회 폐루프 실행.
+
+    반환 ``(reward, pdr, sim_time, n_dec, ms_per_decision, wall_ms, cpu_ms)``.
+
+    * ``ms_per_decision`` — 정책 계산만의 결정당 시간(구 동작 그대로).
+    * ``wall_ms`` / ``cpu_ms`` — env 생성·reset·시뮬 진행을 **모두 포함**한 에피소드
+      총비용. 현장 어시스트(3~5분 예산)의 산술 입력이므로 정책시간과 분리해 남긴다.
+      공유 노드에서는 벽시계가 경합에 흔들리므로 ``cpu_ms``(process_time) 가
+      1코어 비용의 강건한 추정량이고, ``wall_ms`` 는 실제 대기시간이다.
+
+    시간 측정 호출은 난수·수치 경로를 건드리지 않으므로 ``pdr_woG``/``reward_woG`` 는
+    계측 추가 전과 비트동일하다(budget750 3좌표 27팔 회귀 게이트로 확인).
+    """
+    wall0, cpu0 = time.perf_counter(), time.process_time()
     env = factory(seed=seed)
     obs, _ = env.reset(seed=seed)
     done, reward, n_dec, policy_sec = False, 0.0, 0, 0.0
@@ -64,7 +84,10 @@ def rollout(factory, policy, seed: int):
         done = term or trunc
     preventable = env.unwrapped.preventable_woG
     pdr = 1.0 - reward / preventable if preventable > 0 else 0.0
-    return reward, pdr, float(info.get("time", np.nan)), n_dec, policy_sec * 1000 / max(n_dec, 1)
+    wall_ms = (time.perf_counter() - wall0) * 1000.0
+    cpu_ms = (time.process_time() - cpu0) * 1000.0
+    return (reward, pdr, float(info.get("time", np.nan)), n_dec,
+            policy_sec * 1000 / max(n_dec, 1), wall_ms, cpu_ms)
 
 
 def build_rule_policies(specs, region: str | None = None):
@@ -156,12 +179,14 @@ def worker(job):
             for ep in range(n_eps):
                 seed = seed0 + ep
                 for name, policy in policies:
-                    reward, pdr, sim_time, n_dec, ms = rollout(factory, policy, seed)
+                    (reward, pdr, sim_time, n_dec, ms,
+                     wall_ms, cpu_ms) = rollout(factory, policy, seed)
                     rows.append({
                         "region": region, "policy": name, "info_level": "RULE",
                         "complexity": "-", "episode": ep, "seed": seed,
                         "reward_woG": reward, "pdr_woG": pdr, "sim_time": sim_time,
                         "n_decisions": n_dec, "ms_per_decision": ms,
+                        "wall_ms": wall_ms, "cpu_ms": cpu_ms,
                     })
         return {"ok": True, "region": region, "rows": rows}
     except Exception as exc:
@@ -171,6 +196,8 @@ def worker(job):
 
 
 def main() -> None:
+    t_start = time.time()
+    loadavg_start = list(os.getloadavg())
     p = argparse.ArgumentParser()
     p.add_argument("--manifest", default=str(EVAL_MANIFEST))
     p.add_argument("--policies", required=True, help="세미콜론(;) 구분 스펙 — 규칙명에 쉼표가 들어감")
@@ -195,13 +222,25 @@ def main() -> None:
     out = Path(args.out).resolve()
     out.parent.mkdir(parents=True, exist_ok=True)
     done_regions = set()
+    # 재개 하위호환: 이미 있는 CSV 의 **실제 헤더**를 그대로 이어 쓴다.
+    # 구 스키마(11열) 파일에 13열을 append 하면 열이 어긋나므로, 그 경우엔
+    # wall_ms/cpu_ms 를 버리고(extrasaction="ignore") 파일 스키마를 유지한다.
+    write_cols = list(COLS)
     if out.exists():
         existing = {}
         with open(out, encoding="utf-8") as f:
-            for row in csv.DictReader(f):
-                existing.setdefault(row["region"], set()).add(
-                    (row["policy"], int(row["episode"]), int(row["seed"]))
-                )
+            reader = csv.DictReader(f)
+            header = list(reader.fieldnames or [])
+            if header:
+                if header not in (COLS, LEGACY_COLS):
+                    raise RuntimeError(f"기존 CSV 헤더가 현행/구 스키마와 불일치: {header}")
+                write_cols = header
+            for row in reader:
+                # 구 스키마(11열)에도 반드시 있는 4개 키만 재개 판정에 쓴다.
+                key = [row.get(c) for c in ("region", "policy", "episode", "seed")]
+                if any(v is None for v in key):
+                    raise RuntimeError(f"기존 CSV 행 손상(재개 불가): {row}")
+                existing.setdefault(key[0], set()).add((key[1], int(key[2]), int(key[3])))
         expected_n = len(cases) * args.n_eps
         done_regions = {k for k, v in existing.items() if len(v) == expected_n}
         incomplete = set(existing) - done_regions
@@ -211,15 +250,16 @@ def main() -> None:
         (key, manifest[key], specs, args.n_eps, args.seed0)
         for key in keys if key not in done_regions
     ]
+    n_workers = min(args.workers, len(jobs)) if jobs else 0
     print(
         f"[rule-eval] regions={len(keys)} remaining={len(jobs)} cases={len(cases)} "
         f"n_eps={args.n_eps} seed={args.seed0}..{args.seed0+args.n_eps-1} "
-        f"workers={min(args.workers,max(len(jobs),1))}",
+        f"workers={min(args.workers,max(len(jobs),1))} cols={len(write_cols)}",
         flush=True,
     )
     new_file = not out.exists()
     fout = open(out, "a", newline="", encoding="utf-8")
-    writer = csv.DictWriter(fout, fieldnames=COLS)
+    writer = csv.DictWriter(fout, fieldnames=write_cols, extrasaction="ignore")
     if new_file:
         writer.writeheader()
         fout.flush()
@@ -258,7 +298,9 @@ def main() -> None:
         raise RuntimeError(f"평가 행수 불일치 {len(rows)} != {expected}")
 
     meta = {
-        "schema_version": 1,
+        # v2 = 실행시간 계측 추가(CSV wall_ms/cpu_ms + 아래 timing/threads 블록).
+        # 앞 11열·pdr_woG·reward_woG 는 v1 과 비트동일하다.
+        "schema_version": 2,
         "manifest": str(manifest_path),
         "manifest_sha256": sha256_file(manifest_path),
         "policy_specs": specs,
@@ -280,6 +322,18 @@ def main() -> None:
                            if k.startswith("MCI_") and k not in
                            ("MCI_CAP_GATE", "MCI_OBS_VARIANT", "MCI_H_PAD", "MCI_REWARD_MODE")},
         "n_rows": len(rows),
+        "csv_columns": write_cols,
+        # ── 실행시간·환경 계측 (현장 어시스트 예산 산술의 입력) ─────────────────
+        # ⚠️ BLAS 스레드 수를 안 남기면 나중에 배속을 비교할 수 없다. 과거에 스레드 수
+        # 차이(1 vs 128)를 코어 차이로 오인해 허위 32.5× 가 나온 사건이 있다.
+        # (src/sim_src_upgrade/README.md "BLAS 스레드 수가 부동소수 결과를 바꾼다")
+        "wall_seconds": time.time() - t_start,
+        "n_workers": n_workers,
+        "blas_threads": {v: os.environ.get(v) for v in BLAS_VARS},
+        "loadavg_start": loadavg_start,
+        "loadavg_end": list(os.getloadavg()),
+        "python_version": platform.python_version(),
+        "hostname": platform.node(),
         "output": str(out),
         "output_sha256": sha256_file(out),
     }
