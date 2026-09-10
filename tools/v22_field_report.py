@@ -26,9 +26,11 @@ import argparse
 import glob
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 REPO = Path(__file__).resolve().parents[1]
@@ -192,6 +194,87 @@ def cmd_decompose(args) -> None:
         print(f"[기록] {args.out}")
 
 
+
+def _lam_star(df: pd.DataFrame, fam: str):
+    """그 CSV 에서 팔 족 ``fam`` 의 보간 최적 파라미터.
+
+    팔 이름을 재구성하지 않고 CSV 의 원본 이름을 쓴다 — ``S1.0`` 을 ``S1`` 로 만들면
+    조용히 KeyError 가 난다. 최적이 격자 끝이면 보간하지 않고 edge 플래그를 세운다
+    (진짜 최적점이 격자 밖이라는 뜻이므로 기울기 추정에서 빼야 한다).
+    """
+    pol = [q for q in df.policy.unique() if re.fullmatch(fam + r"[0-9.]+", q)]
+    if len(pol) < 3:
+        return None
+    vals = sorted((float(q[len(fam):]), q) for q in pol)
+    lams = np.array([v for v, _ in vals])
+    pdrs = np.array([cube(df, q).mean() for _, q in vals])
+    i = int(pdrs.argmin())
+    edge = i in (0, len(lams) - 1)
+    if not edge:
+        c = np.polyfit(np.log(lams[i - 1:i + 2]), pdrs[i - 1:i + 2], 2)
+        return float(np.exp(-c[1] / (2 * c[0]))), edge, float(lams[i]), float(pdrs[i])
+    return float(lams[i]), edge, float(lams[i]), float(pdrs[i])
+
+
+def cmd_lamscale(args) -> None:
+    """물리 축 한 개에 대한 최적 파라미터의 로그-로그 기울기.
+
+    Q 족의 λ 자리는 이론상 **평균 서비스시간**이므로 치료시간 축 기울기는 +1 이어야 한다.
+    S 족은 서비스시간을 병원 명부에서 직접 읽으므로 그 배율 w 는 평평해야 한다(이론 0).
+    ⚠️ 격자 끝 점을 포함하면 기울기가 **낮게** 편향된다. 두 값을 나란히 보고한다.
+    """
+    pat = os.path.join(args.stage_dir, f"{args.prefix}_*.csv")
+    data = {}
+    for f in sorted(glob.glob(pat)):
+        if f.endswith(".meta.json"):
+            continue
+        tag = os.path.basename(f)[len(args.prefix) + 1: -4]
+        val = args.base_value if tag == args.base_tag else float(tag.replace(args.axis_token, ""))
+        df = _load(f)
+        data[val] = {"file": f, "manifest": _meta_manifest(f),
+                     **{fam: _lam_star(df, fam) for fam in args.families.split(",")}}
+    if not data:
+        print(f"[없음] {pat}")
+        return
+
+    fams = args.families.split(",")
+    print("=" * 100)
+    print(f"{args.axis_name} 축 — 팔 족별 보간 최적 (e = 격자끝, 최적점이 격자 밖)")
+    print("=" * 100)
+    print(f"{args.axis_name:>8} | " + " | ".join(f"{fam+' 최적':>10}" for fam in fams))
+    for v in sorted(data):
+        cells = []
+        for fam in fams:
+            x = data[v][fam]
+            cells.append(f"{x[0]:8.2f}{'e' if x[1] else ' '} " if x else f"{'-':>10}")
+        print(f"{v:8} | " + " | ".join(cells))
+
+    out = {"axis": args.axis_name, "stage_dir": args.stage_dir, "points": {}, "slopes": {}}
+    for v in sorted(data):
+        out["points"][str(v)] = {fam: (data[v][fam][:3] if data[v][fam] else None) for fam in fams}
+    print()
+    for fam in fams:
+        pts = [(v, data[v][fam][0], data[v][fam][1]) for v in sorted(data) if data[v][fam]]
+        for label, sel in (("격자끝 포함", pts), ("격자끝 제외", [q for q in pts if not q[2]])):
+            if len(sel) < 3:
+                continue
+            slope, inter = np.polyfit(np.log([q[0] for q in sel]), np.log([q[1] for q in sel]), 1)
+            pred = float(np.exp(inter)) * args.predict_at ** slope
+            out["slopes"].setdefault(fam, {})[label] = {
+                "n": len(sel), "slope": float(slope),
+                f"predict_at_{args.predict_at}": pred}
+            print(f"  {fam}족 {label:9s} n={len(sel)}  기울기={slope:+.3f}  "
+                  f"→ {args.axis_name}={args.predict_at} 예측 {pred:.2f}")
+    mans = sorted({data[v]["manifest"] for v in data})
+    print(f"\n[좌표셋] {', '.join(mans)}")
+    if any("tradeoff250" in m for m in mans):
+        print("  ⚠️ tradeoff250 = test750 부분집합. 잠정값이다.")
+    if args.out:
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+        json.dump(out, open(args.out, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+        print(f"[기록] {args.out}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -213,6 +296,18 @@ def main() -> None:
     d.add_argument("--fixed_arm", default="Q18")
     d.add_argument("--out", default="")
     d.set_defaults(func=cmd_decompose)
+
+    s = sub.add_parser("lamscale", help="물리 축에 대한 최적 파라미터 스케일링 기울기")
+    s.add_argument("--stage_dir", default="results/scoreboard/v20/theory")
+    s.add_argument("--prefix", default="treat", help="CSV 파일명 접두사")
+    s.add_argument("--axis_token", default="ts", help="파일명에서 축 값 앞에 붙는 토큰")
+    s.add_argument("--base_tag", default="base")
+    s.add_argument("--base_value", type=float, default=1.0)
+    s.add_argument("--axis_name", default="치료시간배수")
+    s.add_argument("--families", default="Q,H,S")
+    s.add_argument("--predict_at", type=float, default=4.0)
+    s.add_argument("--out", default="")
+    s.set_defaults(func=cmd_lamscale)
 
     args = ap.parse_args()
     args.func(args)
