@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import glob
 import json
+import math
 import os
 import re
 import sys
@@ -275,6 +276,149 @@ def cmd_lamscale(args) -> None:
         print(f"[기록] {args.out}")
 
 
+
+# 봉투(calibration envelope) 중심 = 정식 물리조건. 각 노브의 기준값.
+ENVELOPE_CENTER = {
+    "MCI_INCIDENT_SIZE": 100.0, "MCI_AMB_NUM": 30.0, "MCI_UAV_NUM": 26.0,
+    "MCI_CAPA_SCALE": 1.0, "MCI_TREAT_SCALE": 1.0,
+    "MCI_AMB_VELOCITY": 50.0, "MCI_UAV_VELOCITY": 200.0,
+    "MCI_AMB_HANDOVER": 5.0, "MCI_UAV_HANDOVER": 10.0,
+}
+# 자원을 0 으로 없앤 조건은 배율이 아니라 질적 변화라 log 가 정의되지 않는다.
+# 무한 대신 관례값을 쓰고, 결과에 "퇴화 노브" 로 표시해 곡선 회귀에서 제외한다.
+DEGENERATE_DISTANCE = 4.0
+
+
+def envelope_distance(knobs: dict):
+    """정식 조건에서 얼마나 먼 조건인가 — 로그2 배율 편차 벡터의 L2 노름.
+
+    예) ``MCI_TREAT_SCALE=4.0`` 단독이면 ``|log2 4| = 2.0``.
+    반환 ``(거리, 퇴화노브 목록)``.
+    """
+    d2, degenerate = 0.0, []
+    for k, v in (knobs or {}).items():
+        key = k if k.startswith("MCI_") else "MCI_" + k
+        base = ENVELOPE_CENTER.get(key)
+        if base is None:
+            continue
+        try:
+            val = float(v)
+        except (TypeError, ValueError):
+            continue
+        if val <= 0:
+            degenerate.append(key)
+            d2 += DEGENERATE_DISTANCE ** 2
+            continue
+        d2 += math.log(val / base, 2.0) ** 2
+    return math.sqrt(d2), degenerate
+
+
+def cmd_envelope(args) -> None:
+    """봉투 거리 대 "그 조건에서 재튜닝하면 얻는 이득" 곡선.
+
+    각 조건 CSV 에서 배포 상수(고정 카드) 대비 **그 조건 최적 팔**의 paired 이득을 재고
+    조건의 봉투 거리와 나란히 놓는다. 이득이 거리의 단조 증가 함수면
+    "언제 현장에서 폐루프를 돌려야 하는가" 가 거리 하나로 환원된다.
+
+    ``--family Q`` 면 그 족 안에서만 재튜닝한다(= λ 만 다시 고르는 현실적 시나리오).
+    빈 문자열이면 전 팔 중 최선(= 함수형까지 바꾸는 상한).
+    """
+    rows = []
+    for pat in args.globs.split(","):
+        for f in sorted(glob.glob(os.path.join(args.stage_dir, pat.strip()))):
+            if f.endswith(".meta.json"):
+                continue
+            df = _load(f)
+            pols = set(df.policy.unique())
+            if args.fixed_arm not in pols:
+                continue
+            if args.family:
+                cand = [q for q in pols if re.fullmatch(args.family + r"[0-9.]+", q)]
+            else:
+                cand = list(pols)
+            if not cand:
+                continue
+            cubes = {q: cube(df, q) for q in set(cand) | {args.fixed_arm}}
+            means = {q: v.mean() for q, v in cubes.items()}
+            best = min(cand, key=lambda q: means[q])
+            r = paired(cubes[best], cubes[args.fixed_arm])
+            kn = _knobs(f)
+            dist, degen = envelope_distance(kn)
+            edge = ""
+            if args.family:
+                vals = sorted(float(q[len(args.family):]) for q in cand)
+                if float(best[len(args.family):]) in (vals[0], vals[-1]):
+                    edge = "격자끝"
+            rows.append({"tag": os.path.basename(f)[:-4], "knobs": kn,
+                         "manifest": _meta_manifest(f), "envelope_distance": dist,
+                         "degenerate_knobs": degen, "best_arm": best,
+                         "best_pdr": means[best], "fixed_pdr": means[args.fixed_arm],
+                         "grid_edge": edge, **r})
+    if not rows:
+        print("[없음] 조건 CSV 를 찾지 못했다")
+        return
+    rows.sort(key=lambda x: x["envelope_distance"])
+
+    scope = f"{args.family}족 내부" if args.family else "전 팔(함수형 포함)"
+    print("=" * 108)
+    print(f"봉투 거리 대 재튜닝 이득 — 배포 상수 {args.fixed_arm} 기준 · 재튜닝 범위 {scope}")
+    print("  거리 = 정식조건 대비 log2 배율 편차의 L2 노름 (자원 0 조건은 관례값 4.0, 회귀에서 제외)")
+    print(f"  이득 = {args.fixed_arm} PDR - 재튜닝 PDR (양수 = 재튜닝 이득) · 판정선 {JUDGE_LINE}")
+    print("=" * 108)
+    print(f"{'조건':16s} {'거리':>6} {'최적팔':>8} {'재튜닝':>9} {'고정':>9} "
+          f"{'이득':>10} {'±CI':>9} {'W/T/L':>14}  판정")
+    for x in rows:
+        note = (" [" + x["grid_edge"] + "]") if x["grid_edge"] else ""
+        note += " [퇴화노브]" if x["degenerate_knobs"] else ""
+        print(f"{x['tag']:16s} {x['envelope_distance']:6.2f} {x['best_arm']:>8} "
+              f"{x['best_pdr']:9.5f} {x['fixed_pdr']:9.5f} {x['delta']:+10.5f} "
+              f"{x['ci95']:9.5f} {x['win']:>4}/{x['tie']:>4}/{x['loss']:>3}  "
+              f"{_verdict(x['delta'], x['ci95'], 1)}{note}")
+
+    ok = [x for x in rows if not x["degenerate_knobs"]]
+    summary = {}
+    if len(ok) >= 3:
+        d = np.array([x["envelope_distance"] for x in ok])
+        g = np.array([x["delta"] for x in ok])
+        rho = float(np.corrcoef(d, g)[0, 1])
+        summary["pearson_r"] = rho
+        summary["n"] = len(ok)
+        line = f"거리-이득 상관 Pearson r={rho:+.3f}, n={len(ok)}"
+        try:
+            from scipy.stats import spearmanr
+            sp = spearmanr(d, g)
+            summary["spearman_rho"] = float(sp.statistic)
+            summary["spearman_p"] = float(sp.pvalue)
+            line += f" · Spearman rho={sp.statistic:+.3f} (p={sp.pvalue:.4f})"
+        except Exception:
+            line += " · Spearman 미계산(scipy 없음)"
+        print("")
+        print("  " + line)
+        cross = [x for x in ok if x["delta"] > JUDGE_LINE and x["delta"] > x["ci95"]]
+        if cross:
+            c = min(cross, key=lambda z: z["envelope_distance"])
+            summary["min_crossing_distance"] = c["envelope_distance"]
+            summary["min_crossing_tag"] = c["tag"]
+            print(f"  판정선 초과 최소 거리 = {c['envelope_distance']:.2f} ({c['tag']}) "
+                  f"-> 이 거리 이상이면 현장 재튜닝 권고")
+        else:
+            summary["min_crossing_distance"] = None
+            print("  판정선을 넘는 조건이 없다 — 검증 범위 안에서는 배포 상수로 충분하다")
+    mans = sorted({x["manifest"] for x in rows})
+    print("")
+    print(f"[좌표셋] {', '.join(mans)}")
+    if any("tradeoff250" in m for m in mans):
+        print("  주의: tradeoff250 은 test750 부분집합이다. 이 수치는 잠정값이다.")
+    if args.out:
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+        json.dump({"fixed_arm": args.fixed_arm, "family": args.family,
+                   "judge_line": JUDGE_LINE, "envelope_center": ENVELOPE_CENTER,
+                   "degenerate_distance": DEGENERATE_DISTANCE,
+                   "summary": summary, "rows": rows},
+                  open(args.out, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+        print(f"[기록] {args.out}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -308,6 +452,14 @@ def main() -> None:
     s.add_argument("--predict_at", type=float, default=4.0)
     s.add_argument("--out", default="")
     s.set_defaults(func=cmd_lamscale)
+
+    e = sub.add_parser("envelope", help="봉투 거리 대 재튜닝 이득 곡선")
+    e.add_argument("--stage_dir", default="results/scoreboard/v22/retune")
+    e.add_argument("--globs", default="extreme_*.csv,treat_*.csv,yhold_*.csv")
+    e.add_argument("--fixed_arm", default="Q18")
+    e.add_argument("--family", default="Q", help="재튜닝을 이 족으로 제한(빈 문자열이면 전 팔)")
+    e.add_argument("--out", default="")
+    e.set_defaults(func=cmd_envelope)
 
     args = ap.parse_args()
     args.func(args)
