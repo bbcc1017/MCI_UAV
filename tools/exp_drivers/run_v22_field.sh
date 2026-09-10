@@ -48,41 +48,93 @@
 #
 # ── §5. 스테이지 ───────────────────────────────────────────────────────────
 #   base     조건 1 (노브 없음)  · 팔 18 — S족 무튜닝 + P족 통신불요 + 대조 3
+#   treat    조건 6             · 팔 43 — ★치료시간 축. 이번 주 헤드라인의 정본(§8)
 #   yhold    조건 12            · 팔 15 — 등급 축(Y/R) + S족 등급 변형(SY)
-#   red      조건 14            · 팔 15 — 수단 축(G/D)
+#   red      조건 5             · 팔 15 — 수단 축(G/D). v20 14조건에서 축소(§9)
 #   extreme  조건 7             · 팔 54 — v20 42팔 + λ 격자 확장 12팔
 #   lamx     조건 5             · 팔 20 — (λ × yhold) 결합 셀. v20 은 두 축을 따로만
 #                                        쓸었다 → 축 독립 가설의 직접 검증
 # 조건별 MCI_* 노브 값은 추측이 아니라 v20 산출 메타
-# (results/scoreboard/v20/theory/{yhold,red,extreme}_*.csv.meta.json 의 scenario_knobs)
-# 와 run_v20_theory.sh 원문에서 읽어 그대로 옮겼다.
+# (results/scoreboard/v20/theory/{treat,yhold,red,extreme}_*.csv.meta.json 의
+# scenario_knobs)와 run_v20_theory.sh 원문에서 읽어 그대로 옮겼다.
+#
+# 회귀 게이트(부수 효과): base 스테이지의 Q18·K12 는
+# results/scoreboard/v20/budget/lam_base.csv 및
+# results/scoreboard/v20/fieldinfo/budget750.csv 와 **같은 매니페스트·같은 seed 0..9**
+# 라서 좌표·시드가 짝이 맞는다. 두 파일과 값이 일치해야 한다(불일치 = 코드/노브 변동
+# 신호). 반면 results/scoreboard/v20/theory/* 는 tradeoff250 이라 행을 섞은 paired
+# 결합이 불가능하다 — 조건이 같아도 좌표가 다르면 짝이 아니다.
 #
 # ── §6. 규모 추정 (전부 추정이며 실측이 아니다) ────────────────────────────
 # 에피소드 수 = 조건 × 팔 × 750 좌표 × 10 ep
-#   base 135,000 / yhold 1,350,000 / red 1,575,000 / extreme 2,835,000 / lamx 750,000
-#   합계 6,645,000 ep
+#   base 135,000 / treat 1,935,000 / yhold 1,350,000 / red 562,500 /
+#   lamx 750,000 / extreme 2,835,000                    합계 7,567,500 ep
 # (a) 프로덕션 실측 처리량 550 ep/s(원본 코어·46워커, 84~93 core-ms/ep) 기준
-#     base 0.07h · yhold 0.68h · red 0.80h · extreme 1.43h · lamx 0.38h → 합 3.4h
+#     base 0.07h · treat 0.98h · yhold 0.68h · red 0.28h · lamx 0.38h · extreme 1.43h
+#     → 합 약 3.8h
 # (b) v20 실측 로그를 좌표 3배·팔 수 비례로 늘린 기준(더 정직한 상한)
-#     base 0.1h · yhold 1.1h · red 1.1h · extreme 2.8h · lamx 0.6h → 합 약 5.8h @48워커
+#     base 0.11h · treat 1.30h · yhold 1.11h · red 0.40h · lamx 0.58h · extreme 2.83h
+#     → 합 약 6.3h @48워커 (304 core-h)
 #     (b)가 큰 이유는 두 가지다. ① n500 은 에피소드가 무거워 실측 554 core-ms/ep
 #     (다른 봉투 밖 조건은 95~114) — extreme 총비용의 약 절반을 혼자 먹는다.
 #     ② 좌표당 시나리오 적재 고정비가 팔 수로 나눠지므로 팔이 적은 스테이지의
 #     core-ms/ep 가 커진다(v20 11팔 블록 실측 141 core-ms/ep).
-# 산출 용량: 6.65M 행 × 약 120 B ≈ 0.8 GB (평가기 스키마에 열이 늘면 더 커진다).
+#     treat 조건은 v20 실측이 11.2~11.6분/조건(42팔·250좌표·18워커)으로 균일하다.
+# treat 신설(+1.94M ep)과 red 축소(−1.01M ep)의 순증은 +0.92M ep = +14% 이고
+# (b) 기준 wall 순증은 +0.6h = +10% 다("총 wall 대략 유지").
+# 산출 용량: 7.57M 행 × 약 120 B ≈ 0.9 GB (평가기 스키마에 열이 늘면 더 커진다).
 #
 # ── §7. 사용 ───────────────────────────────────────────────────────────────
-#   bash tools/exp_drivers/run_v22_field.sh <base|yhold|red|extreme|lamx> [워커수]
+#   bash tools/exp_drivers/run_v22_field.sh <base|treat|yhold|red|extreme|lamx> [워커수]
 #   DRY=1 을 주면 조건·팔 수·예상 에피소드만 출력하고 아무것도 실행하지 않는다.
-#   권장 순서: base → lamx → yhold → red → extreme (싼 것부터, n500 이 마지막)
+#   권장 순서: base → treat → yhold → lamx → extreme
+#     헤드라인 데이터(base·treat)를 먼저 확보하고 가장 비싼 extreme(n500 실측 5.1배)을
+#     마지막에 둔다. 중간에 끊겨도 논문 표의 본체는 남는다.
+#     red 는 죽은 축(§9)이라 우선순위 최하 — 여유가 있을 때 마지막에 붙인다.
 #   재개: 조건별 <stage>_<tag>.csv.meta.json 이 있으면 그 조건을 건너뛴다.
 #         메타 없이 CSV 만 남은 부분 기록은 평가기가 RuntimeError 로 막으므로
 #         해당 CSV 를 수동 확인·정리한 뒤 다시 돌린다(operations.md §장시간 작업 6).
 #   실패 처리: rc≠0 인 조건이 하나라도 있으면 <stage>.DONE 을 쓰지 않고
 #              <stage>.FAILED 에 태그를 남기고 exit 1 한다("실패해도 DONE" 함정 방지).
+#
+# ── §8. treat 스테이지: 왜 신설하고 무엇을 사전등록하는가 ──────────────────
+# v20 은 치료시간 축을 돌려놓고도(results/scoreboard/v20/theory/treat_*.csv, 6조건)
+# ① 그 CSV 가 **tradeoff250 = 판정셋 부분집합**이고
+# ② v20 스케일링 표에 치료시간 행이 없고 results/scoreboard/v20/optima.json 의
+#    조건 28개에 ts/treat 항목이 **하나도 없다**(실측 확인).
+# 즉 "λ 는 평균 서비스시간이다" 라는 이 연구의 헤드라인 주장에서 정작 서비스시간 축이
+# 누수 좌표 위의 미기록 CSV 로만 존재한다. 그래서 좌표셋 정정 + 격자 확장을 함께 한다.
+#
+# v20 CSV 재집계(로그축 포물선 보간, 독립 재계산으로 코디네이터 수치 재현):
+#   ts        0.5    0.75    1.0    1.5    2.0    3.0
+#   Q λ*      7.88  13.52  18.57  30.70  41.57  50.00 ←격자 끝 절단
+#   H λ*      4.00e  7.84  11.23  17.62  22.38  34.57  (ts=0.5 는 격자 아래끝 H4)
+#   S w*      0.52   0.58   0.62   0.72   0.66   0.74
+#   기울기 d log λ*/d log ts : Q +1.064(전점) / +1.199(격자끝 제외)   이론 +1
+#                              H +1.170 / +1.055,  P +1.183,  S +0.187 ← 사실상 평평
+# 해석: Q·H·P 는 이론 기울기 +1 을 따라가고(λ 는 튜닝 상수가 아니라 서비스시간),
+# S족은 서비스시간을 명부에서 직접 읽으므로 재튜닝이 필요 없다(평평).
+# ts=3.0 의 최적이 격자 끝 Q50 이라 그 점을 넣으면 기울기가 **낮게 편향**되고,
+# ts=0.5 에서는 H·P 가 격자 **아래끝**에서 절단됐다 → 양쪽을 다 넓힌다.
+#
+# ★사전등록 예측: ts=4.0 의 Q λ* 는 **79 ~ 98** 구간에 들어온다
+#   (ts=1.0 의 λ*=18.57 에 기울기 +1.064 적용 → 81.2, +1.199 적용 → 97.9).
+#   확장 격자 {65, 85, 110, 140} 이 이 구간을 감싼다. 들어오면 "λ = 평균 서비스시간
+#   (할인 0.61)" 이 봉투 밖으로 외삽된다는 뜻이고, 벗어나면 벗어난 값을 그대로 기록한다.
+#   게이트 실패를 격자 재조정으로 사후 구제하지 않는다(AGENTS.md 계약 7).
+# 한계 1건: P족 격자는 지시대로 성기게 {10,18,26,40,65,110} 이라 ts=0.5 의 예측
+#   λ*≈7.6 은 아래끝에서 절단된다. P족 기울기는 ts>=0.75 구간에서만 읽어야 한다
+#   (아래끝을 살리려면 P6 한 팔 추가 = 조건당 7,500 ep).
+#
+# ── §9. red 스테이지를 14조건 → 5조건으로 줄인 근거 ────────────────────────
+# 수단 축은 거의 죽은 축이다. tradeoff250 CRN paired 재확인 결과 채택값 G6.6 대비
+# 그 조건 최적 팔의 이득이 최대 +0.00055(huav5) · 중위 +0.00011 로 대부분
+# 판정선(CRN paired 0.00053) 미만이다. 14조건 × 15팔 = 1.58M ep 을 쓸 축이 아니다.
+# 이득이 조금이라도 보인 base·huav5·hamb10·vamb70·uav6 만 남기고 9조건을 뺐다.
+# 절약분 약 1.01M ep 이 treat 신설분 1.94M ep 의 절반을 상환한다.
 set -u
 
-STAGE=${1:?stage: base|yhold|red|extreme|lamx}
+STAGE=${1:?stage: base|treat|yhold|red|extreme|lamx}
 W=${2:-${W:-48}}                # 공유 노드다. 현재 부하를 보고 올릴 것(기본은 보수적으로 48)
 DRY=${DRY:-0}
 NEPS=${NEPS:-10}
@@ -176,6 +228,20 @@ arms_base () {
   echo "${s#;}"
 }
 
+# treat 스테이지 전용 λ 격자. 근거·사전등록은 머리말 §8.
+# v20 격자는 위(ts=3.0 → Q50)와 아래(ts=0.5 → H4·P6) 양쪽에서 절단됐으므로
+# Q 는 3 까지 내리고 140 까지, H 는 2 까지 내리고 150 까지 넓힌다.
+# S 는 λ 가 없는 무튜닝 카드라 wait_scale 만 훑는다(0.4·1.25 신규 = 최적점 0.52~0.74 포위).
+# P 는 통신불요 형태의 기울기가 Q 와 같은지 보는 용도라 격자를 성기게 잡는다.
+arms_treat () {
+  local s="" l w
+  for l in 3 4 6 10 14 18 22 26 32 40 50 65 85 110 140; do s="$s;Q$l=cardt:$l,6.6,0,hingerate"; done
+  for l in 2 3 4 8 12 16 21 27 35 45 60 80 110 150;     do s="$s;H$l=cardt:$l,6.6,0,hinge1"; done
+  for w in 0.25 0.4 0.5 0.62 0.75 1.0 1.25 1.5;         do s="$s;S$w=cards:$w,6.6,0"; done
+  for l in 10 18 26 40 65 110;                          do s="$s;P$l=cardt:$l,6.6,0,hingerate_psent"; done
+  echo "${s#;}"
+}
+
 # (λ × yhold) 결합 셀. v20 은 λ 를 yhold=0 에서만, yhold 를 λ=18 에서만 쓸었다.
 # 두 축이 독립이면 이 20셀의 최소점이 (λ*, y*) = (v20 λ 최적, v20 y 최적) 이어야 한다.
 arms_lamx () {
@@ -246,6 +312,17 @@ case $STAGE in
     run base "" "$(arms_base)"
     ;;
 
+  treat)  # ★치료시간 축. λ = 평균 서비스시간 주장의 정본(§8). ts=1.0 은 base 가 담당하므로
+          # 여기서 중복 실행하지 않는다. ts=4.0 은 extreme_ts40 과 같은 조건이지만
+          # 이쪽은 λ 격자가 촘촘해서 최적점 자체를 잡는 용도다.
+    POL=$(arms_treat)
+    for spec in "ts05:MCI_TREAT_SCALE=0.5" "ts075:MCI_TREAT_SCALE=0.75" \
+                "ts15:MCI_TREAT_SCALE=1.5" "ts20:MCI_TREAT_SCALE=2.0" \
+                "ts30:MCI_TREAT_SCALE=3.0" "ts40:MCI_TREAT_SCALE=4.0"; do
+      run "${spec%%:*}" "${spec#*:}" "$POL"
+    done
+    ;;
+
   yhold)  # 등급 축 재도출. 조건 12개 = v20 yhold 스테이지와 동일.
     POL=$(arms_yhold)
     for spec in "base:" \
@@ -258,14 +335,12 @@ case $STAGE in
     done
     ;;
 
-  red)    # 수단 축 재도출. 조건 = base + v20 red 스테이지 13개.
+  red)    # 수단 축 재도출. v20 14조건 → 5조건으로 축소했다(근거 §9: 죽은 축).
+          # 남긴 조건은 tradeoff250 에서 채택값 대비 이득이 조금이라도 보인 곳뿐이다.
+          # 뺀 9조건: vamb30 vamb100 vuav100 vuav150 vuav300 vuav400 huav20 uav1 uav13
     POL=$(arms_red)
-    for spec in "base:" \
-                "vamb30:MCI_AMB_VELOCITY=30" "vamb70:MCI_AMB_VELOCITY=70" "vamb100:MCI_AMB_VELOCITY=100" \
-                "vuav100:MCI_UAV_VELOCITY=100" "vuav150:MCI_UAV_VELOCITY=150" \
-                "vuav300:MCI_UAV_VELOCITY=300" "vuav400:MCI_UAV_VELOCITY=400" \
-                "huav5:MCI_UAV_HANDOVER=5" "huav20:MCI_UAV_HANDOVER=20" "hamb10:MCI_AMB_HANDOVER=10" \
-                "uav1:MCI_UAV_NUM=1" "uav6:MCI_UAV_NUM=6" "uav13:MCI_UAV_NUM=13"; do
+    for spec in "base:" "huav5:MCI_UAV_HANDOVER=5" "hamb10:MCI_AMB_HANDOVER=10" \
+                "vamb70:MCI_AMB_VELOCITY=70" "uav6:MCI_UAV_NUM=6"; do
       run "${spec%%:*}" "${spec#*:}" "$POL"
     done
     ;;
@@ -287,7 +362,7 @@ case $STAGE in
     done
     ;;
 
-  *) echo "unknown stage: $STAGE (base|yhold|red|extreme|lamx)" >&2; exit 1;;
+  *) echo "unknown stage: $STAGE (base|treat|yhold|red|extreme|lamx)" >&2; exit 1;;
 esac
 
 if [ "$DRY" = "1" ]; then
