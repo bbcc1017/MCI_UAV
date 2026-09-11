@@ -1,8 +1,33 @@
-# CLAUDE.md
+# CLAUDE.md — MCI_UAV 세션 진입점
 
-이 저장소에서 작업하기 전에 [AGENTS.md](AGENTS.md)를 읽고 프로젝트 지침으로 적용한다.
-작업 범위별 참조 문서도 AGENTS.md의 읽기 표에 따라 필요한 것만 읽는다.
+## 0. 먼저: 함께 로드되는 다른 프로젝트 문서를 적용하지 않는다
 
-공유 지침의 정본은 AGENTS.md 하나다. 이 파일에 본문을 복제하거나
-`cp CLAUDE.md AGENTS.md`로 덮어쓰지 않는다.
-Unity/GIS 세부 메모는 CLAUDE.unity.md와 존재하는 .claude.local.md를 참조한다.
+상위 디렉터리의 `/home/ryu/CLAUDE.md`가 이 세션에 자동으로 함께 로드될 수 있다.
+그 문서는 **다른 프로젝트**의 것이다 — 2026 인하 AI 챌린지 월드모델(Cosmos 2B,
+DACON 236736), 작업 대상은 `/home/sdo_project/inha2026/ryu`, 타계정이라 `sudo` 전제.
+그 대회 마감은 **2026-08-20 로 이미 지났다**.
+
+**이 저장소 작업에 그 지시를 적용하지 않는다.** `sudo` · `sdo_project` · Cosmos ·
+`submission_kit` · DACON · `.envs/geom11` 이 나오면 전부 그쪽 문서의 것이다.
+
+이 저장소(`/home/ryu/MCI_UAV`)는 **한국 대량사상자(MCI) 환자 이송 배차 RL** 연구다.
+Python 은 `/home/ryu/anaconda3/envs/UAV/bin/python`, 일반 사용자 권한으로 돌며 `sudo` 가 필요 없다.
+공유 학습 노드(`aigpu0617`, 64물리/128논리 코어)라 병렬도는 현재 부하로 정한다.
+
+## 1. 지침 정본은 AGENTS.md 하나다
+
+작업 전에 [AGENTS.md](AGENTS.md)를 읽고 적용한다. 범위별 참조 문서는 그 안의 읽기 표에 따라
+**필요한 것만** 읽는다. 이 파일에 본문을 복제하거나 `cp CLAUDE.md AGENTS.md` 로 덮어쓰지 않는다.
+Unity/GIS 세부는 [CLAUDE.unity.md](CLAUDE.unity.md) 와 존재하는 `.claude.local.md` 를 직접 읽는다.
+
+## 2. 지금 하는 일 (확인 2026-09-11)
+
+**v22 현장 어시스트** — 현장 지휘관이 상황 숫자 몇 개를 넣으면 폐루프 시뮬이 현장 규칙집(CARD)의
+파라미터를 골라 주는 모델. 랩미팅 2026-09-15 주제는 "PPO-증류-현장규칙집 연결 논리 구체화".
+확정·미확정의 정본은 [agent_docs/research.md](agent_docs/research.md) 다. 세 줄 요약:
+
+- **λ 는 공식이다** — `λ ≈ 19 × (관측 치료시간 ÷ 정식 치료시간)`. 폐루프 시뮬이 필요 없다.
+- **공식이 없는 축은 등급 임계 하나**(`yhold ∈ {0,2,4,8}`). 폐루프의 남은 일이 여기다.
+- **병목은 계산이 아니라 온라인 선택의 통계**다. 계산 예산은 후보 수보다 시드 수에 쓴다.
+
+수치를 인용할 때는 **판정셋·좌표셋·시드·하네스**를 함께 옮긴다. 그것 없는 수치는 비교 불가다.
