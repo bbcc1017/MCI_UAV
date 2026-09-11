@@ -196,6 +196,25 @@ def cmd_decompose(args) -> None:
 
 
 
+
+def _axis_value(tag: str, token: str, scale: str) -> float:
+    """조건 태그에서 축 값을 뽑는다.
+
+    v20/v22 드라이버의 태그 규약은 **소수점을 뺀다** — `capa05`=0.5 · `ts075`=0.75 ·
+    `ts15`=1.5 · `ts40`=4.0. `float("05")`=5.0 으로 읽으면 조용히 10배 틀린다.
+    `v20_threshold_report` 의 `_axis_of` 와 같은 환산을 쓴다:
+    ``float(num) / 10**(len(num)-1)``.
+    구 v20 theory 파일은 `ts0.5` 처럼 점이 들어 있어 그대로 파싱해야 하므로,
+    점이 있으면 환산하지 않는다.
+    """
+    num = tag.replace(token, "", 1)
+    if not num:
+        raise ValueError(f"축 값을 못 읽었다: tag={tag} token={token}")
+    if scale == "raw" or "." in num:
+        return float(num)
+    return float(num) / (10.0 ** (len(num) - 1))
+
+
 def _lam_star(df: pd.DataFrame, fam: str):
     """그 CSV 에서 팔 족 ``fam`` 의 보간 최적 파라미터.
 
@@ -226,11 +245,21 @@ def cmd_lamscale(args) -> None:
     """
     pat = os.path.join(args.stage_dir, f"{args.prefix}_*.csv")
     data = {}
+    if args.anchor_csv:
+        # 같은 좌표셋·시드의 축 기준점을 다른 경로에서 끌어온다. budget750 의 ts=1.0 은
+        # v22 treat 스테이지에 없고 results/scoreboard/v20/budget/lam_base.csv 에 전 Q격자가 있다.
+        if not os.path.exists(args.anchor_csv):
+            raise SystemExit(f"[치명] anchor_csv 없음: {args.anchor_csv}")
+        _am = _meta_manifest(args.anchor_csv)
+        _adf = _load(args.anchor_csv)
+        data[args.anchor_value] = {"file": args.anchor_csv, "manifest": _am, "is_anchor": True,
+                                   **{fam: _lam_star(_adf, fam) for fam in args.families.split(",")}}
+        print(f"[앵커] {args.axis_name}={args.anchor_value} <- {args.anchor_csv} (좌표셋 {_am})")
     for f in sorted(glob.glob(pat)):
         if f.endswith(".meta.json"):
             continue
         tag = os.path.basename(f)[len(args.prefix) + 1: -4]
-        val = args.base_value if tag == args.base_tag else float(tag.replace(args.axis_token, ""))
+        val = args.base_value if tag == args.base_tag else _axis_value(tag, args.axis_token, args.axis_scale)
         df = _load(f)
         data[val] = {"file": f, "manifest": _meta_manifest(f),
                      **{fam: _lam_star(df, fam) for fam in args.families.split(",")}}
@@ -267,7 +296,10 @@ def cmd_lamscale(args) -> None:
             print(f"  {fam}족 {label:9s} n={len(sel)}  기울기={slope:+.3f}  "
                   f"→ {args.axis_name}={args.predict_at} 예측 {pred:.2f}")
     mans = sorted({data[v]["manifest"] for v in data})
-    print(f"\n[좌표셋] {', '.join(mans)}")
+    print("")
+    print(f"[좌표셋] {', '.join(mans)}")
+    if len(mans) > 1:
+        print("  주의: 좌표셋이 섞였다 — 앵커와 스테이지의 매니페스트가 다르면 기울기를 믿지 마라.")
     if any("tradeoff250" in m for m in mans):
         print("  ⚠️ tradeoff250 = test750 부분집합. 잠정값이다.")
     if args.out:
@@ -450,6 +482,10 @@ def main() -> None:
     s.add_argument("--axis_name", default="치료시간배수")
     s.add_argument("--families", default="Q,H,S")
     s.add_argument("--predict_at", type=float, default=4.0)
+    s.add_argument("--axis_scale", choices=["v20", "raw"], default="v20",
+                   help="v20: 태그 ts075 를 0.75 로 환산(소수점 생략 규약) · raw: 그대로 float")
+    s.add_argument("--anchor_csv", default="", help="축 기준점을 담은 다른 CSV(같은 좌표셋이어야 한다)")
+    s.add_argument("--anchor_value", type=float, default=1.0)
     s.add_argument("--out", default="")
     s.set_defaults(func=cmd_lamscale)
 
