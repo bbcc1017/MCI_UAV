@@ -651,7 +651,11 @@ def make_field_card_time_policy(lam_min_per_patient: float = 14.4,
                                 yellow_hold: float = 0.0,
                                 h_pad: int = H_PAD,
                                 load_term: str = "load",
-                                lam_uav: float | None = None):
+                                lam_uav: float | None = None,
+                                yellow_hold_hi: float | None = None,
+                                alt_ratio: float = 0.0,
+                                gate_uav: str = "on",
+                                coupled: str = "off"):
     """CARD-T — CARD 와 같은 3단 구조이되 거리축을 **분(分)** 으로 바꾼 규칙집 (v20).
 
     CARD 의 채택 임계값(lam 12 km/명, red_km 12 km)은 속도 50/200 km/h·인계 5/10분인
@@ -671,9 +675,48 @@ def make_field_card_time_policy(lam_min_per_patient: float = 14.4,
     도달시간은 ``amb_HtoS_t[0] + amb_handover_time``(UAV 도 동형)이며 **속도·인계시간을
     하드코딩하지 않고 en_properties 에서 읽는다** — 파라미터 축 스윕이 이 값들을 런타임에
     바꾸기 때문이다. 거리축 CARD 와 달리 정규화 진단모드(dist_mode)는 두지 않는다.
+
+    v22 opt-in 인자 (기본값 = v20 경로 **비트동일**)
+    ------------------------------------------------
+    ``yellow_hold_hi`` (= y), ``alt_ratio`` (= r)
+        등급 축을 단일 임계에서 **2임계 밴드**로 넓힌다. x = ``yellow_hold`` 로 두면
+
+            yellow_wait <= x        → Red 우선
+            x < yellow_wait <= y    → Red/Yellow 교대
+            yellow_wait > y         → Yellow 우선
+
+        교대는 **숨은 카운터로 구현하지 않는다** — 에피소드 경계에서 상태가 누설되고
+        현장에서도 실행 불가다. 대신 현장 장부에서 읽는 양으로 정의한다:
+        ``want_red = (red_sent × r <= yellow_sent)``. ``red_sent``/``yellow_sent`` 는
+        등급별 **내가 보낸 누적 인원**(생애단계 이송중+병원도착+완료)이므로 병원 통신이
+        필요 없다(정보수준 계약의 "가용" 범주). ``r = 0`` 이면 조건이 항상 참이 되어
+        교대가 꺼지고 밴드는 임계 y 의 단일 규칙으로 퇴화한다. ``y = x`` 면 밴드가
+        비어 v20 단일 임계 x 와 완전히 같다.
+    ``gate_uav``
+        ``"on"`` = v20 동작(``and uav_here``). Red 우선을 **UAV 가 현장에 대기할 때만**
+        허용하므로 등급 축이 사실상 Yellow 우선에 고정된다. ``"off"`` 면 그 게이트를
+        떼고 밴드만으로 판정한다 — 등급 축 헤드룸이 게이트 뒤에 숨어 있는지 재기 위한
+        후보다.
+    ``coupled``
+        ``"off"`` = v20 동작(수단 → 목적지 순차 결정). ``"on"`` 이면 3단·2단을 합쳐
+        적격 ``(수단, 병원)`` 쌍 전체에서 ``t_m(h) + lam(m)·load(h) + mu·1[m=UAV]``
+        최소를 고른다(``mu`` = ``red_gain_min`` 인자를 재사용). 동점은 AMB 가 이긴다.
+        결합형에서는 등급별 수단 제약(Yellow→AMB)을 걸지 않으므로 UAV 회피는 전적으로
+        ``mu`` 가 담당한다.
     """
     if load_term not in LOAD_TERMS:
         raise ValueError(f"load_term 은 {LOAD_TERMS} 중 하나 (got {load_term})")
+    if gate_uav not in ("on", "off"):
+        raise ValueError(f"gate_uav 는 'on'|'off' 중 하나 (got {gate_uav!r})")
+    if coupled not in ("on", "off"):
+        raise ValueError(f"coupled 는 'on'|'off' 중 하나 (got {coupled!r})")
+    y_lo = float(yellow_hold)
+    y_hi = y_lo if yellow_hold_hi is None else float(yellow_hold_hi)
+    if not (y_hi >= y_lo):
+        raise ValueError(f"밴드 상한 y={y_hi:g} 가 하한 x={y_lo:g} 보다 작다")
+    alt_ratio = float(alt_ratio)
+    if alt_ratio < 0.0:
+        raise ValueError(f"alt_ratio(r) 는 0 이상 (got {alt_ratio:g})")
     from aggregate_obs import AggregateObsWrapper
     from loadbalance_heuristic import _codec_from_mask
     from score_features import build_ctx, compute_static
@@ -716,6 +759,10 @@ def make_field_card_time_policy(lam_min_per_patient: float = 14.4,
         load = _load_vector(ctx, load_term, st["base"])
         pa = AggregateObsWrapper._patient_agg(np.asarray(dobs["p_states"]))[:10]
         red_wait, yellow_wait = float(pa[1]), float(pa[6])
+        # 등급별 **누적 발송 인원** = 생애단계 2(이송중)+3(병원도착)+4(완료).
+        # 통신단절 시 단계 4 가 3 으로 흡수되지만 세 단계의 합은 불변이므로, 이 값은
+        # 현장 지휘소 장부(내가 몇 명을 어느 등급으로 내보냈나)와 같고 통신이 불요하다.
+        red_sent, yellow_sent = float(pa[2] + pa[3] + pa[4]), float(pa[7] + pa[8] + pa[9])
 
         def elig(c, m):
             idx = [h for h in range(H) if mask[encode(c, h + 1, m)]]
@@ -723,13 +770,34 @@ def make_field_card_time_policy(lam_min_per_patient: float = 14.4,
 
         sets = {(c, m): elig(c, m) for c in (0, 1) for m in (0, 1)}
 
-        # --- 1단: 등급 ---
+        # --- 1단: 등급 — 2임계 밴드 (y_hi==y_lo & gate_uav=="on" 이면 v20 단일 임계) ---
         can = {c: (sets[(c, 0)].size + sets[(c, 1)].size) > 0 for c in (0, 1)}
         uav_here = sets[(0, 1)].size > 0 or sets[(1, 1)].size > 0
-        want_red = (yellow_wait <= yellow_hold) and uav_here
+        if yellow_wait <= y_lo:
+            band_red = True
+        elif yellow_wait <= y_hi:
+            band_red = (red_sent * alt_ratio) <= yellow_sent     # 장부 기반 교대
+        else:
+            band_red = False
+        want_red = band_red and (uav_here if gate_uav == "on" else True)
         c = 0 if (want_red and can[0]) else (1 if can[1] else (0 if can[0] else None))
         if c is None:                                  # 이송 불가 → 현장대기
             return int(encode(0, 0, 0))
+
+        if coupled == "on":
+            # --- 2·3단 결합: 적격 (수단, 병원) 쌍에서 점수 최소 (v22 opt-in) ---
+            best_h, best_m, best_sc = None, 0, None
+            for m_ in (0, 1):
+                cm = sets[(c, m_)]
+                if cm.size == 0:
+                    continue
+                t_ = st["t_uav"] if m_ == 1 else st["t_amb"]
+                lam_ = lam_min_per_patient if (m_ == 0 or lam_uav is None) else lam_uav
+                sc = t_[cm] + lam_ * load[cm] + (red_gain_min if m_ == 1 else 0.0)
+                j = int(np.argmin(sc))
+                if best_sc is None or float(sc[j]) < best_sc:   # 동점 → AMB 우선
+                    best_h, best_m, best_sc = int(cm[j]), m_, float(sc[j])
+            return int(encode(c, best_h + 1, best_m))
 
         # --- 3단: 수단 (등급 확정 후) — 축만 km→분, 판정은 두 수단의 시간차 ---
         has_a, has_u = sets[(c, 0)].size > 0, sets[(c, 1)].size > 0
@@ -757,9 +825,50 @@ def make_field_card_time_policy(lam_min_per_patient: float = 14.4,
         best = cand[int(np.argmin(score))]
         return int(encode(c, int(best) + 1, m))
 
+    tail = ""
+    if (y_hi != y_lo) or alt_ratio or gate_uav != "on" or coupled != "off":
+        tail = (f" band=({y_lo:g},{y_hi:g}] r={alt_ratio:g}"
+                f" gate_uav={gate_uav} coupled={coupled}")
     fn.policy_name = (f"FIELD_CARD_T[{load_term}] lam_t={lam_min_per_patient:g}"
                       + (f"/{lam_uav:g}" if lam_uav is not None else "")
-                      + f" red_gain={red_gain_min:g} yhold={yellow_hold:g}")
+                      + f" red_gain={red_gain_min:g} yhold={yellow_hold:g}" + tail)
+    return fn
+
+
+def make_field_card_t2_policy(lam_min_per_patient: float,
+                              mu: float,
+                              x: float,
+                              y: float,
+                              r: float = 0.0,
+                              h_pad: int = H_PAD,
+                              load_term: str = "hingerate",
+                              gate_uav: str = "on",
+                              coupled: str = "off",
+                              lam_uav: float | None = None):
+    """CARD-T2 — 등급 축을 2임계 밴드로 넓힌 v22 현장 카드 템플릿.
+
+    스펙 문자열 ``cardt2:lam,mu,x,y,r,load_term,gate_uav,coupled`` 의 생성자다.
+    내부적으로 `make_field_card_time_policy` 의 opt-in 경로를 그대로 쓰므로
+    ``y == x & r == 0 & gate_uav="on" & coupled="off"`` 는 같은 ``lam``·``mu``·
+    ``load_term`` 의 ``cardt:`` 와 **같은 코드·같은 부동소수 연산**을 타고
+    비트동일한 결과를 낸다(회귀 게이트로 확인).
+
+    파라미터 의미
+    -------------
+    ``lam`` 부하 교환율(분/명) · ``mu`` 수단 축 상수 — ``coupled="off"`` 면 Red 의
+    UAV 전환 시간이득 임계(분, = v20 ``red_gain_min``), ``"on"`` 이면 결합 점수의
+    UAV 가산항(분) · ``x``/``y`` 밴드 하한·상한(Yellow 현장대기 명수) ·
+    ``r`` 교대비(0 = 교대 없음, ``red_sent × r <= yellow_sent`` 일 때 Red 우선).
+    """
+    fn = make_field_card_time_policy(
+        float(lam_min_per_patient), float(mu), float(x), h_pad=h_pad,
+        load_term=load_term, lam_uav=lam_uav,
+        yellow_hold_hi=float(y), alt_ratio=float(r),
+        gate_uav=gate_uav, coupled=coupled)
+    fn.policy_name = (f"FIELD_CARD_T2[{load_term}] lam_t={float(lam_min_per_patient):g}"
+                      + (f"/{lam_uav:g}" if lam_uav is not None else "")
+                      + f" mu={float(mu):g} band=({float(x):g},{float(y):g}] r={float(r):g}"
+                      + f" gate_uav={gate_uav} coupled={coupled}")
     return fn
 
 
