@@ -451,6 +451,83 @@ def cmd_envelope(args) -> None:
         print(f"[기록] {args.out}")
 
 
+
+def cmd_interact(args) -> None:
+    """(λ × yhold) 결합 격자 — 두 축이 정말 독립인가.
+
+    v20 은 λ 를 `yhold=0` 에서만, yhold 를 `λ=18` 에서만 쓸었다. 두 축이 독립이면
+    결합 격자의 최소점이 **(축별 단독 최적) 그 자리**여야 한다. 어긋나면 축이 상호작용한다.
+
+    상호작용을 크기로 재는 방법 두 가지를 함께 낸다.
+      ① 좌표 이동 — 결합 최적 (λ*, y*) 가 단독 최적 (λ0, y0) 와 다른가.
+      ② 성능 차 — `PDR(λ0, y0) − PDR(λ*, y*)` 의 CRN paired 이득. 이게 결합을 고려해서
+         실제로 얻는 값이고, 판정선 미만이면 "축을 따로 골라도 된다" 가 맞다.
+    """
+    for f in sorted(glob.glob(os.path.join(args.stage_dir, f"{args.prefix}_*.csv"))):
+        if f.endswith(".meta.json"):
+            continue
+        tag = os.path.basename(f)[len(args.prefix) + 1: -4]
+        df = _load(f)
+        cells = {}
+        for q in df.policy.unique():
+            m = re.fullmatch(r"Q([0-9.]+)Y([0-9.]+)", q)
+            if m:
+                cells[(float(m.group(1)), float(m.group(2)))] = q
+        if not cells:
+            print(f"[{tag}] Q<λ>Y<y> 꼴 팔이 없다 — 건너뜀")
+            continue
+        lams = sorted({k[0] for k in cells})
+        ys = sorted({k[1] for k in cells})
+        cubes = {k: cube(df, v) for k, v in cells.items()}
+        means = {k: v.mean() for k, v in cubes.items()}
+
+        kn = _knobs(f)
+        print("=" * 96)
+        print(f"[{tag}] 결합 격자 {len(lams)}x{len(ys)}  노브={kn or '(기준조건)'}  좌표셋 {_meta_manifest(f)}")
+        print("=" * 96)
+        head = "  λ \\ y  " + "".join(f"{y:>10.0f}" for y in ys)
+        print(head)
+        for l in lams:
+            row = f"  {l:6.0f} "
+            for y in ys:
+                v = means.get((l, y))
+                row += f"{v:10.5f}" if v is not None else f"{'-':>10}"
+            print(row)
+
+        joint = min(means, key=means.get)
+        # 축별 단독 최적: y=y_ref 행에서 최선 λ, λ=λ_ref 열에서 최선 y
+        row_at_yref = {l: means[(l, args.y_ref)] for l in lams if (l, args.y_ref) in means}
+        col_at_lref = {y: means[(args.lam_ref, y)] for y in ys if (args.lam_ref, y) in means}
+        if not row_at_yref or not col_at_lref:
+            print(f"  참조선(λ={args.lam_ref}, y={args.y_ref})이 격자에 없다 — 좌표 이동 판정 생략")
+            continue
+        l0 = min(row_at_yref, key=row_at_yref.get)
+        y0 = min(col_at_lref, key=col_at_lref.get)
+        sep = (l0, y0)
+        print("")
+        print(f"  결합 최적      (λ={joint[0]:.0f}, y={joint[1]:.0f})  PDR={means[joint]:.6f}")
+        print(f"  축별 단독 최적 (λ={l0:.0f}, y={y0:.0f})  PDR="
+              + (f"{means[sep]:.6f}" if sep in means else "격자 밖"))
+        print(f"    (단독은 y={args.y_ref:.0f} 행에서 λ, λ={args.lam_ref:.0f} 열에서 y 를 각각 고른 값)")
+        if sep == joint:
+            print("  → 좌표 일치: 이 조건에서는 축을 따로 골라도 같은 답에 도달한다")
+        elif sep in means:
+            r = paired(cubes[joint], cubes[sep])
+            print(f"  → 좌표 불일치. 결합이 단독보다 {r['delta']:+.6f} ±{r['ci95']:.6f} "
+                  f"(W/T/L {r['win']}/{r['tie']}/{r['loss']}) {_verdict(r['delta'], r['ci95'], 1)}")
+            if r["delta"] <= JUDGE_LINE:
+                print("     판정선 미만 — 좌표는 움직였지만 성능 차이는 없다. "
+                      "\"축을 따로 골라도 된다\" 가 성능 기준으로는 유지된다")
+        # 채택 카드 대비
+        if (args.lam_ref, args.y_ref) in means:
+            base = (args.lam_ref, args.y_ref)
+            r2 = paired(cubes[joint], cubes[base])
+            print(f"  채택 카드 (λ={args.lam_ref:.0f}, y={args.y_ref:.0f}) 대비 결합 최적 이득 "
+                  f"{r2['delta']:+.6f} ±{r2['ci95']:.6f} (W/T/L {r2['win']}/{r2['tie']}/{r2['loss']}) "
+                  f"{_verdict(r2['delta'], r2['ci95'], 1)}")
+        print("")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -496,6 +573,13 @@ def main() -> None:
     e.add_argument("--family", default="Q", help="재튜닝을 이 족으로 제한(빈 문자열이면 전 팔)")
     e.add_argument("--out", default="")
     e.set_defaults(func=cmd_envelope)
+
+    i = sub.add_parser("interact", help="(λ × yhold) 결합 격자 — 축 독립성 검정")
+    i.add_argument("--stage_dir", default="results/scoreboard/v22/retune")
+    i.add_argument("--prefix", default="lamx")
+    i.add_argument("--lam_ref", type=float, default=18.0, help="채택 λ (yhold 단독 스윕이 쓴 값)")
+    i.add_argument("--y_ref", type=float, default=0.0, help="채택 yhold (λ 단독 스윕이 쓴 값)")
+    i.set_defaults(func=cmd_interact)
 
     args = ap.parse_args()
     args.func(args)
