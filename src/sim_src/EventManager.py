@@ -349,8 +349,21 @@ class EventManager():
         rescue_times = []
         # 1. 환자 구조 이벤트 생성
         p_param = self.properties['patient']
-        p_num = self.rng.multinomial(p_param['incident_size'],
-                                     pvals=p_param['patient_info']['ratio'])
+        # ★ draw-and-discard — 의도된 설계이니 "안 쓰는 난수니까" 지우지 말 것.
+        #   등급 인원수 노브(MCI_GRADE_COUNT, ScenarioManager 에서 파싱)가 켜져 있어도
+        #   다항분포 draw 자체는 **그대로 수행하고 결과만 버린다**. draw 를 건너뛰면
+        #   self.rng 스트림 위치가 어긋나 이후의 모든 난수(구조시각 beta, 출동시각
+        #   lognormal, 이송시간, 서비스시간)가 통째로 달라진다. draw 를 유지하면 같은
+        #   총원·같은 시드의 기본 조건 실행과 이 지점까지의 난수 소비가 동일해져서
+        #   "등급 구성만 바꾼" 통제된 비교가 된다(실현 등급이 고정값과 일치하는 시드에서는
+        #   에피소드 전체가 비트동일 — 실측 확인). 성능 최적화 대상이 아니다.
+        #   ※ 정렬은 이 draw 까지다. 바로 아래 구조시각 beta 는 `size=p_num[c]` 라 등급별
+        #     인원수가 곧 난수 소비량이므로, 구성이 실제로 달라지면 그 다음부터는 하류가
+        #     갈린다(원리상 불가피). draw 를 생략하면 그 갈림이 첫 호출부터 시작될 뿐이다.
+        _drawn = self.rng.multinomial(p_param['incident_size'],
+                                      pvals=p_param['patient_info']['ratio'])
+        _fixed = p_param.get('grade_counts')
+        p_num = _drawn if _fixed is None else np.asarray(_fixed, dtype=_drawn.dtype)
         self.status['patient']['p_states'][:,0] = np.repeat([0,1,2,3], p_num)
 
         rescue_max_time = 60

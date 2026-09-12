@@ -60,6 +60,52 @@ def _override_handover(name, cfg_handover):
     return h
 
 
+# ───── 환자 등급 인원수 런타임 오버라이드 (등급 축 스윕용) ───────────────────
+# 현장 지휘관은 트리아지를 끝내고 "환자 120명 중 Red 14, Yellow 38" 처럼 **인원을 센다**.
+# 그런데 등급 구성은 지금까지 patient_info.csv 의 ratio 열(Red .1 / Yellow .3 / Green .5 /
+# Black .1)에 고정돼 있어 현장 입력으로 받을 수도, 실험 축으로 흔들 수도 없었다.
+# CARD 의 등급 임계 yhold 는 문자 그대로 Red 대 Yellow 우선순위를 정하는 파라미터인데
+# 정작 Red 비율 축은 한 번도 스윕하지 못했다 — 이 노브가 그 구멍을 메운다.
+#   MCI_GRADE_COUNT="14,38,60,8"   (쉼표 구분 R,Y,G,B 인원수; 음이 아닌 정수 4개)
+# 미설정(빈 문자열·공백 포함)이면 기존 다항분포 샘플링 그대로 → 구 동작과 비트동일.
+#
+# ★ 총원 제약: EventManager.ev_onset 이 `p_states[:,0] = np.repeat([0,1,2,3], p_num)` 로
+#   등급 라벨을 채우고 p_states 는 EntityManager 가 `incident_size` 행으로 할당한다.
+#   따라서 sum(counts) 가 incident_size 와 정확히 같지 않으면 shape 오류다.
+#   → 노브가 켜지면 incident_size 를 인원 합으로 덮는 것이 유일하게 맞는 처리다.
+#   MCI_INCIDENT_SIZE 와 동시 설정 시 값이 어긋나면 조용히 한쪽을 이기게 두지 않고
+#   ValueError 를 낸다(조용한 우선순위는 나중에 사람을 태운다).
+# ⚠️ patient_info['ratio'] 는 건드리지 않는다(합==1 단정 유지). 그래서 ratio 로 기대인원을
+#   계산하는 다른 경로 — `RuleManager.expected_R/expected_Y` = ratio × incident_size — 는
+#   노브가 켜져도 명목 비율 기준이고 고정 인원과 어긋난다. Universal_Rule(HEUR64·cap3)을
+#   이 노브와 함께 쓸 때는 그 점을 감안하라(CARD/PPO 경로는 expected_R 을 쓰지 않는다).
+def _env_grade_counts_knob(name="MCI_GRADE_COUNT"):
+    """등급별 인원수 노브를 [R,Y,G,B] 정수 리스트로 읽는다. 미설정이면 None(구 동작)."""
+    raw = os.environ.get(name, "")
+    if not raw.strip():
+        return None
+    toks = [t.strip() for t in raw.split(",")]
+    if len(toks) != 4:
+        raise ValueError(
+            f"{name}={raw!r} — 등급 인원수는 'Red,Yellow,Green,Black' 4개여야 합니다"
+            f" (받은 개수 {len(toks)})."
+        )
+    counts = []
+    for grade, tok in zip(("Red", "Yellow", "Green", "Black"), toks):
+        try:
+            n = int(tok)
+        except ValueError:
+            raise ValueError(
+                f"{name}={raw!r} — {grade} 인원 {tok!r} 을(를) 정수로 해석할 수 없습니다."
+            ) from None
+        if n < 0:
+            raise ValueError(f"{name}={raw!r} — {grade} 인원은 0 이상이어야 합니다(받은 값 {n}).")
+        counts.append(n)
+    if sum(counts) <= 0:
+        raise ValueError(f"{name}={raw!r} — 총 환자수가 0 입니다. 최소 1명은 있어야 합니다.")
+    return counts
+
+
 class ScenarioManager():
     def __init__(self, configs, rng=None):
         if rng is not None:
@@ -108,6 +154,19 @@ class ScenarioManager():
         _isz = os.environ.get("MCI_INCIDENT_SIZE", "")
         if _isz.strip():
             reg_prop['incident_size'] = int(_isz)
+        # 등급별 인원수 오버라이드(MCI_GRADE_COUNT). 켜지면 총원은 인원 합으로 결정된다.
+        # (파서·설계 근거는 파일 상단 _env_grade_counts_knob 주석 참조)
+        _gc = _env_grade_counts_knob()
+        reg_prop['grade_counts'] = _gc
+        if _gc is not None:
+            _gc_total = sum(_gc)
+            if _isz.strip() and int(_isz) != _gc_total:
+                raise ValueError(
+                    f"MCI_INCIDENT_SIZE={int(_isz)} 와 MCI_GRADE_COUNT 합계 {_gc_total}"
+                    f"({'+'.join(str(n) for n in _gc)}) 이(가) 어긋납니다. 등급 인원을 고정하면"
+                    " 총원은 그 합으로 결정되므로, 총원 노브는 빼거나 같은 값으로 맞추십시오."
+                )
+            reg_prop['incident_size'] = _gc_total
         incident_loc = (cfg_patient['latitude'], cfg_patient['longitude'])
         incident_type = cfg_patient['incident_type']
         try:
