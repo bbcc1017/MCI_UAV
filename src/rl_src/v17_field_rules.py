@@ -655,7 +655,8 @@ def make_field_card_time_policy(lam_min_per_patient: float = 14.4,
                                 yellow_hold_hi: float | None = None,
                                 alt_ratio: float = 0.0,
                                 gate_uav: str = "on",
-                                coupled: str = "off"):
+                                coupled: str = "off",
+                                yellow_amb_only: str = "off"):
     """CARD-T — CARD 와 같은 3단 구조이되 거리축을 **분(分)** 으로 바꾼 규칙집 (v20).
 
     CARD 의 채택 임계값(lam 12 km/명, red_km 12 km)은 속도 50/200 km/h·인계 5/10분인
@@ -701,8 +702,22 @@ def make_field_card_time_policy(lam_min_per_patient: float = 14.4,
         ``"off"`` = v20 동작(수단 → 목적지 순차 결정). ``"on"`` 이면 3단·2단을 합쳐
         적격 ``(수단, 병원)`` 쌍 전체에서 ``t_m(h) + lam(m)·load(h) + mu·1[m=UAV]``
         최소를 고른다(``mu`` = ``red_gain_min`` 인자를 재사용). 동점은 AMB 가 이긴다.
-        결합형에서는 등급별 수단 제약(Yellow→AMB)을 걸지 않으므로 UAV 회피는 전적으로
-        ``mu`` 가 담당한다.
+        기본값 ``yellow_amb_only="off"`` 에서는 등급별 수단 제약(Yellow→AMB)을 걸지 않으므로
+        UAV 회피는 전적으로 ``mu`` 가 담당한다.
+    ``yellow_amb_only``
+        ``coupled="on"`` 일 때만 의미가 있다. ``"off"`` = v22 ⑮ 측정 대상(현행 결합형,
+        Yellow 도 UAV 쌍을 후보로 본다). ``"on"`` 이면 **Yellow 환자의 (UAV, 병원) 쌍을
+        결합 argmin 후보에서 뺀다** — 순차형과 같은 제약이다. 단 순차형도 "Yellow 는 언제나
+        AMB" 가 아니다: ``m = 0 if has_a else 1`` 이므로 AMB 적격이 하나도 없으면 Yellow 도
+        UAV 를 탄다(마스크가 강제하는 경우). 여기서도 같은 규약을 쓴다 — AMB 적격집합이
+        비면 제약을 풀어 UAV 쌍을 남긴다. 그래야 이 스위치가 **수단 자유도만** 끄고
+        "이송 가능/불가" 를 바꾸지 않는다.
+
+        ★존재 이유: ⑮ 의 Δ 는 "결정을 결합한 것" 과 "Yellow 에게 UAV 를 허용한 것" 의
+        합산이라 해석이 안 된다. 이 스위치로 둘째 성분만 껐다 켰다 해서 분해한다.
+        ``coupled="off"`` + ``yellow_amb_only="on"`` 은 순차형에 이미 같은 제약이 박혀 있어
+        아무 효과가 없는 조합이므로 **ValueError** 로 막는다(같은 팔에 두 개의 스펙 문자열이
+        생기는 것을 허용하지 않는다 — ``cardt2:`` 토큰 규약의 원칙).
     """
     if load_term not in LOAD_TERMS:
         raise ValueError(f"load_term 은 {LOAD_TERMS} 중 하나 (got {load_term})")
@@ -710,6 +725,13 @@ def make_field_card_time_policy(lam_min_per_patient: float = 14.4,
         raise ValueError(f"gate_uav 는 'on'|'off' 중 하나 (got {gate_uav!r})")
     if coupled not in ("on", "off"):
         raise ValueError(f"coupled 는 'on'|'off' 중 하나 (got {coupled!r})")
+    if yellow_amb_only not in ("on", "off"):
+        raise ValueError(f"yellow_amb_only 는 'on'|'off' 중 하나 (got {yellow_amb_only!r})")
+    if yellow_amb_only == "on" and coupled != "on":
+        # 순차형은 Yellow→AMB 가 이미 구조에 박혀 있다. 여기서 'on' 을 받으면 같은 정책에
+        # 두 스펙 문자열이 생겨 팔 정체가 흐려진다 → 조용히 무시하지 않고 막는다.
+        raise ValueError("yellow_amb_only='on' 은 coupled='on' 에서만 의미가 있다 "
+                         "(순차형은 이미 Yellow→AMB 제약을 쓴다)")
     y_lo = float(yellow_hold)
     y_hi = y_lo if yellow_hold_hi is None else float(yellow_hold_hi)
     if not (y_hi >= y_lo):
@@ -786,8 +808,13 @@ def make_field_card_time_policy(lam_min_per_patient: float = 14.4,
 
         if coupled == "on":
             # --- 2·3단 결합: 적격 (수단, 병원) 쌍에서 점수 최소 (v22 opt-in) ---
+            modes = (0, 1)
+            if yellow_amb_only == "on" and c == 1 and sets[(c, 0)].size > 0:
+                # Yellow 수단 자유를 끈다(분해용). AMB 적격이 없을 때는 제약을 풀어
+                # 순차형의 `m = 0 if has_a else 1` 과 같은 집합을 남긴다.
+                modes = (0,)
             best_h, best_m, best_sc = None, 0, None
-            for m_ in (0, 1):
+            for m_ in modes:
                 cm = sets[(c, m_)]
                 if cm.size == 0:
                     continue
@@ -828,7 +855,8 @@ def make_field_card_time_policy(lam_min_per_patient: float = 14.4,
     tail = ""
     if (y_hi != y_lo) or alt_ratio or gate_uav != "on" or coupled != "off":
         tail = (f" band=({y_lo:g},{y_hi:g}] r={alt_ratio:g}"
-                f" gate_uav={gate_uav} coupled={coupled}")
+                f" gate_uav={gate_uav} coupled={coupled}"
+                + (f" yamb={yellow_amb_only}" if yellow_amb_only != "off" else ""))
     fn.policy_name = (f"FIELD_CARD_T[{load_term}] lam_t={lam_min_per_patient:g}"
                       + (f"/{lam_uav:g}" if lam_uav is not None else "")
                       + f" red_gain={red_gain_min:g} yhold={yellow_hold:g}" + tail)
@@ -844,10 +872,12 @@ def make_field_card_t2_policy(lam_min_per_patient: float,
                               load_term: str = "hingerate",
                               gate_uav: str = "on",
                               coupled: str = "off",
-                              lam_uav: float | None = None):
+                              lam_uav: float | None = None,
+                              yellow_amb_only: str = "off"):
     """CARD-T2 — 등급 축을 2임계 밴드로 넓힌 v22 현장 카드 템플릿.
 
-    스펙 문자열 ``cardt2:lam,mu,x,y,r,load_term,gate_uav,coupled`` 의 생성자다.
+    스펙 문자열 ``cardt2:lam,mu,x,y,r,load_term,gate_uav,coupled[,yellow_amb_only]``
+    의 생성자다(9번째 토큰은 생략 가능하고, 생략 시 ``"off"`` = 현행 동작).
     내부적으로 `make_field_card_time_policy` 의 opt-in 경로를 그대로 쓰므로
     ``y == x & r == 0 & gate_uav="on" & coupled="off"`` 는 같은 ``lam``·``mu``·
     ``load_term`` 의 ``cardt:`` 와 **같은 코드·같은 부동소수 연산**을 타고
@@ -858,17 +888,20 @@ def make_field_card_t2_policy(lam_min_per_patient: float,
     ``lam`` 부하 교환율(분/명) · ``mu`` 수단 축 상수 — ``coupled="off"`` 면 Red 의
     UAV 전환 시간이득 임계(분, = v20 ``red_gain_min``), ``"on"`` 이면 결합 점수의
     UAV 가산항(분) · ``x``/``y`` 밴드 하한·상한(Yellow 현장대기 명수) ·
-    ``r`` 교대비(0 = 교대 없음, ``red_sent × r <= yellow_sent`` 일 때 Red 우선).
+    ``r`` 교대비(0 = 교대 없음, ``red_sent × r <= yellow_sent`` 일 때 Red 우선) ·
+    ``yellow_amb_only`` 결합 argmin 에서 Yellow 의 UAV 쌍을 뺄지(``coupled="on"`` 전용,
+    ⑮ 이득을 '결합' 과 'Yellow 수단 자유' 로 분해하기 위한 스위치).
     """
     fn = make_field_card_time_policy(
         float(lam_min_per_patient), float(mu), float(x), h_pad=h_pad,
         load_term=load_term, lam_uav=lam_uav,
         yellow_hold_hi=float(y), alt_ratio=float(r),
-        gate_uav=gate_uav, coupled=coupled)
+        gate_uav=gate_uav, coupled=coupled, yellow_amb_only=yellow_amb_only)
     fn.policy_name = (f"FIELD_CARD_T2[{load_term}] lam_t={float(lam_min_per_patient):g}"
                       + (f"/{lam_uav:g}" if lam_uav is not None else "")
                       + f" mu={float(mu):g} band=({float(x):g},{float(y):g}] r={float(r):g}"
-                      + f" gate_uav={gate_uav} coupled={coupled}")
+                      + f" gate_uav={gate_uav} coupled={coupled}"
+                      + (f" yamb={yellow_amb_only}" if yellow_amb_only != "off" else ""))
     return fn
 
 

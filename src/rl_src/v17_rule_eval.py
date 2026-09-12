@@ -136,21 +136,28 @@ def build_rule_policies(specs, region: str | None = None):
             out.append((name, make_field_card_time_policy(la, rgain, yh, load_term=lt, lam_uav=lu)))
             continue
         if body.startswith("cardt2:"):
-            # cardt2:<lam>,<mu>,<x>,<y>,<r>,<load_term>,<gate_uav>,<coupled> — 2임계 밴드 (v22)
+            # cardt2:<lam>,<mu>,<x>,<y>,<r>,<load_term>,<gate_uav>,<coupled>[,<yellow_amb_only>]
+            #   2임계 밴드 (v22).
             #   등급 축: yellow_wait<=x → Red / x<yellow_wait<=y → 교대 / >y → Yellow.
             #   교대는 숨은 카운터가 아니라 장부값 (red_sent × r <= yellow_sent) 이다.
             #   gate_uav=off 면 "UAV 가 현장에 있을 때만 Red" 게이트를 뗀다.
             #   coupled=on 이면 수단×목적지를 결합 점수 하나로 고른다(mu = UAV 가산항).
-            # 토큰 8개 고정 — 조용한 기본값 대입이 팔 정체를 흐리므로 생략을 허용하지 않는다.
+            #   yellow_amb_only=on 이면 그 결합 argmin 에서 Yellow 의 UAV 쌍을 뺀다
+            #     (⑮ 이득을 '결합' 과 'Yellow 수단 자유' 로 분해하는 스위치).
+            # 토큰 8개가 기본이고 9번째만 생략 가능하다 — 생략 = off = 기존 8토큰 팔과
+            # 비트동일. 그 밖의 개수·미지 값은 팔 정체를 흐리므로 ValueError 다.
             toks = [t.strip() for t in body[len("cardt2:"):].split(",")]
-            if len(toks) != 8:
+            if len(toks) not in (8, 9):
                 raise ValueError(
-                    "cardt2 스펙은 토큰 8개 — cardt2:lam,mu,x,y,r,load_term,gate_uav,coupled "
+                    "cardt2 스펙은 토큰 8개(+선택 1) — "
+                    "cardt2:lam,mu,x,y,r,load_term,gate_uav,coupled[,yellow_amb_only] "
                     f"(got {len(toks)}개: {body})")
             lam_t, mu, x, y, r = (float(v) for v in toks[:5])
             lt, gu, cp = toks[5], toks[6], toks[7]
+            yamb = toks[8] if len(toks) > 8 else "off"
             out.append((name, make_field_card_t2_policy(
-                lam_t, mu, x, y, r, load_term=lt, gate_uav=gu, coupled=cp)))
+                lam_t, mu, x, y, r, load_term=lt, gate_uav=gu, coupled=cp,
+                yellow_amb_only=yamb)))
             continue
         if body.startswith("cardt:"):
             # cardt:lam_min,red_gain_min,yhold[,load_term] — 시간(분)축 CARD-T (v20)
