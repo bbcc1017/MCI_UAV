@@ -7,6 +7,12 @@ Linux 기준 cwd=`/home/ryu/MCI_UAV`, Python=`/home/ryu/anaconda3/envs/UAV/bin/p
 공유 학습 노드의 현재 여유는 `uptime`, `free -h`, `nvidia-smi`, 프로세스 상태로 판단한다.
 과거 worker 수·GPU 점유·처리량은 현재 예약 용량이 아니다.
 
+**GPU 는 device 0 만 쓴다(2026-09-14).** 노드에 2장이 있다 — `0` RTX A6000 · `1` RTX 6000 Ada
+Generation(각 49 GiB). **`1` 은 타 사용자 몫**이므로 GPU 를 쓰는 모든 실행에
+`CUDA_VISIBLE_DEVICES=0` 을 붙인다. 그러면 프로세스 안의 `cuda:0` 이 물리 0번이 되므로
+코드에 물리 인덱스를 박지 않는다(`cuda:1`·`set_device(1)`·`device_count()` 기반 분배 금지).
+`nvidia-smi` 의 device 1 점유율은 **우리 가용 용량 계산에 넣지 않는다.**
+
 추적 대상은 Python 코드·공용 도구·루트 문서·상위 manifests/프로토콜 등이다.
 생성 시나리오 `scenarios/exp_*`, `results/`, 대부분 `docs/`, `archive/`, `.agents/`, `.codex/`는 로컬이다.
 예외는 `.gitignore`와 `git ls-files`로 확인한다(`docs/assets/`, `archive/README.md` 등).

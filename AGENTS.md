@@ -62,6 +62,13 @@ CARD다. v21 기준 `CARD_Q18`은 최강 교사와 **실용적 동률**이고 �
   `src/sce_src/`: 시나리오/분할. `tools/`: 라우팅·실험 driver·집계. `scoreboard/`: 버전별 프로토콜.
 - Linux 기본 cwd=`/home/ryu/MCI_UAV`, Python=`/home/ryu/anaconda3/envs/UAV/bin/python`.
   공유 학습 노드이므로 worker 수는 **현재 부하·메모리·동시 작업**으로 정한다.
+- **★GPU 는 device 0 만 쓴다 (2026-09-14 확정).** 이 노드에 GPU 가 2장 있다 —
+  `0` = RTX A6000 · `1` = RTX 6000 Ada Generation(각 49 GiB, 드라이버 595.71.05).
+  **device 1 은 타 사용자 몫이므로 우리 작업이 올라가지 않게 한다.**
+  학습·추론·벤치 실행 전에 `CUDA_VISIBLE_DEVICES=0` 을 붙이고, 코드에서는 `cuda:0` 대신
+  그 환경변수 뒤의 기본 장치를 쓴다(`CUDA_VISIBLE_DEVICES=0` 이면 프로세스 안에서 `cuda:0`
+  이 물리 0번이다). `nvidia-smi` 로 점유를 확인하되 **device 1 의 부하는 우리 용량이 아니다.**
+  `device_count()`·`cuda:1`·`torch.cuda.set_device(1)` 을 새로 넣지 않는다.
 - `external/ml-agents`는 upstream submodule. 안의 `UAV_test/`·`CAR_test/`는 미추적 Windows
   로컬 자산이다. Unity/GIS 작업을 parent repo 커밋이나 submodule 포인터 변경에 섞지 않는다.
 - `results/`, 생성 시나리오, 대부분 `docs/`, `archive/`는 gitignore다.

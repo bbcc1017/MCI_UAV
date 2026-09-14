@@ -13,6 +13,8 @@ DACON 236736), 작업 대상은 `/home/sdo_project/inha2026/ryu`, 타계정이�
 이 저장소(`/home/ryu/MCI_UAV`)는 **한국 대량사상자(MCI) 환자 이송 배차 RL** 연구다.
 Python 은 `/home/ryu/anaconda3/envs/UAV/bin/python`, 일반 사용자 권한으로 돌며 `sudo` 가 필요 없다.
 공유 학습 노드(`aigpu0617`, 64물리/128논리 코어)라 병렬도는 현재 부하로 정한다.
+**GPU 는 2장(`0` RTX A6000 · `1` RTX 6000 Ada)이지만 우리는 `device 0` 만 쓴다** —
+실행에 `CUDA_VISIBLE_DEVICES=0` 을 붙인다(2026-09-14). device 1 은 타 사용자 몫이다.
 
 ## 1. 지침 정본은 AGENTS.md 하나다
 
