@@ -45,27 +45,33 @@ OUT = REPO / "results/field/link2"
 GAIN_KEYS = ("gain",)
 
 
-def _fit_tree(X, y, dist_code, gsz, chosen, names, jobs=8):
-    """stage_tree 와 동일한 설정. 반환: gain share 배열 + 홀드아웃 재현율."""
+def _new_model(jobs):
     from lightgbm import LGBMRegressor
-    nd = int(dist_code.max()) + 1
-    rng = np.random.default_rng(L2.SEED)
-    perm = rng.permutation(nd)
-    test_d = set(perm[: max(1, nd // 5)].tolist())
-    is_test = np.asarray([c in test_d for c in dist_code])
-    rmask = np.repeat(is_test, gsz)
+    return LGBMRegressor(objective="regression_l2", num_leaves=31, learning_rate=0.04,
+                         n_estimators=600, min_child_samples=40, subsample=0.85,
+                         subsample_freq=1, colsample_bytree=0.90, reg_lambda=1.0,
+                         random_state=0, n_jobs=jobs, verbosity=-1,
+                         deterministic=True, force_col_wise=True)
 
-    model = LGBMRegressor(objective="regression_l2", num_leaves=31, learning_rate=0.04,
-                          n_estimators=600, min_child_samples=40, subsample=0.85,
-                          subsample_freq=1, colsample_bytree=0.90, reg_lambda=1.0,
-                          random_state=0, n_jobs=jobs, verbosity=-1,
-                          deterministic=True, force_col_wise=True)
-    model.fit(X[~rmask], y[~rmask])
-    gain = np.asarray(model.booster_.feature_importance("gain"), float)
+
+def _fit_tree(X, y, dist_code, gsz, chosen, jobs=8):
+    """gain 은 전량 적합에서, 재현율은 시군구 5개 이상일 때만 홀드아웃에서 낸다."""
+    m = _new_model(jobs)
+    m.fit(X, y)
+    gain = np.asarray(m.booster_.feature_importance("gain"), float)
     gain = gain / max(gain.sum(), 1e-12)
 
-    # 홀드아웃 top-1 재현율 (그룹 argmax)
-    pred = model.predict(X[rmask])
+    nd = int(dist_code.max()) + 1
+    if nd < 5:
+        return gain, None, 0
+
+    rng = np.random.default_rng(L2.SEED)
+    test_d = set(rng.permutation(nd)[: max(1, nd // 5)].tolist())
+    is_test = np.asarray([c in test_d for c in dist_code])
+    rmask = np.repeat(is_test, gsz)
+    mh = _new_model(jobs)
+    mh.fit(X[~rmask], y[~rmask])
+    pred = mh.predict(X[rmask])
     gte, cte = gsz[is_test], chosen[rmask]
     offs = np.concatenate([[0], np.cumsum(gte)])
     hit = sum(int(cte[int(offs[k]) + int(np.argmax(pred[int(offs[k]):int(offs[k + 1])]))])
@@ -138,7 +144,7 @@ def main() -> None:
     d = L2.load_cache()
     cols = [d["names"].index(n) for n in base]
     g, rc, nte = _fit_tree(np.ascontiguousarray(d["X"][:, cols]), d["target"],
-                           d["dist_code"], d["gsz"], d["chosen"], base, args.lgbm_jobs)
+                           d["dist_code"], d["gsz"], d["chosen"], args.lgbm_jobs)
     res["teachers"]["전국"] = {"gain": g.tolist(), "holdout_recall": rc,
                                "n_sets": int(len(d["gsz"])), "n_test_sets": nte,
                                "wall_sec": round(time.time() - t0, 1)}
@@ -149,25 +155,24 @@ def main() -> None:
         name = p.name[len("dec_sido_"):-len(".npz")]
         t0 = time.time()
         X, chosen, target, gsz, dcode = _sido_arrays(p, args.m, args.seed)
-        if int(dcode.max()) + 1 < 5:
-            print(f"  [{name}] 시군구 {int(dcode.max())+1}개 — 홀드아웃 불가, 건너뜀", flush=True)
-            res["teachers"][name] = {"skipped": "시군구 5개 미만"}
-            continue
-        g, rc, nte = _fit_tree(X, target, dcode, gsz, chosen, base, args.lgbm_jobs)
+        nd = int(dcode.max()) + 1
+        g, rc, nte = _fit_tree(X, target, dcode, gsz, chosen, args.lgbm_jobs)
         res["teachers"][name] = {"gain": g.tolist(), "holdout_recall": rc,
                                  "n_sets": int(len(gsz)), "n_test_sets": nte,
-                                 "n_districts": int(dcode.max()) + 1,
+                                 "n_districts": nd,
                                  "wall_sec": round(time.time() - t0, 1)}
-        print(f"  [{name}] 집합 {len(gsz)} 시군구 {int(dcode.max())+1} "
-              f"recall={rc:.4f} ({time.time()-t0:.0f}s)", flush=True)
+        rs = "n/a" if rc is None else f"{rc:.4f}"
+        print(f"  [{name}] 집합 {len(gsz)} 시군구 {nd} recall={rs} "
+              f"({time.time()-t0:.0f}s)", flush=True)
 
-    ok = [k for k, v in res["teachers"].items() if "gain" in k or "gain" in v]
-    sido_ok = [k for k in ok if k != "전국"]
+    sido_ok = [k for k in res["teachers"] if k != "전국"]
     G = np.array([res["teachers"][k]["gain"] for k in sido_ok])
     nat = np.array(res["teachers"]["전국"]["gain"])
     order = np.argsort(-nat)
     res["summary"] = {
         "n_sido_fitted": len(sido_ok),
+        "small_teachers": {k: res["teachers"][k]["n_districts"] for k in sido_ok
+                           if res["teachers"][k]["n_districts"] < 5},
         "national_top10": [[base[i], float(nat[i])] for i in order[:10]],
         "sido_median_top10": [[base[i], float(np.median(G[:, i]))] for i in order[:10]],
         "top5_overlap_mean": float(np.mean([
