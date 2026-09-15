@@ -79,13 +79,19 @@ def _fit_tree(X, y, dist_code, gsz, chosen, jobs=8):
     return gain, hit / max(len(gte), 1), int(len(gte))
 
 
-def _sido_arrays(dec: Path, m: int, seed: int):
-    """_sido_sample 과 같은 표본 규약 + target·시군구 코드까지 함께 돌려준다."""
+def _sido_arrays(dec: Path, m: int, seed: int, workers: int = 24):
+    """_sido_sample 과 같은 표본 규약 + target·시군구 코드 + **파생 특징 13종**.
+
+    파생 특징은 원본 43 열에 없지만 계산할 수 있다 — `max_capa`(수술실수)만 좌표별
+    `hospital_info.csv` 결합이 필요하고 나머지는 전부 기존 열의 산술이다. 결합이 맞는지는
+    `cmd_sample` 과 같은 계약으로 검사한다: `max_send == 수술실수 + 병상수`.
+    """
+    import numpy as np
     sk, off, teach = L2._lazy(dec, "state_key", "offsets", "teacher_action")
     sk = np.asarray([str(x) for x in sk])
     sig = np.asarray([k.rsplit("_", 2)[-2] for k in sk])
-    dmap = {int(a): decode(int(a))[1] for a in np.unique(teach)}
-    td = np.asarray([dmap[int(a)] for a in teach])
+    dmap_t = {int(a): decode(int(a))[1] for a in np.unique(teach)}
+    td = np.asarray([dmap_t[int(a)] for a in teach])
     rng = np.random.default_rng(seed)
     picked = []
     for c in np.unique(sig):
@@ -97,29 +103,68 @@ def _sido_arrays(dec: Path, m: int, seed: int):
     for s in states:
         keep[int(off[s]):int(off[s + 1])] = True
 
+    feat = [str(x) for x in L2._lazy(dec, "feature_names")[0]]
     X = L2._stream(dec, "X.npy", keep).astype(np.float64)
     chosen = L2._stream(dec, "chosen.npy", keep)
     target = L2._stream(dec, "target.npy", keep).astype(np.float64)
     cact = L2._stream(dec, "cand_action.npy", keep)
 
     sizes = np.asarray([int(off[s + 1]) - int(off[s]) for s in states], int)
+    bnd = np.concatenate([[0], np.cumsum(sizes)])
     row_state = np.repeat(np.arange(len(states)), sizes)
     dm = {int(a): decode(int(a)) for a in np.unique(cact)}
     dst = np.asarray([dm[int(a)][1] for a in cact], np.int16)
     disp = dst > 0
-    X, chosen, target, row_state = X[disp], chosen[disp], target[disp], row_state[disp]
 
+    # 좌표별 수술실수 결합 (cmd_sample 과 같은 경로·같은 검사)
+    manifest = json.load(open(L2.TRAIN_MANIFEST, encoding="utf-8"))
+    used = sorted(set(sk[states]))
+    capa = L2._max_capa_table(used, manifest, workers)
+    mcapa = np.zeros(len(X))
+    ms_col = feat.index("max_send")
+    bad = 0
+    for si, s in enumerate(states):
+        a, b = int(bnd[si]), int(bnd[si + 1])
+        cap, que = capa[str(sk[s])]
+        h = dst[a:b] - 1
+        ok = h >= 0
+        hh = h[ok]
+        mcapa[a:b][ok] = cap[hh]
+        bad += int(np.sum(np.abs(X[a:b, ms_col][ok] - (cap[hh] + que[hh])) > 1e-3))
+    if bad:
+        raise RuntimeError(f"{dec.name}: max_send != 수술실수+병상수 인 행 {bad}개 — 결합 불일치")
+
+    col = lambda n: X[:, feat.index(n)]
+    load = col("cand_occ") + col("cand_in_flight")
+    capa_pos = np.maximum(mcapa, 1.0)
+    send_pos = np.maximum(col("max_send"), 1.0)
+    hin = np.maximum(load + 1.0 - capa_pos, 0.0)
+    D = {
+        "max_capa": mcapa, "load": load, "hinge1_capa": hin,
+        "hingerate_capa": hin / capa_pos,
+        "hinge1_send": np.maximum(load + 1.0 - send_pos, 0.0),
+        "psent_hinge1": np.maximum(col("cand_p_sent") + 1.0 - capa_pos, 0.0),
+        "red_x_ysite": col("is_red") * col("yellow_at_site"),
+        "red_x_rsite": col("is_red") * col("red_at_site"),
+        "uav_x_ambavail": col("is_uav") * col("amb_available"),
+        "uav_x_uavavail": col("is_uav") * col("uav_available"),
+        "uav_x_fleetcrit": col("is_uav") * col("fleet_critical"),
+        "eta_x_rho": col("eta_raw_min") * col("rho"),
+        "load_x_rho": load * col("rho"),
+    }
+    Xa = np.column_stack([X] + [D[k] for k in L2.DERIVED])
+    names = feat + list(L2.DERIVED)
+
+    Xa, chosen, target, row_state = Xa[disp], chosen[disp], target[disp], row_state[disp]
     gsz = np.bincount(row_state, minlength=len(states))
     ok = gsz >= 2
     if not ok.all():
         keeprow = ok[row_state]
-        X, chosen, target = X[keeprow], chosen[keeprow], target[keeprow]
+        Xa, chosen, target = Xa[keeprow], chosen[keeprow], target[keeprow]
         row_state = row_state[keeprow]
-        gsz = gsz[ok]
-        states = states[ok]
-    sig_sel = sig[states]
-    _, dist_code = np.unique(sig_sel, return_inverse=True)
-    return X, chosen, target, gsz, dist_code.astype(int)
+        gsz, states = gsz[ok], states[ok]
+    _, dcode = np.unique(sig[states], return_inverse=True)
+    return Xa, chosen, target, gsz, dcode.astype(int), names
 
 
 def main() -> None:
@@ -129,10 +174,12 @@ def main() -> None:
     ap.add_argument("--lgbm_jobs", type=int, default=8)
     args = ap.parse_args()
 
-    base = [str(x) for x in L2._lazy(L2.DEC_NATIONAL, "feature_names")[0]]
+    base = [str(x) for x in L2._lazy(L2.DEC_NATIONAL, "feature_names")[0]] + list(L2.DERIVED)
     res = {"date": time.strftime("%Y-%m-%d %H:%M"),
            "tool": "tools/v22_link2_tree_sido.py",
-           "space": "원본 43 특징 (파생 제외 — 시도 로그와 동일 공간)",
+           "space": ("원본 43 + 파생 13 = 56 특징. 파생은 시도 로그에서도 다시 계산한다 "
+                     "(max_capa 만 좌표별 hospital_info.csv 결합, 나머지는 기존 열의 산술). "
+                     "결합 검증: max_send == 수술실수 + 병상수"),
            "model": "LGBMRegressor G31 (stage_tree 와 동일 설정)",
            "split": "시군구 단위 5분할 중 1분할 홀드아웃",
            "weight_note": "캐시가 원본 row weight 미보유 — 균등 가중(gain 배분에만 영향)",
@@ -142,6 +189,7 @@ def main() -> None:
     # 전국 — 기존 캐시를 43 열로 잘라 같은 공간에서 재적합
     t0 = time.time()
     d = L2.load_cache()
+    assert d["names"] == base, "캐시 특징 순서가 43+DERIVED 와 다르다"
     cols = [d["names"].index(n) for n in base]
     g, rc, nte = _fit_tree(np.ascontiguousarray(d["X"][:, cols]), d["target"],
                            d["dist_code"], d["gsz"], d["chosen"], args.lgbm_jobs)
@@ -154,7 +202,8 @@ def main() -> None:
     for p in sorted(L2.CARDS.glob("dec_sido_*.npz")):
         name = p.name[len("dec_sido_"):-len(".npz")]
         t0 = time.time()
-        X, chosen, target, gsz, dcode = _sido_arrays(p, args.m, args.seed)
+        X, chosen, target, gsz, dcode, nm = _sido_arrays(p, args.m, args.seed)
+        assert nm == base, f"{name}: 특징 순서 불일치"
         nd = int(dcode.max()) + 1
         g, rc, nte = _fit_tree(X, target, dcode, gsz, chosen, args.lgbm_jobs)
         res["teachers"][name] = {"gain": g.tolist(), "holdout_recall": rc,
