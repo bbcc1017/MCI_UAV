@@ -163,6 +163,14 @@ def _sido_arrays(dec: Path, m: int, seed: int, workers: int = 24):
         Xa, chosen, target = Xa[keeprow], chosen[keeprow], target[keeprow]
         row_state = row_state[keeprow]
         gsz, states = gsz[ok], states[ok]
+
+    # 보류행을 버렸으므로 교사 softmax 질량을 그룹별로 재정규화한다(cmd_sample 과 같은 계약).
+    gid = np.repeat(np.arange(len(gsz)), gsz)
+    tsum = np.bincount(gid, weights=target, minlength=len(gsz))
+    if not np.all(np.bincount(gid, weights=chosen.astype(float), minlength=len(gsz)) == 1):
+        raise RuntimeError(f"{dec.name}: 상태별 chosen 이 1 이 아님")
+    target = target / tsum[gid]
+
     _, dcode = np.unique(sig[states], return_inverse=True)
     return Xa, chosen, target, gsz, dcode.astype(int), names
 
